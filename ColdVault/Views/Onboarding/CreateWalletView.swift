@@ -34,8 +34,7 @@ public struct CreateWalletView: View {
     public var body: some View {
         NavigationStack {
             ZStack {
-                Color(uiColor: .systemBackground)
-                    .ignoresSafeArea()
+                GlassAmbientBackground()
                 
                 ScrollView {
                     VStack(spacing: 24) {
@@ -62,10 +61,12 @@ public struct CreateWalletView: View {
                         .pickerStyle(SegmentedPickerStyle())
                         .padding(.horizontal, 24)
                         .onChange(of: wordCountSelection) { newCount in
+                            let generator = UIImpactFeedbackGenerator(style: .light)
+                            generator.impactOccurred()
                             generateWords(count: newCount)
                         }
                         
-                        // Word Grid
+                        // Glass Seed Word Grid
                         LazyVGrid(columns: columns, spacing: 10) {
                             ForEach(0..<words.count, id: \.self) { idx in
                                 HStack(spacing: 6) {
@@ -81,17 +82,12 @@ public struct CreateWalletView: View {
                                 }
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 10)
-                                .background(Color(uiColor: .secondarySystemBackground))
-                                .cornerRadius(10)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(Color(uiColor: .separator), lineWidth: 0.5)
-                                )
+                                .glassCard(cornerRadius: 12)
                             }
                         }
                         .padding(.horizontal, 20)
                         
-                        // Copy Button
+                        // Copy Button with Glass Pill
                         Button(action: {
                             UIPasteboard.general.string = words.joined(separator: " ")
                             hasCopied = true
@@ -103,20 +99,21 @@ public struct CreateWalletView: View {
                         }) {
                             HStack {
                                 Image(systemName: hasCopied ? "checkmark" : "doc.on.doc")
+                                    .symbolRenderingMode(.hierarchical)
                                 Text(hasCopied ? L10n.copiedToClipboard(lang) : L10n.copySeedButton(lang))
-                                    .font(.system(size: 15, weight: .medium))
+                                    .font(.system(size: 14, weight: .semibold))
                             }
-                            .foregroundColor(hasCopied ? .green : Color(uiColor: .secondaryLabel))
-                            .padding(.vertical, 8)
-                            .padding(.horizontal, 16)
-                            .background(Color(uiColor: .tertiarySystemBackground))
-                            .cornerRadius(20)
+                            .foregroundColor(hasCopied ? .green : Color(uiColor: .label))
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 20)
+                            .modifier(GlassPillModifier(isEmphasized: false))
                         }
                         
                         // Cold Storage Security Warning Card
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(spacing: 8) {
                                 Image(systemName: "shield.lefthalf.filled.trianglebadge.exclamationmark")
+                                    .symbolRenderingMode(.hierarchical)
                                     .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
                                 Text(lang == .english ? "Cold Vault Security Notice" : "Aviso de Seguridad Fría")
                                     .font(.system(size: 14, weight: .bold))
@@ -132,8 +129,11 @@ public struct CreateWalletView: View {
                         }
                         .padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.08))
-                        .cornerRadius(14)
+                        .glassCard(cornerRadius: 16)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.3), lineWidth: 1)
+                        )
                         .padding(.horizontal, 20)
                         
                         if let error = errorMessage {
@@ -145,21 +145,22 @@ public struct CreateWalletView: View {
                         
                         // Confirm and Save Button
                         Button(action: {
+                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                            generator.impactOccurred()
                             commitWallet()
                         }) {
                             if isCreating {
                                 ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: Color(uiColor: .systemBackground)))
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             } else {
                                 Text(L10n.savedSeedConfirm(lang))
                                     .font(.system(size: 17, weight: .semibold))
                             }
                         }
-                        .foregroundColor(Color(uiColor: .systemBackground))
+                        .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .frame(height: 56)
-                        .background(Color(uiColor: .label))
-                        .clipShape(Capsule())
+                        .modifier(GlassPillModifier(isEmphasized: true))
                         .padding(.horizontal, 24)
                         .padding(.bottom, 24)
                     }

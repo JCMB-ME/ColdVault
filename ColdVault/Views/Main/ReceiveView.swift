@@ -36,8 +36,7 @@ public struct ReceiveView: View {
     public var body: some View {
         NavigationStack {
             ZStack {
-                Color(uiColor: .systemBackground)
-                    .ignoresSafeArea()
+                GlassAmbientBackground()
                 
                 ScrollView {
                     VStack(spacing: 24) {
@@ -54,9 +53,13 @@ public struct ReceiveView: View {
                             .padding(.top, 12)
                         }
                         
-                        // QR Code
-                        VStack(spacing: 16) {
+                        // Glass QR Code Frame
+                        VStack(spacing: 18) {
                             QRCodeView(string: currentAddress, size: 210)
+                                .padding(18)
+                                .background(Color.white)
+                                .cornerRadius(18)
+                                .shadow(color: Color.black.opacity(0.12), radius: 10, x: 0, y: 5)
                             
                             // Address box with tap to copy
                             Button(action: {
@@ -70,15 +73,17 @@ public struct ReceiveView: View {
                                         .lineLimit(2)
                                     
                                     Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
+                                        .symbolRenderingMode(.hierarchical)
                                         .foregroundColor(copied ? .green : Color(uiColor: .secondaryLabel))
                                 }
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 12)
-                                .background(Color(uiColor: .secondarySystemBackground))
-                                .cornerRadius(12)
+                                .glassCard(cornerRadius: 14)
                             }
                             .buttonStyle(PlainButtonStyle())
                         }
+                        .padding(20)
+                        .glassCard(cornerRadius: 24)
                         .padding(.horizontal, 24)
                         
                         // Actions
@@ -88,35 +93,36 @@ public struct ReceiveView: View {
                             }) {
                                 HStack {
                                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                        .symbolRenderingMode(.hierarchical)
                                     Text(copied ? L10n.copied(lang) : L10n.copy(lang))
                                         .font(.system(size: 15, weight: .semibold))
                                 }
                                 .foregroundColor(Color(uiColor: .label))
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 48)
-                                .background(Color(uiColor: .secondarySystemBackground))
-                                .clipShape(Capsule())
+                                .modifier(GlassPillModifier(isEmphasized: false))
                             }
                             
                             ShareLink(item: currentAddress) {
                                 HStack {
                                     Image(systemName: "square.and.arrow.up")
+                                        .symbolRenderingMode(.hierarchical)
                                     Text(L10n.share(lang))
                                         .font(.system(size: 15, weight: .semibold))
                                 }
-                                .foregroundColor(Color(uiColor: .systemBackground))
+                                .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 48)
-                                .background(Color(uiColor: .label))
-                                .clipShape(Capsule())
+                                .modifier(GlassPillModifier(isEmphasized: true))
                             }
                         }
                         .padding(.horizontal, 24)
                         
-                        // Cold Storage Verification Card
+                        // Cold Storage Verification Glass Card
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 6) {
                                 Image(systemName: "checkmark.shield.fill")
+                                    .symbolRenderingMode(.hierarchical)
                                     .foregroundColor(.green)
                                 Text(L10n.secureColdReceiveTitle(lang))
                                     .font(.system(size: 14, weight: .bold))
@@ -128,9 +134,12 @@ public struct ReceiveView: View {
                                 .foregroundColor(Color(uiColor: .secondaryLabel))
                                 .lineSpacing(2)
                         }
-                        .padding(14)
-                        .background(Color.green.opacity(0.08))
-                        .cornerRadius(14)
+                        .padding(16)
+                        .glassCard(cornerRadius: 16)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(Color.green.opacity(0.3), lineWidth: 1)
+                        )
                         .padding(.horizontal, 24)
                     }
                     .padding(.bottom, 24)

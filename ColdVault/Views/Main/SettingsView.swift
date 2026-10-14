@@ -25,123 +25,143 @@ public struct SettingsView: View {
     
     public var body: some View {
         NavigationStack {
-            List {
+            ZStack {
+                GlassAmbientBackground()
                 
-                // Section 1: Security & Backup
-                Section(header: Text(L10n.securitySection(lang))) {
-                    HStack {
-                        Label(L10n.walletTypeLabel(lang), systemImage: "shield.checkered")
-                        Spacer()
-                        Text(walletManager.activeRecord?.type.rawValue ?? "Unknown")
-                            .font(.system(size: 14))
-                            .foregroundColor(Color(uiColor: .secondaryLabel))
-                    }
-                    
-                    if walletManager.activeRecord?.type != .watchOnly {
-                        Button(action: {
-                            revealBackupSecret()
-                        }) {
-                            HStack {
-                                Label(L10n.viewSeedPhrase(lang), systemImage: "eye.fill")
-                                    .foregroundColor(Color(uiColor: .label))
-                                Spacer()
-                                if isRevealing {
-                                    ProgressView()
-                                } else {
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundColor(Color(uiColor: .tertiaryLabel))
-                                }
-                            }
-                        }
-                    }
-                    
-                    if let secret = revealedSecret {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(lang == .english ? "Backed Up Secret Key:" : "Clave Secreta Respaldada:")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(.red)
-                            Text(secret)
-                                .font(.system(size: 13, design: .monospaced))
-                                .foregroundColor(Color(uiColor: .label))
-                                .padding(10)
-                                .background(Color(uiColor: .secondarySystemBackground))
-                                .cornerRadius(8)
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
-                
-                // Section 2: Cold Wallet & Network
-                Section(header: Text(L10n.coldWalletSection(lang))) {
-                    Toggle(isOn: $walletManager.isAirGapped) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Label(L10n.airGapToggleTitle(lang), systemImage: "snowflake")
-                            Text(L10n.airGapToggleDesc(lang))
-                                .font(.system(size: 12))
+                List {
+                    // Section 1: Security & Backup
+                    Section(header: Text(L10n.securitySection(lang))) {
+                        HStack {
+                            Label(L10n.walletTypeLabel(lang), systemImage: "shield.checkered")
+                                .symbolRenderingMode(.hierarchical)
+                            Spacer()
+                            Text(walletManager.activeRecord?.type.rawValue ?? "Unknown")
+                                .font(.system(size: 14))
                                 .foregroundColor(Color(uiColor: .secondaryLabel))
                         }
+                        .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
+                        
+                        if walletManager.activeRecord?.type != .watchOnly {
+                            Button(action: {
+                                let generator = UIImpactFeedbackGenerator(style: .medium)
+                                generator.impactOccurred()
+                                revealBackupSecret()
+                            }) {
+                                HStack {
+                                    Label(L10n.viewSeedPhrase(lang), systemImage: "eye.fill")
+                                        .symbolRenderingMode(.hierarchical)
+                                        .foregroundColor(Color(uiColor: .label))
+                                    Spacer()
+                                    if isRevealing {
+                                        ProgressView()
+                                    } else {
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(Color(uiColor: .tertiaryLabel))
+                                    }
+                                }
+                            }
+                            .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
+                        }
+                        
+                        if let secret = revealedSecret {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(lang == .english ? "Backed Up Secret Key:" : "Clave Secreta Respaldada:")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(.red)
+                                Text(secret)
+                                    .font(.system(size: 13, design: .monospaced))
+                                    .foregroundColor(Color(uiColor: .label))
+                                    .padding(10)
+                                    .glassCard(cornerRadius: 10)
+                            }
+                            .padding(.vertical, 4)
+                            .listRowBackground(Color.clear)
+                        }
                     }
                     
-                    Toggle(isOn: Binding(
-                        get: { walletManager.activeRecord?.isTestnet ?? false },
-                        set: { val in
-                            walletManager.activeRecord?.isTestnet = val
-                            Task { await walletManager.refreshBalance() }
+                    // Section 2: Cold Wallet & Network
+                    Section(header: Text(L10n.coldWalletSection(lang))) {
+                        Toggle(isOn: $walletManager.isAirGapped) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label(L10n.airGapToggleTitle(lang), systemImage: "snowflake")
+                                    .symbolRenderingMode(.hierarchical)
+                                Text(L10n.airGapToggleDesc(lang))
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                            }
                         }
-                    )) {
-                        Label(lang == .english ? "Bitcoin Testnet4 Network" : "Red Bitcoin Testnet4", systemImage: "network")
-                    }
-                }
-                
-                // Section 3: Preferences (Language, Appearance, Units)
-                Section(header: Text(L10n.preferencesSection(lang))) {
-                    Picker(L10n.languageLabel(lang), selection: $walletManager.appLanguage) {
-                        ForEach(AppLanguage.allCases) { item in
-                            Text("\(item.flag) \(item.rawValue)").tag(item)
+                        .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
+                        
+                        Toggle(isOn: Binding(
+                            get: { walletManager.activeRecord?.isTestnet ?? false },
+                            set: { val in
+                                walletManager.activeRecord?.isTestnet = val
+                                Task { await walletManager.refreshBalance() }
+                            }
+                        )) {
+                            Label(lang == .english ? "Bitcoin Testnet4 Network" : "Red Bitcoin Testnet4", systemImage: "network")
+                                .symbolRenderingMode(.hierarchical)
                         }
+                        .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
                     }
                     
-                    Picker(L10n.appearanceLabel(lang), selection: $walletManager.appTheme) {
-                        ForEach(AppTheme.allCases) { theme in
-                            Text(theme.rawValue).tag(theme)
+                    // Section 3: Preferences (Language, Appearance, Units)
+                    Section(header: Text(L10n.preferencesSection(lang))) {
+                        Picker(L10n.languageLabel(lang), selection: $walletManager.appLanguage) {
+                            ForEach(AppLanguage.allCases) { item in
+                                Text("\(item.flag) \(item.rawValue)").tag(item)
+                            }
                         }
+                        .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
+                        
+                        Picker(L10n.appearanceLabel(lang), selection: $walletManager.appTheme) {
+                            ForEach(AppTheme.allCases) { theme in
+                                Text(theme.rawValue).tag(theme)
+                            }
+                        }
+                        .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
+                        
+                        Picker(L10n.balanceUnitLabel(lang), selection: $walletManager.displayUnit) {
+                            ForEach(DisplayUnit.allCases) { unit in
+                                Text(unit.rawValue).tag(unit)
+                            }
+                        }
+                        .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
                     }
                     
-                    Picker(L10n.balanceUnitLabel(lang), selection: $walletManager.displayUnit) {
-                        ForEach(DisplayUnit.allCases) { unit in
-                            Text(unit.rawValue).tag(unit)
-                        }
-                    }
-                }
-                
-                // Section 4: About & Philosophy
-                Section(header: Text(lang == .english ? "ABOUT THE PROJECT" : "ACERCA DEL PROYECTO")) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("ColdVault Bitcoin")
-                            .font(.system(size: 15, weight: .semibold))
-                        Text(lang == .english
-                             ? "Developed to turn older iPhones into dedicated Bitcoin cold storage vaults immune to commercial hardware exploits."
-                             : "Desarrollado para reutilizar iPhones antiguos como bóvedas frías Bitcoin libres de vulnerabilidades de hardware comercial.")
-                            .font(.system(size: 13))
-                            .foregroundColor(Color(uiColor: .secondaryLabel))
-                    }
-                    .padding(.vertical, 4)
-                }
-                
-                // Section 5: Reset / Delete
-                Section {
-                    Button(role: .destructive, action: {
-                        showDeleteConfirmation = true
-                    }) {
-                        HStack {
-                            Spacer()
-                            Text(L10n.deleteWalletButton(lang))
+                    // Section 4: About & Philosophy
+                    Section(header: Text(lang == .english ? "ABOUT THE PROJECT" : "ACERCA DEL PROYECTO")) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("ColdVault Bitcoin")
                                 .font(.system(size: 15, weight: .semibold))
-                            Spacer()
+                            Text(lang == .english
+                                 ? "Developed to turn older iPhones into dedicated Bitcoin cold storage vaults immune to commercial hardware exploits."
+                                 : "Desarrollado para reutilizar iPhones antiguos como bóvedas frías Bitcoin libres de vulnerabilidades de hardware comercial.")
+                                .font(.system(size: 13))
+                                .foregroundColor(Color(uiColor: .secondaryLabel))
                         }
+                        .padding(.vertical, 4)
+                        .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
                     }
+                    
+                    // Section 5: Reset / Delete
+                    Section {
+                        Button(role: .destructive, action: {
+                            let generator = UIImpactFeedbackGenerator(style: .rigid)
+                            generator.impactOccurred()
+                            showDeleteConfirmation = true
+                        }) {
+                            HStack {
+                                Spacer()
+                                Text(L10n.deleteWalletButton(lang))
+                                    .font(.system(size: 15, weight: .semibold))
+                                Spacer()
+                            }
+                        }
+                        .listRowBackground(Color.red.opacity(0.12))
                 }
+                .scrollContentBackground(.hidden)
             }
             .navigationTitle(L10n.settingsTitle(lang))
             .navigationBarTitleDisplayMode(.inline)

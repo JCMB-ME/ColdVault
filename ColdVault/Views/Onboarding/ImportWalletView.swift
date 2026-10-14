@@ -34,8 +34,7 @@ public struct ImportWalletView: View {
     public var body: some View {
         NavigationStack {
             ZStack {
-                Color(uiColor: .systemBackground)
-                    .ignoresSafeArea()
+                GlassAmbientBackground()
                 
                 ScrollView {
                     VStack(spacing: 20) {
@@ -54,18 +53,13 @@ public struct ImportWalletView: View {
                         }
                         .padding(.top, 16)
                         
-                        // Text Input Area
+                        // Glass Text Input Area
                         VStack(alignment: .trailing, spacing: 8) {
                             TextEditor(text: $inputText)
                                 .font(.system(size: 15, design: .monospaced))
                                 .frame(height: 140)
+                                .scrollContentBackground(.hidden)
                                 .padding(12)
-                                .background(Color(uiColor: .secondarySystemBackground))
-                                .cornerRadius(14)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 14)
-                                        .stroke(Color(uiColor: .separator), lineWidth: 1)
-                                )
                                 .overlay(alignment: .topLeading) {
                                     if inputText.isEmpty {
                                         Text(L10n.importPlaceholder(lang))
@@ -76,35 +70,42 @@ public struct ImportWalletView: View {
                                     }
                                 }
                             
-                            // Paste & QR Scan quick actions
+                            // Paste & QR Scan quick actions with glass pills
                             HStack(spacing: 12) {
                                 Button(action: {
+                                    let generator = UIImpactFeedbackGenerator(style: .light)
+                                    generator.impactOccurred()
                                     if let string = UIPasteboard.general.string {
                                         inputText = string.trimmingCharacters(in: .whitespacesAndNewlines)
                                     }
                                 }) {
                                     Label(L10n.paste(lang), systemImage: "doc.on.clipboard")
-                                        .font(.system(size: 13, weight: .medium))
+                                        .symbolRenderingMode(.hierarchical)
+                                        .font(.system(size: 13, weight: .semibold))
                                         .foregroundColor(Color(uiColor: .label))
-                                        .padding(.vertical, 6)
-                                        .padding(.horizontal, 12)
-                                        .background(Color(uiColor: .tertiarySystemBackground))
-                                        .cornerRadius(12)
+                                        .padding(.vertical, 8)
+                                        .padding(.horizontal, 14)
+                                        .modifier(GlassPillModifier(isEmphasized: false))
                                 }
                                 
                                 Button(action: {
+                                    let generator = UIImpactFeedbackGenerator(style: .light)
+                                    generator.impactOccurred()
                                     showScanner = true
                                 }) {
                                     Label(L10n.scanQR(lang), systemImage: "qrcode.viewfinder")
-                                        .font(.system(size: 13, weight: .medium))
+                                        .symbolRenderingMode(.hierarchical)
+                                        .font(.system(size: 13, weight: .semibold))
                                         .foregroundColor(Color(uiColor: .label))
-                                        .padding(.vertical, 6)
-                                        .padding(.horizontal, 12)
-                                        .background(Color(uiColor: .tertiarySystemBackground))
-                                        .cornerRadius(12)
+                                        .padding(.vertical, 8)
+                                        .padding(.horizontal, 14)
+                                        .modifier(GlassPillModifier(isEmphasized: false))
                                 }
                             }
+                            .padding(.bottom, 8)
+                            .padding(.trailing, 8)
                         }
+                        .glassCard(cornerRadius: 18)
                         .padding(.horizontal, 20)
                         
                         // Live Detection Feedback Card
@@ -113,10 +114,11 @@ public struct ImportWalletView: View {
                                 .padding(.horizontal, 20)
                         }
                         
-                        // Info card explaining Watch-Only mode
+                        // Info card explaining Watch-Only mode with Glass styling
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 8) {
                                 Image(systemName: "eye.fill")
+                                    .symbolRenderingMode(.hierarchical)
                                     .foregroundColor(.blue)
                                 Text(lang == .english ? "Watch-Only Mode" : "Modo de Solo Observación")
                                     .font(.system(size: 14, weight: .bold))
@@ -130,9 +132,12 @@ public struct ImportWalletView: View {
                                 .foregroundColor(Color(uiColor: .secondaryLabel))
                                 .lineSpacing(2)
                         }
-                        .padding(14)
-                        .background(Color.blue.opacity(0.08))
-                        .cornerRadius(14)
+                        .padding(16)
+                        .glassCard(cornerRadius: 16)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                        )
                         .padding(.horizontal, 20)
                         
                         if let error = errorMessage {
@@ -144,23 +149,25 @@ public struct ImportWalletView: View {
                         
                         Spacer(minLength: 20)
                         
-                        // Import Action Button
+                        // Import Action Button with Glass Pill
                         Button(action: {
+                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                            generator.impactOccurred()
                             performImport()
                         }) {
                             if isImporting {
                                 ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: Color(uiColor: .systemBackground)))
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             } else {
                                 Text(L10n.importActionButton(lang))
                                     .font(.system(size: 17, weight: .semibold))
                             }
                         }
-                        .foregroundColor(Color(uiColor: .systemBackground))
+                        .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .frame(height: 56)
-                        .background(canImport ? Color(uiColor: .label) : Color.gray.opacity(0.4))
-                        .clipShape(Capsule())
+                        .modifier(GlassPillModifier(isEmphasized: true))
+                        .opacity(canImport && !isImporting ? 1.0 : 0.45)
                         .disabled(!canImport || isImporting)
                         .padding(.horizontal, 24)
                         .padding(.bottom, 24)

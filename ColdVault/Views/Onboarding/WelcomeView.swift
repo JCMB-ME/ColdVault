@@ -5,12 +5,14 @@
 //  First launch welcome view with two primary buttons:
 //  1. "Crear nueva wallet" / "Create new wallet"
 //  2. "Importar wallet" / "Import wallet"
+//  Elevated with iOS 18 Glassmorphism and tactile haptics.
 //
 
 import SwiftUI
 
 public struct WelcomeView: View {
     @EnvironmentObject var walletManager: WalletManager
+    @Environment(\.colorScheme) var colorScheme
     @State private var showCreateSheet = false
     @State private var showImportSheet = false
     
@@ -23,51 +25,71 @@ public struct WelcomeView: View {
     public var body: some View {
         NavigationStack {
             ZStack {
-                Color(uiColor: .systemBackground)
-                    .ignoresSafeArea()
+                GlassAmbientBackground()
                 
                 VStack(spacing: 0) {
                     // Top language selector
                     HStack {
                         Spacer()
                         Button(action: {
+                            let generator = UIImpactFeedbackGenerator(style: .light)
+                            generator.impactOccurred()
                             walletManager.appLanguage = (walletManager.appLanguage == .english) ? .spanish : .english
                         }) {
                             Text("\(walletManager.appLanguage.flag) \(walletManager.appLanguage.rawValue)")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(Color(uiColor: .secondaryLabel))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(Color(uiColor: .secondarySystemBackground))
-                                .clipShape(Capsule())
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(colorScheme == .dark ? .white : .black)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 7)
+                                .modifier(GlassPillModifier(isEmphasized: false))
                         }
                     }
                     .padding(.horizontal, 24)
-                    .padding(.top, 8)
+                    .padding(.top, 10)
                     
                     Spacer()
                     
-                    // App Logo / Symbol
-                    VStack(spacing: 20) {
+                    // App Logo / Symbol with Glass Glow
+                    VStack(spacing: 22) {
                         ZStack {
                             Circle()
-                                .fill(Color(red: 0.97, green: 0.58, blue: 0.10)) // Bitcoin Orange
-                                .frame(width: 96, height: 96)
-                                .shadow(color: Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.35), radius: 18, x: 0, y: 8)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color(red: 0.99, green: 0.65, blue: 0.15),
+                                            Color(red: 0.94, green: 0.50, blue: 0.05)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 98, height: 98)
+                                .shadow(color: Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.40), radius: 24, x: 0, y: 10)
+                                .overlay(
+                                    Circle()
+                                        .stroke(
+                                            LinearGradient(
+                                                colors: [Color.white.opacity(0.6), Color.white.opacity(0.1)],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            ),
+                                            lineWidth: 1.5
+                                        )
+                                )
                             
                             Text("₿")
-                                .font(.system(size: 56, weight: .bold))
+                                .font(.system(size: 58, weight: .bold))
                                 .foregroundColor(.white)
                         }
                         
                         VStack(spacing: 8) {
                             Text(L10n.welcomeTitle(lang))
                                 .font(.system(size: 34, weight: .bold, design: .rounded))
-                                .foregroundColor(Color(uiColor: .label))
+                                .foregroundColor(colorScheme == .dark ? .white : .black)
                             
                             Text(L10n.welcomeSubtitle(lang))
                                 .font(.system(size: 15, weight: .regular))
-                                .foregroundColor(Color(uiColor: .secondaryLabel))
+                                .foregroundColor(Color(white: 0.55))
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 32)
                         }
@@ -76,45 +98,44 @@ public struct WelcomeView: View {
                     Spacer()
                     Spacer()
                     
-                    // The Two Primary Action Buttons
+                    // The Two Primary Action Buttons with Modern Glassmorphism
                     VStack(spacing: 14) {
                         // Button 1: Crear nueva wallet / Create new wallet
                         Button(action: {
+                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                            generator.impactOccurred()
                             showCreateSheet = true
                         }) {
-                            HStack {
+                            HStack(spacing: 8) {
                                 Image(systemName: "plus.circle.fill")
                                     .font(.system(size: 18, weight: .semibold))
+                                    .symbolRenderingMode(.hierarchical)
                                 Text(L10n.createNewWallet(lang))
                                     .font(.system(size: 17, weight: .semibold))
                             }
-                            .foregroundColor(Color(uiColor: .systemBackground))
+                            .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .frame(height: 56)
-                            .background(Color(uiColor: .label))
-                            .clipShape(Capsule())
-                            .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 4)
+                            .modifier(GlassPillModifier(isEmphasized: true))
                         }
                         
                         // Button 2: Importar wallet / Import wallet
                         Button(action: {
+                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                            generator.impactOccurred()
                             showImportSheet = true
                         }) {
-                            HStack {
+                            HStack(spacing: 8) {
                                 Image(systemName: "square.and.arrow.down.fill")
                                     .font(.system(size: 18, weight: .semibold))
+                                    .symbolRenderingMode(.hierarchical)
                                 Text(L10n.importWallet(lang))
                                     .font(.system(size: 17, weight: .semibold))
                             }
-                            .foregroundColor(Color(uiColor: .label))
+                            .foregroundColor(colorScheme == .dark ? .white : .black)
                             .frame(maxWidth: .infinity)
                             .frame(height: 56)
-                            .background(Color(uiColor: .secondarySystemBackground))
-                            .clipShape(Capsule())
-                            .overlay(
-                                Capsule()
-                                    .stroke(Color(uiColor: .separator), lineWidth: 1)
-                            )
+                            .modifier(GlassPillModifier(isEmphasized: false))
                         }
                     }
                     .padding(.horizontal, 24)

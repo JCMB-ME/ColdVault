@@ -3,11 +3,11 @@
 //  ColdVault
 //
 //  Minimalist Bitcoin Vault Dashboard.
-//  Exactly matching 'inspo.PNG' with:
-//  1. Single central action button that flips between "Receive" and "Send" via swipe gesture.
+//  Matching 'inspo.PNG' elevated with iOS 18 Glassmorphism:
+//  1. Single central action button with liquid glass aesthetics that flips between "Receive" and "Send" via swipe gesture.
 //  2. Settings accessed via right-to-left screen swipe (gear icon removed).
 //  3. Bilingual support (English & Spanish).
-//  4. Full native Light and Dark mode.
+//  4. Full native Light and Dark mode with ambient atmospheric refraction.
 //
 
 import SwiftUI
@@ -27,6 +27,7 @@ public struct DashboardView: View {
     @State private var showSettingsSheet: Bool = false
     @State private var showWatchOnlyAlert: Bool = false
     @State private var buttonDragOffset: CGFloat = 0
+    @State private var isButtonPressed: Bool = false
     
     public init() {}
     
@@ -40,48 +41,59 @@ public struct DashboardView: View {
     
     public var body: some View {
         ZStack {
-            // Pristine solid background matching inspo.PNG
-            (colorScheme == .dark ? Color.black : Color.white)
-                .ignoresSafeArea()
+            // iOS 18 Ambient Glassmorphism Canvas
+            GlassAmbientBackground()
             
             VStack(spacing: 0) {
                 
-                // Top Header (Status Badges only - Gear icon removed!)
+                // Top Header (Status Badges with Frosted Glass - Gear icon removed!)
                 HStack {
                     if isWatchOnly {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 6) {
                             Image(systemName: "eye.fill")
                                 .font(.system(size: 11, weight: .bold))
                             Text(L10n.watchOnlyBadge(lang))
                                 .font(.system(size: 11, weight: .bold, design: .rounded))
                         }
                         .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.12))
-                        .clipShape(Capsule())
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(.ultraThinMaterial)
+                        )
+                        .overlay(
+                            Capsule()
+                                .stroke(Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.35), lineWidth: 1)
+                        )
                     } else if walletManager.isAirGapped {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 6) {
                             Image(systemName: "snowflake")
                                 .font(.system(size: 11, weight: .bold))
                             Text(L10n.airGapBadge(lang))
                                 .font(.system(size: 11, weight: .bold, design: .rounded))
                         }
                         .foregroundColor(.blue)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color.blue.opacity(0.12))
-                        .clipShape(Capsule())
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(.ultraThinMaterial)
+                        )
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.blue.opacity(0.35), lineWidth: 1)
+                        )
                     }
                     
                     Spacer()
                 }
                 .padding(.horizontal, 24)
-                .padding(.top, 12)
+                .padding(.top, 14)
                 
                 Spacer()
                 
-                // CENTER: Identical to inspo.PNG layout
+                // CENTER: Identical to inspo.PNG layout + Glassmorphism
                 VStack(spacing: 28) {
                     
                     // Balance Display: e.g. "0 sats"
@@ -100,50 +112,63 @@ public struct DashboardView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                     
-                    // SINGLE INTERACTIVE PILL BUTTON (Swipable: Receive <-> Send)
-                    VStack(spacing: 12) {
+                    // SINGLE INTERACTIVE GLASS PILL BUTTON (Swipable: Receive <-> Send)
+                    VStack(spacing: 14) {
                         Button(action: {
                             handleButtonTap()
                         }) {
-                            HStack(spacing: 7) {
+                            HStack(spacing: 8) {
                                 Image(systemName: currentAction == .receive ? "arrow.down.left" : "arrow.up.right")
                                     .font(.system(size: 14, weight: .bold))
+                                    .symbolRenderingMode(.hierarchical)
                                     .transition(.opacity.combined(with: .scale))
                                 
                                 Text(currentAction == .receive ? L10n.receive(lang) : L10n.send(lang))
-                                    .font(.system(size: 16, weight: .semibold))
+                                    .font(.system(size: 16, weight: .semibold, design: .default))
                                     .transition(.opacity.combined(with: .scale))
                             }
                             .foregroundColor(pillForegroundColor)
-                            .frame(minWidth: 140, minHeight: 48)
-                            .padding(.horizontal, 24)
-                            .background(pillBackgroundColor)
-                            .clipShape(Capsule())
-                            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.35 : 0.18), radius: 10, x: 0, y: 5)
+                            .frame(minWidth: 148, minHeight: 48)
+                            .padding(.horizontal, 26)
+                            .modifier(GlassPillModifier(isEmphasized: true))
+                            .scaleEffect(isButtonPressed ? 0.94 : 1.0)
                             .offset(x: buttonDragOffset)
                         }
                         .buttonStyle(PlainButtonStyle())
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { _ in
+                                    withAnimation(.easeOut(duration: 0.12)) {
+                                        isButtonPressed = true
+                                    }
+                                }
+                                .onEnded { _ in
+                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.65)) {
+                                        isButtonPressed = false
+                                    }
+                                }
+                        )
                         .gesture(
                             DragGesture(minimumDistance: 15)
                                 .onChanged { gesture in
-                                    buttonDragOffset = gesture.translation.width * 0.3
+                                    buttonDragOffset = gesture.translation.width * 0.35
                                 }
                                 .onEnded { gesture in
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
                                         buttonDragOffset = 0
                                         // Swipe from right to left -> change to Send
-                                        if gesture.translation.width < -30 {
+                                        if gesture.translation.width < -25 {
                                             if currentAction != .send {
                                                 currentAction = .send
-                                                let generator = UIImpactFeedbackGenerator(style: .medium)
+                                                let generator = UIImpactFeedbackGenerator(style: .rigid)
                                                 generator.impactOccurred()
                                             }
                                         }
                                         // Swipe from left to right -> change back to Receive
-                                        else if gesture.translation.width > 30 {
+                                        else if gesture.translation.width > 25 {
                                             if currentAction != .receive {
                                                 currentAction = .receive
-                                                let generator = UIImpactFeedbackGenerator(style: .medium)
+                                                let generator = UIImpactFeedbackGenerator(style: .rigid)
                                                 generator.impactOccurred()
                                             }
                                         }
@@ -151,15 +176,16 @@ public struct DashboardView: View {
                                 }
                         )
                         
-                        // Subtle swipe hint dots
-                        HStack(spacing: 5) {
-                            Circle()
-                                .fill(currentAction == .receive ? (colorScheme == .dark ? Color.white : Color.black) : Color.gray.opacity(0.3))
-                                .frame(width: 4, height: 4)
-                            Circle()
-                                .fill(currentAction == .send ? (colorScheme == .dark ? Color.white : Color.black) : Color.gray.opacity(0.3))
-                                .frame(width: 4, height: 4)
+                        // Glass Dot Indicator Track
+                        HStack(spacing: 6) {
+                            Capsule()
+                                .fill(currentAction == .receive ? (colorScheme == .dark ? Color.white : Color.black) : Color.gray.opacity(0.35))
+                                .frame(width: currentAction == .receive ? 16 : 5, height: 4)
+                            Capsule()
+                                .fill(currentAction == .send ? (colorScheme == .dark ? Color.white : Color.black) : Color.gray.opacity(0.35))
+                                .frame(width: currentAction == .send ? 16 : 5, height: 4)
                         }
+                        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: currentAction)
                     }
                 }
                 
@@ -200,14 +226,6 @@ public struct DashboardView: View {
             Button(L10n.understood(lang), role: .cancel) {}
         } message: {
             Text(L10n.watchOnlyAlertMessage(lang))
-        }
-    }
-    
-    private var pillBackgroundColor: Color {
-        if colorScheme == .dark {
-            return Color(white: 0.16)
-        } else {
-            return Color.black
         }
     }
     

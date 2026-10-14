@@ -45,8 +45,7 @@ public struct SendView: View {
     public var body: some View {
         NavigationStack {
             ZStack {
-                Color(uiColor: .systemBackground)
-                    .ignoresSafeArea()
+                GlassAmbientBackground()
                 
                 ScrollView {
                     VStack(spacing: 20) {
@@ -65,24 +64,29 @@ public struct SendView: View {
                                     .disableAutocorrection(true)
                                 
                                 Button(action: {
+                                    let generator = UIImpactFeedbackGenerator(style: .light)
+                                    generator.impactOccurred()
                                     if let string = UIPasteboard.general.string {
                                         recipientAddress = string.trimmingCharacters(in: .whitespacesAndNewlines)
                                     }
                                 }) {
                                     Image(systemName: "doc.on.clipboard")
+                                        .symbolRenderingMode(.hierarchical)
                                         .foregroundColor(Color(uiColor: .label))
                                 }
                                 
                                 Button(action: {
+                                    let generator = UIImpactFeedbackGenerator(style: .light)
+                                    generator.impactOccurred()
                                     showScanner = true
                                 }) {
                                     Image(systemName: "qrcode.viewfinder")
+                                        .symbolRenderingMode(.hierarchical)
                                         .foregroundColor(Color(uiColor: .label))
                                 }
                             }
                             .padding(14)
-                            .background(Color(uiColor: .secondarySystemBackground))
-                            .cornerRadius(12)
+                            .glassCard(cornerRadius: 14)
                         }
                         .padding(.horizontal, 20)
                         .padding(.top, 12)
@@ -110,22 +114,22 @@ public struct SendView: View {
                                     .foregroundColor(Color(uiColor: .secondaryLabel))
                                 
                                 Button(action: {
+                                    let generator = UIImpactFeedbackGenerator(style: .light)
+                                    generator.impactOccurred()
                                     if walletManager.balanceSats > estimatedFeeSats {
                                         amountString = "\(walletManager.balanceSats - estimatedFeeSats)"
                                     }
                                 }) {
                                     Text(L10n.maxButton(lang))
                                         .font(.system(size: 12, weight: .bold))
-                                        .foregroundColor(Color(uiColor: .systemBackground))
-                                        .padding(.horizontal, 10)
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 12)
                                         .padding(.vertical, 6)
-                                        .background(Color(uiColor: .label))
-                                        .clipShape(Capsule())
+                                        .modifier(GlassPillModifier(isEmphasized: true))
                                 }
                             }
                             .padding(14)
-                            .background(Color(uiColor: .secondarySystemBackground))
-                            .cornerRadius(12)
+                            .glassCard(cornerRadius: 14)
                         }
                         .padding(.horizontal, 20)
                         
@@ -165,6 +169,7 @@ public struct SendView: View {
                             VStack(spacing: 12) {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: 44))
+                                    .symbolRenderingMode(.hierarchical)
                                     .foregroundColor(.green)
                                 Text(lang == .english ? "Transaction Broadcasted!" : "¡Transacción Transmitida!")
                                     .font(.system(size: 18, weight: .bold))
@@ -174,8 +179,11 @@ public struct SendView: View {
                                     .lineLimit(1)
                             }
                             .padding(16)
-                            .background(Color.green.opacity(0.1))
-                            .cornerRadius(14)
+                            .glassCard(cornerRadius: 16)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(Color.green.opacity(0.3), lineWidth: 1)
+                            )
                             .padding(.horizontal, 20)
                         }
                         
@@ -185,6 +193,9 @@ public struct SendView: View {
                                 Text(lang == .english ? "Signed Offline Transaction" : "Transacción Firmada Sin Conexión")
                                     .font(.system(size: 16, weight: .bold))
                                 QRCodeView(string: hex, size: 180)
+                                    .padding(12)
+                                    .background(Color.white)
+                                    .cornerRadius(12)
                                 Text(lang == .english
                                      ? "Scan this QR code with an internet-connected device to broadcast to the Bitcoin network."
                                      : "Escanea este código con tu dispositivo conectado para transmitir a la red Bitcoin.")
@@ -193,8 +204,7 @@ public struct SendView: View {
                                     .multilineTextAlignment(.center)
                             }
                             .padding(16)
-                            .background(Color(uiColor: .secondarySystemBackground))
-                            .cornerRadius(14)
+                            .glassCard(cornerRadius: 16)
                             .padding(.horizontal, 20)
                         }
                         
@@ -206,20 +216,21 @@ public struct SendView: View {
                         }) {
                             if isProcessing {
                                 ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: Color(uiColor: .systemBackground)))
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             } else {
-                                HStack {
+                                HStack(spacing: 8) {
                                     Image(systemName: "lock.shield.fill")
+                                        .symbolRenderingMode(.hierarchical)
                                     Text(walletManager.isAirGapped ? L10n.signOfflineAirGap(lang) : L10n.authorizeAndSend(lang))
                                         .font(.system(size: 17, weight: .semibold))
                                 }
                             }
                         }
-                        .foregroundColor(Color(uiColor: .systemBackground))
+                        .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .frame(height: 56)
-                        .background(isValidInput ? Color(uiColor: .label) : Color.gray.opacity(0.4))
-                        .clipShape(Capsule())
+                        .modifier(GlassPillModifier(isEmphasized: true))
+                        .opacity(isValidInput && !isProcessing ? 1.0 : 0.45)
                         .disabled(!isValidInput || isProcessing)
                         .padding(.horizontal, 24)
                         .padding(.bottom, 24)
@@ -284,6 +295,8 @@ private struct FeeOptionButton: View {
     
     var body: some View {
         Button(action: {
+            let generator = UIImpactFeedbackGenerator(style: .light)
+            generator.impactOccurred()
             currentRate = rate
         }) {
             VStack(spacing: 4) {
@@ -292,11 +305,10 @@ private struct FeeOptionButton: View {
                 Text("\(rate) sat/vB")
                     .font(.system(size: 12, weight: .bold))
             }
-            .foregroundColor(isSelected ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+            .foregroundColor(isSelected ? .white : Color(uiColor: .label))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
-            .background(isSelected ? Color(uiColor: .label) : Color(uiColor: .secondarySystemBackground))
-            .cornerRadius(10)
+            .modifier(GlassPillModifier(isEmphasized: isSelected))
         }
     }
 }
