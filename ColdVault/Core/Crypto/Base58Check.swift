@@ -100,9 +100,9 @@ public enum Base58Check {
     
     public static func decodeCheck(_ string: String) -> Data? {
         guard let decoded = decode(string), decoded.count >= 4 else { return nil }
-        let payload = decoded.dropLast(4)
-        let checksum = decoded.suffix(4)
-        let expectedChecksum = doubleSHA256(payload).prefix(4)
+        let payload = Data(decoded.dropLast(4))
+        let checksum = Data(decoded.suffix(4))
+        let expectedChecksum = Data(doubleSHA256(payload).prefix(4))
         guard checksum == expectedChecksum else { return nil }
         return payload
     }

@@ -4,7 +4,7 @@
 //
 //  Secure generation of BIP-39 mnemonic seed words (12 or 24 words).
 //  Clear numbered grid display, cold storage safety instructions,
-//  and Keychain persistence.
+//  bilingual L10n support, and Keychain persistence.
 //
 
 import SwiftUI
@@ -27,6 +27,10 @@ public struct CreateWalletView: View {
     
     public init() {}
     
+    private var lang: AppLanguage {
+        walletManager.appLanguage
+    }
+    
     public var body: some View {
         NavigationStack {
             ZStack {
@@ -38,11 +42,11 @@ public struct CreateWalletView: View {
                         
                         // Header
                         VStack(spacing: 8) {
-                            Text("Tu Frase de Recuperación")
+                            Text(L10n.createWalletTitle(lang))
                                 .font(.system(size: 26, weight: .bold, design: .rounded))
                                 .foregroundColor(Color(uiColor: .label))
                             
-                            Text("Estas palabras son la clave maestra de tu Bitcoin. Con ellas podrás recuperar tus fondos en cualquier momento.")
+                            Text(L10n.createWalletSubtitle(lang))
                                 .font(.system(size: 14))
                                 .foregroundColor(Color(uiColor: .secondaryLabel))
                                 .multilineTextAlignment(.center)
@@ -51,9 +55,9 @@ public struct CreateWalletView: View {
                         .padding(.top, 16)
                         
                         // 12 vs 24 words picker
-                        Picker("Longitud de Semilla", selection: $wordCountSelection) {
-                            Text("12 Palabras (Estándar)").tag(12)
-                            Text("24 Palabras (Cold Vault)").tag(24)
+                        Picker("Seed Length", selection: $wordCountSelection) {
+                            Text(L10n.standard12(lang)).tag(12)
+                            Text(L10n.coldVault24(lang)).tag(24)
                         }
                         .pickerStyle(SegmentedPickerStyle())
                         .padding(.horizontal, 24)
@@ -99,7 +103,7 @@ public struct CreateWalletView: View {
                         }) {
                             HStack {
                                 Image(systemName: hasCopied ? "checkmark" : "doc.on.doc")
-                                Text(hasCopied ? "Copiado al portapapeles" : "Copiar Frase Semilla")
+                                Text(hasCopied ? L10n.copiedToClipboard(lang) : L10n.copySeedButton(lang))
                                     .font(.system(size: 15, weight: .medium))
                             }
                             .foregroundColor(hasCopied ? .green : Color(uiColor: .secondaryLabel))
@@ -114,12 +118,14 @@ public struct CreateWalletView: View {
                             HStack(spacing: 8) {
                                 Image(systemName: "shield.lefthalf.filled.trianglebadge.exclamationmark")
                                     .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
-                                Text("Aviso de Seguridad Fría")
+                                Text(lang == .english ? "Cold Vault Security Notice" : "Aviso de Seguridad Fría")
                                     .font(.system(size: 14, weight: .bold))
                                     .foregroundColor(Color(uiColor: .label))
                             }
                             
-                            Text("• Escribe estas palabras en papel con tinta indeleble.\n• NUNCA tomes capturas de pantalla ni las guardes en notas en la nube.\n• Para máxima seguridad, mantén este celular en Modo Avión sin conexión.")
+                            Text(lang == .english
+                                 ? "• Write these words on physical paper with indelible ink.\n• NEVER take screenshots or save in cloud notes.\n• For optimal security, keep this device in Airplane Mode."
+                                 : "• Escribe estas palabras en papel con tinta indeleble.\n• NUNCA tomes capturas de pantalla ni las guardes en notas en la nube.\n• Para máxima seguridad, mantén este celular en Modo Avión sin conexión.")
                                 .font(.system(size: 13))
                                 .foregroundColor(Color(uiColor: .secondaryLabel))
                                 .lineSpacing(3)
@@ -145,7 +151,7 @@ public struct CreateWalletView: View {
                                 ProgressView()
                                     .progressViewStyle(CircularProgressViewStyle(tint: Color(uiColor: .systemBackground)))
                             } else {
-                                Text("He guardado mi frase semilla")
+                                Text(L10n.savedSeedConfirm(lang))
                                     .font(.system(size: 17, weight: .semibold))
                             }
                         }
@@ -159,11 +165,11 @@ public struct CreateWalletView: View {
                     }
                 }
             }
-            .navigationTitle("Crear Wallet")
+            .navigationTitle(L10n.createNewWallet(lang))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancelar") {
+                    Button(L10n.cancel(lang)) {
                         presentationMode.wrappedValue.dismiss()
                     }
                 }

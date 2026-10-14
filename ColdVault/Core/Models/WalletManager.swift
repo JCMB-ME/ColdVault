@@ -31,12 +31,18 @@ public final class WalletManager: ObservableObject {
         didSet { UserDefaults.standard.set(displayUnit.rawValue, forKey: "displayUnit") }
     }
     
+    @Published public var appLanguage: AppLanguage {
+        didSet { UserDefaults.standard.set(appLanguage.rawValue, forKey: "appLanguage") }
+    }
+    
     public init() {
         self.isAirGapped = UserDefaults.standard.bool(forKey: "isAirGapped")
         let savedTheme = UserDefaults.standard.string(forKey: "appTheme") ?? AppTheme.system.rawValue
         self.appTheme = AppTheme(rawValue: savedTheme) ?? .system
         let savedUnit = UserDefaults.standard.string(forKey: "displayUnit") ?? DisplayUnit.sats.rawValue
         self.displayUnit = DisplayUnit(rawValue: savedUnit) ?? .sats
+        let savedLang = UserDefaults.standard.string(forKey: "appLanguage") ?? AppLanguage.english.rawValue
+        self.appLanguage = AppLanguage(rawValue: savedLang) ?? .english
         
         loadStoredWallet()
     }

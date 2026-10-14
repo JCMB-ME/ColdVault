@@ -6,7 +6,7 @@
 //  - BIP-39 Mnemonic Seed (12 or 24 words) -> Full Control
 //  - Private Key (WIF or Hex) -> Full Control
 //  - Bitcoin Public Address -> Watch-Only Wallet (Solo Observación)
-//  Includes live input classification and QR code camera scanning.
+//  Includes live input classification, QR camera scanning, and L10n bilingual support.
 //
 
 import SwiftUI
@@ -21,6 +21,10 @@ public struct ImportWalletView: View {
     @State private var errorMessage: String?
     
     public init() {}
+    
+    private var lang: AppLanguage {
+        walletManager.appLanguage
+    }
     
     // Live detection computed property
     private var detectedPayload: WalletImportPayload {
@@ -38,11 +42,11 @@ public struct ImportWalletView: View {
                         
                         // Header
                         VStack(spacing: 6) {
-                            Text("Importar Billetera")
+                            Text(L10n.importWalletTitle(lang))
                                 .font(.system(size: 26, weight: .bold, design: .rounded))
                                 .foregroundColor(Color(uiColor: .label))
                             
-                            Text("Ingresa tu frase semilla, tu clave privada o una dirección de Bitcoin.")
+                            Text(L10n.importWalletSubtitle(lang))
                                 .font(.system(size: 14))
                                 .foregroundColor(Color(uiColor: .secondaryLabel))
                                 .multilineTextAlignment(.center)
@@ -64,7 +68,7 @@ public struct ImportWalletView: View {
                                 )
                                 .overlay(alignment: .topLeading) {
                                     if inputText.isEmpty {
-                                        Text("Pega aquí tus 12 o 24 palabras semilla, clave privada (WIF/Hex), o dirección de Bitcoin...")
+                                        Text(L10n.importPlaceholder(lang))
                                             .font(.system(size: 14))
                                             .foregroundColor(Color(uiColor: .placeholderText))
                                             .padding(16)
@@ -79,7 +83,7 @@ public struct ImportWalletView: View {
                                         inputText = string.trimmingCharacters(in: .whitespacesAndNewlines)
                                     }
                                 }) {
-                                    Label("Pegar", systemImage: "doc.on.clipboard")
+                                    Label(L10n.paste(lang), systemImage: "doc.on.clipboard")
                                         .font(.system(size: 13, weight: .medium))
                                         .foregroundColor(Color(uiColor: .label))
                                         .padding(.vertical, 6)
@@ -91,7 +95,7 @@ public struct ImportWalletView: View {
                                 Button(action: {
                                     showScanner = true
                                 }) {
-                                    Label("Escanear QR", systemImage: "qrcode.viewfinder")
+                                    Label(L10n.scanQR(lang), systemImage: "qrcode.viewfinder")
                                         .font(.system(size: 13, weight: .medium))
                                         .foregroundColor(Color(uiColor: .label))
                                         .padding(.vertical, 6)
@@ -114,12 +118,14 @@ public struct ImportWalletView: View {
                             HStack(spacing: 8) {
                                 Image(systemName: "eye.fill")
                                     .foregroundColor(.blue)
-                                Text("Modo de Solo Observación")
+                                Text(lang == .english ? "Watch-Only Mode" : "Modo de Solo Observación")
                                     .font(.system(size: 14, weight: .bold))
                                     .foregroundColor(Color(uiColor: .label))
                             }
                             
-                            Text("Si pegas únicamente una dirección pública de Bitcoin (ej. bc1q...), la billetera se agregará en modo observación para consultar balances sin exponer ninguna clave privada.")
+                            Text(lang == .english
+                                 ? "If you paste any public Bitcoin address (e.g. 1A1zP1eP..., bc1q...), the wallet will be added in watch-only mode to check balances without risking private keys."
+                                 : "Si pegas únicamente una dirección pública de Bitcoin (ej. 1A1zP1eP..., bc1q...), la billetera se agregará en modo observación para consultar balances sin exponer ninguna clave privada.")
                                 .font(.system(size: 13))
                                 .foregroundColor(Color(uiColor: .secondaryLabel))
                                 .lineSpacing(2)
@@ -146,7 +152,7 @@ public struct ImportWalletView: View {
                                 ProgressView()
                                     .progressViewStyle(CircularProgressViewStyle(tint: Color(uiColor: .systemBackground)))
                             } else {
-                                Text("Importar Billetera")
+                                Text(L10n.importActionButton(lang))
                                     .font(.system(size: 17, weight: .semibold))
                             }
                         }
@@ -161,11 +167,11 @@ public struct ImportWalletView: View {
                     }
                 }
             }
-            .navigationTitle("Importar Wallet")
+            .navigationTitle(L10n.importWalletTitle(lang))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancelar") {
+                    Button(L10n.cancel(lang)) {
                         presentationMode.wrappedValue.dismiss()
                     }
                 }
@@ -195,10 +201,10 @@ public struct ImportWalletView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Frase Semilla Válida (\(wordCount) palabras)")
+                    Text("\(L10n.seedDetectedTitle(lang)) (\(wordCount) \(lang == .english ? "words" : "palabras"))")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.green)
-                    Text("Control criptográfico total de fondos.")
+                    Text(L10n.seedDetectedDesc(lang))
                         .font(.system(size: 12))
                         .foregroundColor(Color(uiColor: .secondaryLabel))
                 }
@@ -213,10 +219,10 @@ public struct ImportWalletView: View {
                 Image(systemName: "key.fill")
                     .foregroundColor(.green)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Clave Privada Válida (\(isCompressed ? "Comprimida" : "Estándar"))")
+                    Text("\(L10n.keyDetectedTitle(lang)) (\(isCompressed ? "Compressed" : "Uncompressed"))")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.green)
-                    Text("Control criptográfico total de fondos.")
+                    Text(L10n.keyDetectedDesc(lang))
                         .font(.system(size: 12))
                         .foregroundColor(Color(uiColor: .secondaryLabel))
                 }
@@ -231,10 +237,10 @@ public struct ImportWalletView: View {
                 Image(systemName: "eye.circle.fill")
                     .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Dirección de Bitcoin Detectada")
+                    Text(L10n.watchOnlyDetectedTitle(lang))
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
-                    Text("Se importará como Billetera de Solo Observación (\(format.rawValue)).")
+                    Text("\(L10n.watchOnlyDetectedDesc(lang)) (\(format.rawValue))")
                         .font(.system(size: 12))
                         .foregroundColor(Color(uiColor: .secondaryLabel))
                 }

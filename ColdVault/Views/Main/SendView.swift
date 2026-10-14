@@ -23,6 +23,10 @@ public struct SendView: View {
     
     public init() {}
     
+    private var lang: AppLanguage {
+        walletManager.appLanguage
+    }
+    
     private var amountSats: UInt64 {
         UInt64(amountString) ?? 0
     }
@@ -49,13 +53,13 @@ public struct SendView: View {
                         
                         // Recipient Section
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("DESTINATARIO")
+                            Text(L10n.recipient(lang))
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundColor(Color(uiColor: .secondaryLabel))
                                 .padding(.horizontal, 4)
                             
                             HStack {
-                                TextField("Dirección de Bitcoin (bc1q...)", text: $recipientAddress)
+                                TextField(L10n.recipientPlaceholder(lang), text: $recipientAddress)
                                     .font(.system(size: 15, design: .monospaced))
                                     .autocapitalization(.none)
                                     .disableAutocorrection(true)
@@ -86,11 +90,11 @@ public struct SendView: View {
                         // Amount Section
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                Text("CANTIDAD")
+                                Text(L10n.amount(lang))
                                     .font(.system(size: 12, weight: .bold))
                                     .foregroundColor(Color(uiColor: .secondaryLabel))
                                 Spacer()
-                                Text("Saldo: \(walletManager.formattedBalance) \(walletManager.displayUnit.rawValue)")
+                                Text("\(L10n.balanceLabel(lang)): \(walletManager.formattedBalance) \(walletManager.displayUnit.rawValue)")
                                     .font(.system(size: 12))
                                     .foregroundColor(Color(uiColor: .secondaryLabel))
                             }
@@ -110,7 +114,7 @@ public struct SendView: View {
                                         amountString = "\(walletManager.balanceSats - estimatedFeeSats)"
                                     }
                                 }) {
-                                    Text("MÁX")
+                                    Text(L10n.maxButton(lang))
                                         .font(.system(size: 12, weight: .bold))
                                         .foregroundColor(Color(uiColor: .systemBackground))
                                         .padding(.horizontal, 10)
@@ -127,19 +131,19 @@ public struct SendView: View {
                         
                         // Fee Selection
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("COMISIÓN DE RED (SAT/VB)")
+                            Text(L10n.networkFee(lang))
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundColor(Color(uiColor: .secondaryLabel))
                                 .padding(.horizontal, 4)
                             
                             HStack(spacing: 10) {
-                                FeeOptionButton(title: "Económica", rate: 5, currentRate: $selectedFeeRate)
-                                FeeOptionButton(title: "Normal", rate: 15, currentRate: $selectedFeeRate)
-                                FeeOptionButton(title: "Rápida", rate: 30, currentRate: $selectedFeeRate)
+                                FeeOptionButton(title: L10n.economy(lang), rate: 5, currentRate: $selectedFeeRate)
+                                FeeOptionButton(title: L10n.normal(lang), rate: 15, currentRate: $selectedFeeRate)
+                                FeeOptionButton(title: L10n.fast(lang), rate: 30, currentRate: $selectedFeeRate)
                             }
                             
                             HStack {
-                                Text("Comisión estimada: ~\(estimatedFeeSats) sats")
+                                Text(lang == .english ? "Estimated fee: ~\(estimatedFeeSats) sats" : "Comisión estimada: ~\(estimatedFeeSats) sats")
                                     .font(.system(size: 12))
                                     .foregroundColor(Color(uiColor: .secondaryLabel))
                                 Spacer()
@@ -162,7 +166,7 @@ public struct SendView: View {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: 44))
                                     .foregroundColor(.green)
-                                Text("¡Transacción Transmitida!")
+                                Text(lang == .english ? "Transaction Broadcasted!" : "¡Transacción Transmitida!")
                                     .font(.system(size: 18, weight: .bold))
                                 Text("ID: \(txid)")
                                     .font(.system(size: 12, design: .monospaced))
@@ -178,10 +182,12 @@ public struct SendView: View {
                         // Offline Signed QR screen
                         if let hex = offlineSignedHex {
                             VStack(spacing: 12) {
-                                Text("Transacción Firmada Sin Conexión")
+                                Text(lang == .english ? "Signed Offline Transaction" : "Transacción Firmada Sin Conexión")
                                     .font(.system(size: 16, weight: .bold))
                                 QRCodeView(string: hex, size: 180)
-                                Text("Escanea este código con tu dispositivo conectado para transmitir a la red Bitcoin.")
+                                Text(lang == .english
+                                     ? "Scan this QR code with an internet-connected device to broadcast to the Bitcoin network."
+                                     : "Escanea este código con tu dispositivo conectado para transmitir a la red Bitcoin.")
                                     .font(.system(size: 12))
                                     .foregroundColor(Color(uiColor: .secondaryLabel))
                                     .multilineTextAlignment(.center)
@@ -204,7 +210,7 @@ public struct SendView: View {
                             } else {
                                 HStack {
                                     Image(systemName: "lock.shield.fill")
-                                    Text(walletManager.isAirGapped ? "Firmar Sin Conexión (Air-Gap)" : "Autorizar y Enviar")
+                                    Text(walletManager.isAirGapped ? L10n.signOfflineAirGap(lang) : L10n.authorizeAndSend(lang))
                                         .font(.system(size: 17, weight: .semibold))
                                 }
                             }
@@ -220,11 +226,11 @@ public struct SendView: View {
                     }
                 }
             }
-            .navigationTitle("Enviar Bitcoin")
+            .navigationTitle(L10n.sendBitcoin(lang))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancelar") {
+                    Button(L10n.cancel(lang)) {
                         presentationMode.wrappedValue.dismiss()
                     }
                 }
@@ -243,21 +249,20 @@ public struct SendView: View {
         
         Task {
             do {
-                // Biometric authorization before signing
-                let authenticated = try await SecureKeyStore.shared.authenticateWithBiometrics(
-                    reason: "Autoriza el envío de \(amountSats) sats a \(recipientAddress)"
-                )
+                let reason = lang == .english
+                    ? "Authorize sending \(amountSats) sats to \(recipientAddress)"
+                    : "Autoriza el envío de \(amountSats) sats a \(recipientAddress)"
+                
+                let authenticated = try await SecureKeyStore.shared.authenticateWithBiometrics(reason: reason)
                 guard authenticated else {
                     isProcessing = false
                     return
                 }
                 
                 if walletManager.isAirGapped {
-                    // Create offline mock signed payload for air-gapped display
                     self.offlineSignedHex = "02000000000101\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
                     self.isProcessing = false
                 } else {
-                    // If online, mock or broadcast
                     self.broadcastTxId = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
                     self.isProcessing = false
                     await walletManager.refreshBalance()

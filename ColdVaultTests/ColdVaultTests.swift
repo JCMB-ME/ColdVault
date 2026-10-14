@@ -103,4 +103,17 @@ final class ColdVaultTests: XCTestCase {
             XCTFail("Expected watchOnly payload for address string")
         }
     }
+    
+    func testSatoshiGenesisAddressParsing() {
+        let genesisAddr = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+        let payload = BitcoinAddress.parseImportString(genesisAddr)
+        
+        switch payload {
+        case .watchOnly(let addr, let format):
+            XCTAssertEqual(addr, genesisAddr)
+            XCTAssertEqual(format, .legacy)
+        default:
+            XCTFail("Expected watchOnly payload for Satoshi Genesis address")
+        }
+    }
 }

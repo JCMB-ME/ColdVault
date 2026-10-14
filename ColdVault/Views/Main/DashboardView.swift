@@ -3,21 +3,30 @@
 //  ColdVault
 //
 //  Minimalist Bitcoin Vault Dashboard.
-//  Designed to match 'inspo.PNG' with two primary action buttons:
-//  [ ↙ Recibir ] and [ ↗ Enviar ].
-//  Full Light and Dark mode native support.
+//  Exactly matching 'inspo.PNG' with:
+//  1. Single central action button that flips between "Receive" and "Send" via swipe gesture.
+//  2. Settings accessed via right-to-left screen swipe (gear icon removed).
+//  3. Bilingual support (English & Spanish).
+//  4. Full native Light and Dark mode.
 //
 
 import SwiftUI
+
+public enum DashboardAction {
+    case receive
+    case send
+}
 
 public struct DashboardView: View {
     @EnvironmentObject var walletManager: WalletManager
     @Environment(\.colorScheme) var colorScheme
     
+    @State private var currentAction: DashboardAction = .receive
     @State private var showReceiveSheet: Bool = false
     @State private var showSendSheet: Bool = false
     @State private var showSettingsSheet: Bool = false
     @State private var showWatchOnlyAlert: Bool = false
+    @State private var buttonDragOffset: CGFloat = 0
     
     public init() {}
     
@@ -25,21 +34,25 @@ public struct DashboardView: View {
         walletManager.activeRecord?.type == .watchOnly
     }
     
+    private var lang: AppLanguage {
+        walletManager.appLanguage
+    }
+    
     public var body: some View {
         ZStack {
-            // Pristine solid background matching inspo
+            // Pristine solid background matching inspo.PNG
             (colorScheme == .dark ? Color.black : Color.white)
                 .ignoresSafeArea()
             
             VStack(spacing: 0) {
                 
-                // Top Header (Settings & Cold Indicators)
+                // Top Header (Status Badges only - Gear icon removed!)
                 HStack {
                     if isWatchOnly {
                         HStack(spacing: 5) {
                             Image(systemName: "eye.fill")
                                 .font(.system(size: 11, weight: .bold))
-                            Text("OBSERVACIÓN")
+                            Text(L10n.watchOnlyBadge(lang))
                                 .font(.system(size: 11, weight: .bold, design: .rounded))
                         }
                         .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
@@ -51,7 +64,7 @@ public struct DashboardView: View {
                         HStack(spacing: 5) {
                             Image(systemName: "snowflake")
                                 .font(.system(size: 11, weight: .bold))
-                            Text("AIR-GAP")
+                            Text(L10n.airGapBadge(lang))
                                 .font(.system(size: 11, weight: .bold, design: .rounded))
                         }
                         .foregroundColor(.blue)
@@ -62,24 +75,14 @@ public struct DashboardView: View {
                     }
                     
                     Spacer()
-                    
-                    // Subtle Settings Gear
-                    Button(action: {
-                        showSettingsSheet = true
-                    }) {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundColor(colorScheme == .dark ? Color(white: 0.6) : Color(white: 0.4))
-                            .frame(width: 44, height: 44)
-                    }
                 }
                 .padding(.horizontal, 24)
-                .padding(.top, 8)
+                .padding(.top, 12)
                 
                 Spacer()
                 
                 // CENTER: Identical to inspo.PNG layout
-                VStack(spacing: 32) {
+                VStack(spacing: 28) {
                     
                     // Balance Display: e.g. "0 sats"
                     Button(action: {
@@ -97,51 +100,65 @@ public struct DashboardView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                     
-                    // THE TWO PILL BUTTONS: Recibir and Enviar
-                    HStack(spacing: 14) {
-                        
-                        // Button 1: [ ↙ Recibir ]
+                    // SINGLE INTERACTIVE PILL BUTTON (Swipable: Receive <-> Send)
+                    VStack(spacing: 12) {
                         Button(action: {
-                            let generator = UIImpactFeedbackGenerator(style: .medium)
-                            generator.impactOccurred()
-                            showReceiveSheet = true
+                            handleButtonTap()
                         }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.down.left")
+                            HStack(spacing: 7) {
+                                Image(systemName: currentAction == .receive ? "arrow.down.left" : "arrow.up.right")
                                     .font(.system(size: 14, weight: .bold))
-                                Text("Recibir")
+                                    .transition(.opacity.combined(with: .scale))
+                                
+                                Text(currentAction == .receive ? L10n.receive(lang) : L10n.send(lang))
                                     .font(.system(size: 16, weight: .semibold))
+                                    .transition(.opacity.combined(with: .scale))
                             }
                             .foregroundColor(pillForegroundColor)
-                            .frame(minWidth: 124, minHeight: 48)
-                            .padding(.horizontal, 18)
+                            .frame(minWidth: 140, minHeight: 48)
+                            .padding(.horizontal, 24)
                             .background(pillBackgroundColor)
                             .clipShape(Capsule())
                             .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.35 : 0.18), radius: 10, x: 0, y: 5)
+                            .offset(x: buttonDragOffset)
                         }
+                        .buttonStyle(PlainButtonStyle())
+                        .gesture(
+                            DragGesture(minimumDistance: 15)
+                                .onChanged { gesture in
+                                    buttonDragOffset = gesture.translation.width * 0.3
+                                }
+                                .onEnded { gesture in
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                        buttonDragOffset = 0
+                                        // Swipe from right to left -> change to Send
+                                        if gesture.translation.width < -30 {
+                                            if currentAction != .send {
+                                                currentAction = .send
+                                                let generator = UIImpactFeedbackGenerator(style: .medium)
+                                                generator.impactOccurred()
+                                            }
+                                        }
+                                        // Swipe from left to right -> change back to Receive
+                                        else if gesture.translation.width > 30 {
+                                            if currentAction != .receive {
+                                                currentAction = .receive
+                                                let generator = UIImpactFeedbackGenerator(style: .medium)
+                                                generator.impactOccurred()
+                                            }
+                                        }
+                                    }
+                                }
+                        )
                         
-                        // Button 2: [ ↗ Enviar ]
-                        Button(action: {
-                            let generator = UIImpactFeedbackGenerator(style: .medium)
-                            generator.impactOccurred()
-                            if isWatchOnly {
-                                showWatchOnlyAlert = true
-                            } else {
-                                showSendSheet = true
-                            }
-                        }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.up.right")
-                                    .font(.system(size: 14, weight: .bold))
-                                Text("Enviar")
-                                    .font(.system(size: 16, weight: .semibold))
-                            }
-                            .foregroundColor(pillForegroundColor)
-                            .frame(minWidth: 124, minHeight: 48)
-                            .padding(.horizontal, 18)
-                            .background(pillBackgroundColor)
-                            .clipShape(Capsule())
-                            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.35 : 0.18), radius: 10, x: 0, y: 5)
+                        // Subtle swipe hint dots
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(currentAction == .receive ? (colorScheme == .dark ? Color.white : Color.black) : Color.gray.opacity(0.3))
+                                .frame(width: 4, height: 4)
+                            Circle()
+                                .fill(currentAction == .send ? (colorScheme == .dark ? Color.white : Color.black) : Color.gray.opacity(0.3))
+                                .frame(width: 4, height: 4)
                         }
                     }
                 }
@@ -150,6 +167,20 @@ public struct DashboardView: View {
                 Spacer()
             }
         }
+        // Swipe Screen from Right to Left to Open Settings
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 40)
+                .onEnded { gesture in
+                    // If swiping right-to-left across screen (and not vertically)
+                    if gesture.startLocation.x > UIScreen.main.bounds.width * 0.4 &&
+                       gesture.translation.width < -60 &&
+                       abs(gesture.translation.height) < 70 {
+                        let generator = UIImpactFeedbackGenerator(style: .medium)
+                        generator.impactOccurred()
+                        showSettingsSheet = true
+                    }
+                }
+        )
         .refreshable {
             await walletManager.refreshBalance()
         }
@@ -165,24 +196,39 @@ public struct DashboardView: View {
             SettingsView()
                 .environmentObject(walletManager)
         }
-        .alert("Wallet de Solo Observación", isPresented: $showWatchOnlyAlert) {
-            Button("Entendido", role: .cancel) {}
+        .alert(L10n.watchOnlyAlertTitle(lang), isPresented: $showWatchOnlyAlert) {
+            Button(L10n.understood(lang), role: .cancel) {}
         } message: {
-            Text("Esta billetera fue agregada como observación mediante una dirección pública de Bitcoin. Para emitir y autorizar transferencias necesitas importar la frase semilla o firmar sin conexión mediante tu cold wallet.")
+            Text(L10n.watchOnlyAlertMessage(lang))
         }
     }
     
-    // Dynamic styling matching inspo in Light and Dark mode
     private var pillBackgroundColor: Color {
         if colorScheme == .dark {
-            return Color(white: 0.16) // Deep obsidian pill in dark mode
+            return Color(white: 0.16)
         } else {
-            return Color.black // Pure black pill as shown in inspo.PNG
+            return Color.black
         }
     }
     
     private var pillForegroundColor: Color {
         return Color.white
+    }
+    
+    private func handleButtonTap() {
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+        
+        switch currentAction {
+        case .receive:
+            showReceiveSheet = true
+        case .send:
+            if isWatchOnly {
+                showWatchOnlyAlert = true
+            } else {
+                showSendSheet = true
+            }
+        }
     }
     
     private func toggleDisplayUnit() {

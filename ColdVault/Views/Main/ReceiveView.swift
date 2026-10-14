@@ -17,6 +17,10 @@ public struct ReceiveView: View {
     
     public init() {}
     
+    private var lang: AppLanguage {
+        walletManager.appLanguage
+    }
+    
     private var currentAddress: String {
         guard let record = walletManager.activeRecord else { return "" }
         if record.type == .watchOnly {
@@ -40,7 +44,7 @@ public struct ReceiveView: View {
                         
                         // Format Picker (only if full wallet with HD derivation)
                         if walletManager.activeRecord?.type != .watchOnly {
-                            Picker("Formato de Dirección", selection: $selectedFormat) {
+                            Picker("Format", selection: $selectedFormat) {
                                 Text("SegWit (bc1q)").tag(AddressFormat.nativeSegWit)
                                 Text("Taproot (bc1p)").tag(AddressFormat.taproot)
                                 Text("Legacy (1...)").tag(AddressFormat.legacy)
@@ -84,7 +88,7 @@ public struct ReceiveView: View {
                             }) {
                                 HStack {
                                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                                    Text(copied ? "Copiada" : "Copiar")
+                                    Text(copied ? L10n.copied(lang) : L10n.copy(lang))
                                         .font(.system(size: 15, weight: .semibold))
                                 }
                                 .foregroundColor(Color(uiColor: .label))
@@ -97,7 +101,7 @@ public struct ReceiveView: View {
                             ShareLink(item: currentAddress) {
                                 HStack {
                                     Image(systemName: "square.and.arrow.up")
-                                    Text("Compartir")
+                                    Text(L10n.share(lang))
                                         .font(.system(size: 15, weight: .semibold))
                                 }
                                 .foregroundColor(Color(uiColor: .systemBackground))
@@ -114,12 +118,12 @@ public struct ReceiveView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "checkmark.shield.fill")
                                     .foregroundColor(.green)
-                                Text("Recepción 100% Segura en Frío")
+                                Text(L10n.secureColdReceiveTitle(lang))
                                     .font(.system(size: 14, weight: .bold))
                                     .foregroundColor(Color(uiColor: .label))
                             }
                             
-                            Text("Esta dirección puede recibir transacciones de la red Bitcoin sin necesidad de que este dispositivo esté conectado a internet.")
+                            Text(L10n.secureColdReceiveDesc(lang))
                                 .font(.system(size: 13))
                                 .foregroundColor(Color(uiColor: .secondaryLabel))
                                 .lineSpacing(2)
@@ -132,11 +136,11 @@ public struct ReceiveView: View {
                     .padding(.bottom, 24)
                 }
             }
-            .navigationTitle("Recibir Bitcoin")
+            .navigationTitle(L10n.receiveBitcoin(lang))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cerrar") {
+                    Button(L10n.close(lang)) {
                         presentationMode.wrappedValue.dismiss()
                     }
                 }

@@ -3,7 +3,7 @@
 //  ColdVault
 //
 //  Security settings, biometric backup reveal, Air-Gap toggle,
-//  network selection, theme preferences, and wallet reset.
+//  network selection, theme & language preferences, and wallet reset.
 //
 
 import SwiftUI
@@ -19,16 +19,20 @@ public struct SettingsView: View {
     
     public init() {}
     
+    private var lang: AppLanguage {
+        walletManager.appLanguage
+    }
+    
     public var body: some View {
         NavigationStack {
             List {
                 
                 // Section 1: Security & Backup
-                Section(header: Text("SEGURIDAD Y RESPALDO")) {
+                Section(header: Text(L10n.securitySection(lang))) {
                     HStack {
-                        Label("Tipo de Billetera", systemImage: "shield.checkered")
+                        Label(L10n.walletTypeLabel(lang), systemImage: "shield.checkered")
                         Spacer()
-                        Text(walletManager.activeRecord?.type.rawValue ?? "Desconocido")
+                        Text(walletManager.activeRecord?.type.rawValue ?? "Unknown")
                             .font(.system(size: 14))
                             .foregroundColor(Color(uiColor: .secondaryLabel))
                     }
@@ -38,7 +42,7 @@ public struct SettingsView: View {
                             revealBackupSecret()
                         }) {
                             HStack {
-                                Label("Ver Frase Semilla / Clave", systemImage: "eye.fill")
+                                Label(L10n.viewSeedPhrase(lang), systemImage: "eye.fill")
                                     .foregroundColor(Color(uiColor: .label))
                                 Spacer()
                                 if isRevealing {
@@ -54,7 +58,7 @@ public struct SettingsView: View {
                     
                     if let secret = revealedSecret {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Clave Secreta Respaldada:")
+                            Text(lang == .english ? "Backed Up Secret Key:" : "Clave Secreta Respaldada:")
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundColor(.red)
                             Text(secret)
@@ -69,11 +73,11 @@ public struct SettingsView: View {
                 }
                 
                 // Section 2: Cold Wallet & Network
-                Section(header: Text("MODO COLD WALLET")) {
+                Section(header: Text(L10n.coldWalletSection(lang))) {
                     Toggle(isOn: $walletManager.isAirGapped) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Label("Modo Air-Gap (100% Desconectado)", systemImage: "snowflake")
-                            Text("Desactiva toda conexión a internet para convertir tu celular en una cold wallet estricta.")
+                            Label(L10n.airGapToggleTitle(lang), systemImage: "snowflake")
+                            Text(L10n.airGapToggleDesc(lang))
                                 .font(.system(size: 12))
                                 .foregroundColor(Color(uiColor: .secondaryLabel))
                         }
@@ -86,19 +90,25 @@ public struct SettingsView: View {
                             Task { await walletManager.refreshBalance() }
                         }
                     )) {
-                        Label("Red Bitcoin Testnet4", systemImage: "network")
+                        Label(lang == .english ? "Bitcoin Testnet4 Network" : "Red Bitcoin Testnet4", systemImage: "network")
                     }
                 }
                 
-                // Section 3: Appearance & Units
-                Section(header: Text("PREFERENCIAS")) {
-                    Picker("Apariencia", selection: $walletManager.appTheme) {
+                // Section 3: Preferences (Language, Appearance, Units)
+                Section(header: Text(L10n.preferencesSection(lang))) {
+                    Picker(L10n.languageLabel(lang), selection: $walletManager.appLanguage) {
+                        ForEach(AppLanguage.allCases) { item in
+                            Text("\(item.flag) \(item.rawValue)").tag(item)
+                        }
+                    }
+                    
+                    Picker(L10n.appearanceLabel(lang), selection: $walletManager.appTheme) {
                         ForEach(AppTheme.allCases) { theme in
                             Text(theme.rawValue).tag(theme)
                         }
                     }
                     
-                    Picker("Unidad de Balance", selection: $walletManager.displayUnit) {
+                    Picker(L10n.balanceUnitLabel(lang), selection: $walletManager.displayUnit) {
                         ForEach(DisplayUnit.allCases) { unit in
                             Text(unit.rawValue).tag(unit)
                         }
@@ -106,11 +116,13 @@ public struct SettingsView: View {
                 }
                 
                 // Section 4: About & Philosophy
-                Section(header: Text("ACERCA DEL PROYECTO")) {
+                Section(header: Text(lang == .english ? "ABOUT THE PROJECT" : "ACERCA DEL PROYECTO")) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("ColdVault Bitcoin")
                             .font(.system(size: 15, weight: .semibold))
-                        Text("Desarrollado para reutilizar iPhones antiguos como bóvedas frías Bitcoin libres de vulnerabilidades de hardware comercial.")
+                        Text(lang == .english
+                             ? "Developed to turn older iPhones into dedicated Bitcoin cold storage vaults immune to commercial hardware exploits."
+                             : "Desarrollado para reutilizar iPhones antiguos como bóvedas frías Bitcoin libres de vulnerabilidades de hardware comercial.")
                             .font(.system(size: 13))
                             .foregroundColor(Color(uiColor: .secondaryLabel))
                     }
@@ -124,30 +136,30 @@ public struct SettingsView: View {
                     }) {
                         HStack {
                             Spacer()
-                            Text("Eliminar Billetera de este Dispositivo")
+                            Text(L10n.deleteWalletButton(lang))
                                 .font(.system(size: 15, weight: .semibold))
                             Spacer()
                         }
                     }
                 }
             }
-            .navigationTitle("Configuración")
+            .navigationTitle(L10n.settingsTitle(lang))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cerrar") {
+                    Button(L10n.close(lang)) {
                         presentationMode.wrappedValue.dismiss()
                     }
                 }
             }
-            .alert("¿Eliminar Billetera?", isPresented: $showDeleteConfirmation) {
-                Button("Cancelar", role: .cancel) {}
-                Button("Eliminar Definitivamente", role: .destructive) {
+            .alert(L10n.deleteWalletConfirmTitle(lang), isPresented: $showDeleteConfirmation) {
+                Button(L10n.cancel(lang), role: .cancel) {}
+                Button(L10n.deletePermanently(lang), role: .destructive) {
                     walletManager.deleteWallet()
                     presentationMode.wrappedValue.dismiss()
                 }
             } message: {
-                Text("Esta acción borrará todas las claves del Keychain de este dispositivo. Asegúrate de tener tu frase semilla respaldada por escrito.")
+                Text(L10n.deleteWalletConfirmDesc(lang))
             }
         }
     }

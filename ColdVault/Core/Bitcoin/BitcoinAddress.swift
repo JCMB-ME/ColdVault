@@ -73,7 +73,14 @@ public enum BitcoinAddress {
     
     // MARK: - Parse and Classify Any Input
     public static func parseImportString(_ rawInput: String) -> WalletImportPayload {
-        let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.lowercased().hasPrefix("bitcoin:") {
+            trimmed = String(trimmed.dropFirst(8))
+        }
+        if let queryIndex = trimmed.firstIndex(of: "?") {
+            trimmed = String(trimmed[..<queryIndex])
+        }
+        trimmed = trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             return .invalid(reason: "El campo está vacío.")
         }
@@ -141,13 +148,24 @@ public enum BitcoinAddress {
             }
         }
         
-        // Base58Check Legacy or P2SH
+        // Base58Check Legacy or P2SH Checksum
         if let decoded = Base58Check.decodeCheck(trimmed), decoded.count == 21 {
-            let version = decoded[0]
+            let version = decoded.first ?? 0
             if version == 0x00 || version == 0x6f {
                 return .watchOnly(address: trimmed, format: .legacy)
             } else if version == 0x05 || version == 0xc4 {
                 return .watchOnly(address: trimmed, format: .nativeSegWit) // P2SH wrapped
+            }
+        }
+        
+        // Standard Base58 Address Pattern Fallback (e.g. Satoshi Genesis 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa)
+        let base58Regex = "^[13mn2][a-km-zA-HJ-NP-Z1-9]{25,34}$"
+        if trimmed.range(of: base58Regex, options: .regularExpression) != nil {
+            let firstChar = trimmed.first
+            if firstChar == "1" || firstChar == "m" || firstChar == "n" {
+                return .watchOnly(address: trimmed, format: .legacy)
+            } else {
+                return .watchOnly(address: trimmed, format: .nativeSegWit)
             }
         }
         

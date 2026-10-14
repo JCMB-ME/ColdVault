@@ -3,8 +3,8 @@
 //  ColdVault
 //
 //  First launch welcome view with two primary buttons:
-//  1. "Crear nueva wallet"
-//  2. "Importar wallet"
+//  1. "Crear nueva wallet" / "Create new wallet"
+//  2. "Importar wallet" / "Import wallet"
 //
 
 import SwiftUI
@@ -16,6 +16,10 @@ public struct WelcomeView: View {
     
     public init() {}
     
+    private var lang: AppLanguage {
+        walletManager.appLanguage
+    }
+    
     public var body: some View {
         NavigationStack {
             ZStack {
@@ -23,6 +27,24 @@ public struct WelcomeView: View {
                     .ignoresSafeArea()
                 
                 VStack(spacing: 0) {
+                    // Top language selector
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            walletManager.appLanguage = (walletManager.appLanguage == .english) ? .spanish : .english
+                        }) {
+                            Text("\(walletManager.appLanguage.flag) \(walletManager.appLanguage.rawValue)")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(Color(uiColor: .secondaryLabel))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color(uiColor: .secondarySystemBackground))
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+                    
                     Spacer()
                     
                     // App Logo / Symbol
@@ -39,11 +61,11 @@ public struct WelcomeView: View {
                         }
                         
                         VStack(spacing: 8) {
-                            Text("ColdVault")
+                            Text(L10n.welcomeTitle(lang))
                                 .font(.system(size: 34, weight: .bold, design: .rounded))
                                 .foregroundColor(Color(uiColor: .label))
                             
-                            Text("Tu iPhone como billetera fría Bitcoin ultra-segura, sin depender de hardware vulnerable.")
+                            Text(L10n.welcomeSubtitle(lang))
                                 .font(.system(size: 15, weight: .regular))
                                 .foregroundColor(Color(uiColor: .secondaryLabel))
                                 .multilineTextAlignment(.center)
@@ -56,14 +78,14 @@ public struct WelcomeView: View {
                     
                     // The Two Primary Action Buttons
                     VStack(spacing: 14) {
-                        // Button 1: Crear nueva wallet
+                        // Button 1: Crear nueva wallet / Create new wallet
                         Button(action: {
                             showCreateSheet = true
                         }) {
                             HStack {
                                 Image(systemName: "plus.circle.fill")
                                     .font(.system(size: 18, weight: .semibold))
-                                Text("Crear nueva wallet")
+                                Text(L10n.createNewWallet(lang))
                                     .font(.system(size: 17, weight: .semibold))
                             }
                             .foregroundColor(Color(uiColor: .systemBackground))
@@ -74,14 +96,14 @@ public struct WelcomeView: View {
                             .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 4)
                         }
                         
-                        // Button 2: Importar wallet
+                        // Button 2: Importar wallet / Import wallet
                         Button(action: {
                             showImportSheet = true
                         }) {
                             HStack {
                                 Image(systemName: "square.and.arrow.down.fill")
                                     .font(.system(size: 18, weight: .semibold))
-                                Text("Importar wallet")
+                                Text(L10n.importWallet(lang))
                                     .font(.system(size: 17, weight: .semibold))
                             }
                             .foregroundColor(Color(uiColor: .label))
