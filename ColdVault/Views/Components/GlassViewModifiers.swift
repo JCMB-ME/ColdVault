@@ -15,39 +15,58 @@ public struct GlassCardModifier: ViewModifier {
     public var cornerRadius: CGFloat = 20
     public var opacity: CGFloat = 1.0
     
+    private var isDark: Bool {
+        colorScheme == .dark
+    }
+    
+    private var tintColor: Color {
+        if isDark {
+            return Color(white: 0.12).opacity(0.45 * opacity)
+        } else {
+            return Color.white.opacity(0.65 * opacity)
+        }
+    }
+    
+    private var strokeColors: [Color] {
+        if isDark {
+            return [
+                Color.white.opacity(0.24),
+                Color.white.opacity(0.06),
+                Color.clear,
+                Color.white.opacity(0.02)
+            ]
+        } else {
+            return [
+                Color.white.opacity(0.95),
+                Color.white.opacity(0.40),
+                Color.black.opacity(0.03),
+                Color.white.opacity(0.60)
+            ]
+        }
+    }
+    
+    private var shadowColor: Color {
+        if isDark {
+            return Color.black.opacity(0.40)
+        } else {
+            return Color.black.opacity(0.07)
+        }
+    }
+    
     public func body(content: Content) -> some View {
         content
             .background(
                 ZStack {
-                    // 1. Frosted Backdrop Material
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                         .fill(.ultraThinMaterial)
                     
-                    // 2. Liquid Glass Tint
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(
-                            colorScheme == .dark
-                                ? Color(white: 0.12).opacity(0.45 * opacity)
-                                : Color.white.opacity(0.65 * opacity)
-                        )
+                        .fill(tintColor)
                     
-                    // 3. Subtle Inner Specular Glow
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                         .stroke(
                             LinearGradient(
-                                colors: colorScheme == .dark
-                                    ? [
-                                        Color.white.opacity(0.24),
-                                        Color.white.opacity(0.06),
-                                        Color.clear,
-                                        Color.white.opacity(0.02)
-                                    ]
-                                    : [
-                                        Color.white.opacity(0.95),
-                                        Color.white.opacity(0.40),
-                                        Color.black.opacity(0.03),
-                                        Color.white.opacity(0.60)
-                                    ],
+                                colors: strokeColors,
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
@@ -56,9 +75,7 @@ public struct GlassCardModifier: ViewModifier {
                 }
             )
             .shadow(
-                color: colorScheme == .dark
-                    ? Color.black.opacity(0.40)
-                    : Color.black.opacity(0.07),
+                color: shadowColor,
                 radius: 16,
                 x: 0,
                 y: 8
@@ -71,37 +88,52 @@ public struct GlassPillModifier: ViewModifier {
     @Environment(\.colorScheme) var colorScheme
     public var isEmphasized: Bool = false
     
+    private var isDark: Bool {
+        colorScheme == .dark
+    }
+    
+    private var overlayColor: Color {
+        if isEmphasized {
+            return isDark ? Color(white: 0.18).opacity(0.85) : Color.black.opacity(0.88)
+        } else {
+            return isDark ? Color(white: 0.14).opacity(0.65) : Color.white.opacity(0.75)
+        }
+    }
+    
+    private var strokeColors: [Color] {
+        if isEmphasized {
+            return [
+                Color.white.opacity(isDark ? 0.35 : 0.20),
+                Color.white.opacity(0.08),
+                Color.clear
+            ]
+        } else {
+            return [
+                Color.white.opacity(isDark ? 0.28 : 0.90),
+                Color.white.opacity(isDark ? 0.05 : 0.35),
+                Color.clear
+            ]
+        }
+    }
+    
+    private var shadowColor: Color {
+        Color.black.opacity(isDark ? 0.45 : 0.15)
+    }
+    
     public func body(content: Content) -> some View {
         content
             .background(
                 ZStack {
-                    // Frosted material
                     Capsule(style: .continuous)
                         .fill(.thinMaterial)
                     
-                    // Contrast overlay
                     Capsule(style: .continuous)
-                        .fill(
-                            isEmphasized
-                                ? (colorScheme == .dark ? Color(white: 0.18).opacity(0.85) : Color.black.opacity(0.88))
-                                : (colorScheme == .dark ? Color(white: 0.14).opacity(0.65) : Color.white.opacity(0.75))
-                        )
+                        .fill(overlayColor)
                     
-                    // Specular Rim Light
                     Capsule(style: .continuous)
                         .stroke(
                             LinearGradient(
-                                colors: isEmphasized
-                                    ? [
-                                        Color.white.opacity(colorScheme == .dark ? 0.35 : 0.20),
-                                        Color.white.opacity(0.08),
-                                        Color.clear
-                                    ]
-                                    : [
-                                        Color.white.opacity(colorScheme == .dark ? 0.28 : 0.90),
-                                        Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35),
-                                        Color.clear
-                                    ],
+                                colors: strokeColors,
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
@@ -110,7 +142,7 @@ public struct GlassPillModifier: ViewModifier {
                 }
             )
             .shadow(
-                color: Color.black.opacity(colorScheme == .dark ? 0.45 : 0.15),
+                color: shadowColor,
                 radius: 12,
                 x: 0,
                 y: 6
@@ -124,15 +156,20 @@ public struct GlassAmbientBackground: View {
     
     public init() {}
     
+    private var isDark: Bool {
+        colorScheme == .dark
+    }
+    
+    private var baseColor: Color {
+        isDark ? Color.black : Color(white: 0.98)
+    }
+    
     public var body: some View {
         ZStack {
-            // Base canvas
-            (colorScheme == .dark ? Color.black : Color(white: 0.98))
+            baseColor
                 .ignoresSafeArea()
             
-            // Subtle ambient luminous aura (iOS 18 atmosphere)
-            if colorScheme == .dark {
-                // Warm Bitcoin ambient glow at center-top
+            if isDark {
                 RadialGradient(
                     gradient: Gradient(colors: [
                         Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.07),
@@ -144,7 +181,6 @@ public struct GlassAmbientBackground: View {
                 )
                 .ignoresSafeArea()
                 
-                // Deep cool graphite refraction at bottom
                 RadialGradient(
                     gradient: Gradient(colors: [
                         Color.blue.opacity(0.04),
@@ -156,7 +192,6 @@ public struct GlassAmbientBackground: View {
                 )
                 .ignoresSafeArea()
             } else {
-                // Soft warm glow in light mode
                 RadialGradient(
                     gradient: Gradient(colors: [
                         Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.05),
