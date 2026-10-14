@@ -160,6 +160,7 @@ public struct SettingsView: View {
                             }
                         }
                         .listRowBackground(Color.red.opacity(0.12))
+                    }
                 }
                 .scrollContentBackground(.hidden)
             }
