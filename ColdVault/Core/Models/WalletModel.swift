@@ -1,0 +1,58 @@
+//
+//  WalletModel.swift
+//  ColdVault
+//
+//  Wallet data structures, state models, and configuration.
+//
+
+import Foundation
+
+public enum WalletSecurityType: String, Codable {
+    case mnemonic12 = "Mnemonic (12 palabras)"
+    case mnemonic24 = "Mnemonic (24 palabras - Cold Storage)"
+    case privateKey = "Clave Privada"
+    case watchOnly  = "Solo Observación (Watch-Only)"
+}
+
+public struct StoredWalletRecord: Codable {
+    public let type: WalletSecurityType
+    public let secretPayload: String // Mnemonic phrase, WIF, or Address (if watch-only)
+    public let primaryAddress: String
+    public let taprootAddress: String
+    public let legacyAddress: String
+    public let createdAt: Date
+    public var isTestnet: Bool
+    
+    public init(
+        type: WalletSecurityType,
+        secretPayload: String,
+        primaryAddress: String,
+        taprootAddress: String,
+        legacyAddress: String,
+        createdAt: Date = Date(),
+        isTestnet: Bool = false
+    ) {
+        self.type = type
+        self.secretPayload = secretPayload
+        self.primaryAddress = primaryAddress
+        self.taprootAddress = taprootAddress
+        self.legacyAddress = legacyAddress
+        self.createdAt = createdAt
+        self.isTestnet = isTestnet
+    }
+}
+
+public enum DisplayUnit: String, CaseIterable, Identifiable {
+    case sats = "sats"
+    case btc = "BTC"
+    
+    public var id: String { rawValue }
+}
+
+public enum AppTheme: String, CaseIterable, Identifiable {
+    case system = "Sistema"
+    case dark = "Oscuro"
+    case light = "Claro"
+    
+    public var id: String { rawValue }
+}

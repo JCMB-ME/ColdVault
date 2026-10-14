@@ -1,0 +1,22 @@
+# Xcode & macOS
+.DS_Store
+*/.DS_Store
+DerivedData/
+build/
+build_device/
+build_sim/
+*.ipa
+*.zip
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
