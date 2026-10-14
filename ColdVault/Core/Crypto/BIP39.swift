@@ -150,21 +150,21 @@ public enum BIP39 {
             .joined(separator: " ")
             .precomposedStringWithCanonicalMapping
         
-        let salt = ("mnemonic" + passphrase).precomposedStringWithCanonicalMapping
+        let saltData = ("mnemonic" + passphrase).precomposedStringWithCanonicalMapping.data(using: .utf8) ?? Data()
         
         var derivedKey = Data(count: 64)
         _ = derivedKey.withUnsafeMutableBytes { derivedKeyBytes in
             normalizedMnemonic.withCString { mnemonicCStr in
-                salt.withCString { saltCStr in
+                saltData.withUnsafeBytes { saltBytes in
                     CCKeyDerivationPBKDF(
                         CCPBKDFAlgorithm(kCCPBKDF2),
                         mnemonicCStr,
                         strlen(mnemonicCStr),
-                        UnsafePointer<UInt8>(saltCStr),
-                        strlen(saltCStr),
+                        saltBytes.bindMemory(to: UInt8.self).baseAddress!,
+                        saltData.count,
                         CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA512),
                         2048,
-                        derivedKeyBytes.baseAddress!.assumingMemoryBound(to: UInt8.self),
+                        derivedKeyBytes.bindMemory(to: UInt8.self).baseAddress!,
                         64
                     )
                 }

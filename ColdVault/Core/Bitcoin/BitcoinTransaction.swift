@@ -131,7 +131,7 @@ public enum BitcoinTransaction {
         
         // Combine BIP-143 sighash preimage
         var preimage = Data()
-        var version: UInt32 = 2.littleEndian
+        var version: UInt32 = UInt32(2).littleEndian
         withUnsafeBytes(of: &version) { preimage.append(contentsOf: $0) }
         
         preimage.append(hashPrevouts)
@@ -157,11 +157,11 @@ public enum BitcoinTransaction {
         preimage.append(hashOutputs)
         
         // Locktime
-        var locktime: UInt32 = 0.littleEndian
+        var locktime: UInt32 = UInt32(0).littleEndian
         withUnsafeBytes(of: &locktime) { preimage.append(contentsOf: $0) }
         
         // Sighash type: SIGHASH_ALL (0x01000000 in little-endian)
-        var sighashType: UInt32 = 1.littleEndian
+        var sighashType: UInt32 = UInt32(1).littleEndian
         withUnsafeBytes(of: &sighashType) { preimage.append(contentsOf: $0) }
         
         return Base58Check.doubleSHA256(preimage)
