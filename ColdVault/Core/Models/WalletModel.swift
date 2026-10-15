@@ -64,6 +64,8 @@ public enum AppTheme: String, CaseIterable, Identifiable {
     case system = "Sistema"
     case dark = "Oscuro"
     case light = "Claro"
+    /// Bitcoin orange background (#F7931A) with white text.
+    case bitcoin = "Bitcoin"
     
     public var id: String { rawValue }
 }

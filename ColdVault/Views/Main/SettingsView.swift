@@ -13,6 +13,7 @@ import SwiftUI
 public enum SettingsRoute: Hashable {
     case backup
     case security
+    case contacts
 }
 
 public struct SettingsView: View {
@@ -28,6 +29,9 @@ public struct SettingsView: View {
     @State private var isExporting: Bool = false
     @State private var descriptors: [WalletKeyring.AccountDescriptor] = []
     @State private var showDescriptors: Bool = false
+    @State private var showCustomDecimals: Bool = false
+    @State private var customDecimalsText: String = ""
+    @State private var editingContact: Contact?
 
     public init(route: Binding<SettingsRoute?>) {
         self._route = route
@@ -73,6 +77,85 @@ public struct SettingsView: View {
             VStack(alignment: .leading, spacing: 26) {
                 SettingsTitle(text: t("Settings", "Ajustes"))
 
+                SettingsSection(header: t("Home screen", "Pantalla principal"),
+                                footer: t("Start minimal. Add only what you need.",
+                                          "Empieza mínimo. Añade solo lo que necesites.")) {
+                    SettingsRow(title: t("Transactions", "Transacciones")) {
+                        Toggle("", isOn: $walletManager.homeShowTransactions).labelsHidden()
+                    }
+                    SettingsDivider()
+                    SettingsRow(title: t("Fiat value", "Valor fiat")) {
+                        Toggle("", isOn: $walletManager.homeShowFiat).labelsHidden()
+                    }
+                    SettingsDivider()
+                    SettingsRow(title: t("Price chart", "Gráfico de precio")) {
+                        Toggle("", isOn: $walletManager.homeShowPriceChart).labelsHidden()
+                    }
+                    SettingsDivider()
+                    SettingsRow(title: t("Contacts", "Contactos")) {
+                        Toggle("", isOn: $walletManager.homeShowContacts).labelsHidden()
+                    }
+                }
+
+                SettingsSection(header: t("Wallet", "Billetera"), footer: nil) {
+                    Menu {
+                        Picker("", selection: $walletManager.displayUnit) {
+                            ForEach(DisplayUnit.allCases) { unit in Text(unit.rawValue).tag(unit) }
+                        }
+                    } label: {
+                        SettingsRow(title: t("Unit", "Unidad"), value: walletManager.displayUnit.rawValue, chevron: true)
+                    }
+                    SettingsDivider()
+                    Menu {
+                        Button(t("Automatic", "Automático")) { walletManager.displayDecimals = nil }
+                        ForEach(0...4, id: \.self) { value in
+                            Button("\(value)") { walletManager.displayDecimals = value }
+                        }
+                        Button(t("Custom…", "Personalizado…")) {
+                            customDecimalsText = walletManager.displayDecimals.map { String($0) } ?? ""
+                            showCustomDecimals = true
+                        }
+                    } label: {
+                        SettingsRow(title: t("Decimals", "Decimales"), value: decimalsName, chevron: true)
+                    }
+                    SettingsDivider()
+                    Menu {
+                        Picker("", selection: $walletManager.fiatCurrency) {
+                            ForEach(FiatCurrency.supported, id: \.self) { code in Text(code).tag(code) }
+                        }
+                    } label: {
+                        SettingsRow(title: t("Currency", "Moneda"), value: walletManager.fiatCurrency, chevron: true)
+                    }
+                    SettingsDivider()
+                    Button { route = .contacts } label: {
+                        SettingsRow(title: t("Contacts", "Contactos"),
+                                    value: walletManager.contacts.isEmpty ? nil : "\(walletManager.contacts.count)", chevron: true)
+                    }
+                    SettingsDivider()
+                    Button { route = .backup } label: {
+                        SettingsRow(title: t("Backup", "Respaldo"), chevron: true)
+                    }
+                    SettingsDivider()
+                    Button { route = .security } label: {
+                        SettingsRow(title: t("Security", "Seguridad"), chevron: true)
+                    }
+                }
+
+                SettingsSection(header: t("Appearance", "Apariencia"),
+                                footer: t("Liquid Glass needs iOS 26 or later.", "Liquid Glass requiere iOS 26 o posterior.")) {
+                    Menu {
+                        Picker("", selection: $walletManager.appTheme) {
+                            ForEach(AppTheme.allCases) { theme in Text(themeName(theme)).tag(theme) }
+                        }
+                    } label: {
+                        SettingsRow(title: t("Theme", "Tema"), value: themeName(walletManager.appTheme), chevron: true)
+                    }
+                    SettingsDivider()
+                    SettingsRow(title: "Liquid Glass") {
+                        Toggle("", isOn: $walletManager.liquidGlass).labelsHidden()
+                    }
+                }
+
                 SettingsSection(header: "Cold wallet",
                                 footer: t("Air-Gap cuts every network connection. Testnet re-derives your addresses (Face ID).",
                                           "Air-Gap corta toda conexión a internet. Testnet vuelve a derivar tus direcciones (Face ID).")) {
@@ -92,38 +175,29 @@ public struct SettingsView: View {
                     }
                 }
 
-                SettingsSection(header: t("Wallet", "Billetera"), footer: nil) {
-                    Menu {
-                        Picker("", selection: $walletManager.displayUnit) {
-                            ForEach(DisplayUnit.allCases) { unit in Text(unit.rawValue).tag(unit) }
-                        }
-                    } label: {
-                        SettingsRow(title: t("Unit", "Unidad"), value: walletManager.displayUnit.rawValue, chevron: true)
-                    }
-                    SettingsDivider()
-                    Button { route = .backup } label: {
-                        SettingsRow(title: t("Backup", "Respaldo"), chevron: true)
-                    }
-                    SettingsDivider()
-                    Button { route = .security } label: {
-                        SettingsRow(title: t("Security", "Seguridad"), chevron: true)
-                    }
-                    SettingsDivider()
-                    Menu {
-                        Picker("", selection: $walletManager.appTheme) {
-                            ForEach(AppTheme.allCases) { theme in Text(themeName(theme)).tag(theme) }
-                        }
-                    } label: {
-                        SettingsRow(title: t("Appearance", "Apariencia"), value: themeName(walletManager.appTheme), chevron: true)
-                    }
-                }
-
                 errorText
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 40)
             .buttonStyle(.plain)
         }
+        .alert(t("Decimals", "Decimales"), isPresented: $showCustomDecimals) {
+            TextField("8", text: $customDecimalsText)
+                .keyboardType(.numberPad)
+            Button(L10n.cancel(lang), role: .cancel) {}
+            Button("OK") {
+                if let value = Int(customDecimalsText.trimmingCharacters(in: .whitespaces)), (0...16).contains(value) {
+                    walletManager.displayDecimals = value
+                }
+            }
+        } message: {
+            Text(t("Number of decimals to show (0–16).", "Cuántos decimales mostrar (0–16)."))
+        }
+    }
+
+    private var decimalsName: String {
+        guard let value = walletManager.displayDecimals else { return t("Auto", "Auto") }
+        return "\(value)"
     }
 
     // MARK: - Detail pages
@@ -144,6 +218,7 @@ public struct SettingsView: View {
                 switch page {
                 case .backup: backupContent
                 case .security: securityContent
+                case .contacts: contactsContent
                 }
 
                 errorText
@@ -233,6 +308,55 @@ public struct SettingsView: View {
     }
 
     @ViewBuilder
+    private var contactsContent: some View {
+        SettingsTitle(text: t("Contacts", "Contactos"), topPadding: 0)
+
+        if walletManager.contacts.isEmpty {
+            Text(t("Save the addresses of friends, family or your other wallets to send to them without copying addresses.",
+                   "Guarda las direcciones de amigos, familia u otras billeteras tuyas para enviarles sin copiar direcciones."))
+                .font(.system(size: 14))
+                .foregroundColor(Color(uiColor: .secondaryLabel))
+                .padding(.horizontal, 4)
+        } else {
+            SettingsSection(header: t("Saved", "Guardados"), footer: nil) {
+                ForEach(Array(walletManager.contacts.enumerated()), id: \.element.id) { index, contact in
+                    if index > 0 { SettingsDivider() }
+                    Button { editingContact = contact } label: {
+                        SettingsRow(title: contact.name) {
+                            HStack(spacing: 6) {
+                                Text(shortAddress(contact.address))
+                                    .font(.system(size: 13, design: .monospaced))
+                                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                                Chevron()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Button {
+            editingContact = Contact(name: "", address: "")
+        } label: {
+            SettingsRow(title: t("Add contact", "Añadir contacto")) {
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+            }
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
+        }
+        .sheet(item: $editingContact) { contact in
+            ContactEditorView(contact: contact)
+                .environmentObject(walletManager)
+        }
+    }
+
+    private func shortAddress(_ address: String) -> String {
+        guard address.count > 14 else { return address }
+        return "\(address.prefix(6))…\(address.suffix(6))"
+    }
+
+    @ViewBuilder
     private var errorText: some View {
         if let error = errorMessage {
             Text(error)
@@ -259,6 +383,7 @@ public struct SettingsView: View {
         case .system: return t("System", "Sistema")
         case .dark: return t("Dark", "Oscuro")
         case .light: return t("Light", "Claro")
+        case .bitcoin: return "Bitcoin"
         }
     }
 
@@ -322,7 +447,12 @@ public struct SettingsView: View {
 // MARK: - Style components
 
 enum SettingsStyle {
-    static let groupFill = Color(uiColor: .secondarySystemBackground)
+    /// Row groups: light grey (dark grey in dark mode); translucent white on the Bitcoin orange.
+    static var groupFill: Color {
+        UserDefaults.standard.string(forKey: "appTheme") == AppTheme.bitcoin.rawValue
+            ? Color.white.opacity(0.18)
+            : Color(uiColor: .secondarySystemBackground)
+    }
 }
 
 private struct SettingsTitle: View {
@@ -471,10 +601,127 @@ private struct DescriptorExportView: View {
             .navigationTitle(lang == .english ? "Watch-only export" : "Exportar observación")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(L10n.close(lang)) { presentationMode.wrappedValue.dismiss() }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
                 }
             }
+        }
+    }
+}
+
+/// Add / edit / delete one contact. The address is validated (checksum and type).
+struct ContactEditorView: View {
+    @EnvironmentObject var walletManager: WalletManager
+    @Environment(\.presentationMode) var presentationMode
+    @State private var contact: Contact
+    @State private var errorMessage: String?
+    @State private var showScanner = false
+    @State private var showDeleteConfirmation = false
+    private let isNew: Bool
+
+    init(contact: Contact) {
+        _contact = State(initialValue: contact)
+        isNew = contact.name.isEmpty && contact.address.isEmpty
+    }
+
+    private var lang: AppLanguage { walletManager.appLanguage }
+    private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                GlassAmbientBackground()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        SettingsSection(header: t("Name", "Nombre"), footer: nil) {
+                            TextField(t("E.g. Mom, Savings", "Ej. Mamá, Ahorros"), text: $contact.name)
+                                .font(.system(size: 16))
+                                .padding(.horizontal, 16)
+                                .frame(minHeight: 52)
+                        }
+                        SettingsSection(header: t("Bitcoin address", "Dirección Bitcoin"), footer: nil) {
+                            HStack {
+                                TextField("bc1…", text: $contact.address)
+                                    .font(.system(size: 14, design: .monospaced))
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled(true)
+                                Button {
+                                    if let text = UIPasteboard.general.string {
+                                        contact.address = BitcoinAddress.parsePaymentURI(text)?.address
+                                            ?? text.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    }
+                                } label: {
+                                    Image(systemName: "doc.on.clipboard")
+                                }
+                                Button { showScanner = true } label: {
+                                    Image(systemName: "qrcode.viewfinder")
+                                }
+                            }
+                            .foregroundColor(Color(uiColor: .label))
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 52)
+                        }
+                        SettingsSection(header: t("Note", "Nota"), footer: nil) {
+                            TextField(t("Optional", "Opcional"), text: $contact.note)
+                                .font(.system(size: 16))
+                                .padding(.horizontal, 16)
+                                .frame(minHeight: 52)
+                        }
+
+                        if let error = errorMessage {
+                            Text(error)
+                                .font(.system(size: 13))
+                                .foregroundColor(.red)
+                                .padding(.horizontal, 16)
+                        }
+
+                        if !isNew {
+                            Button {
+                                showDeleteConfirmation = true
+                            } label: {
+                                SettingsRow(title: t("Delete contact", "Eliminar contacto"), titleColor: .red)
+                                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(20)
+                }
+            }
+            .navigationTitle(isNew ? t("New contact", "Nuevo contacto") : t("Edit contact", "Editar contacto"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(t("Save", "Guardar")) { save() }
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
+                }
+            }
+            .sheet(isPresented: $showScanner) {
+                QRScannerView { code in
+                    contact.address = BitcoinAddress.parsePaymentURI(code)?.address
+                        ?? code.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+            .alert(t("Delete this contact?", "¿Eliminar este contacto?"), isPresented: $showDeleteConfirmation) {
+                Button(L10n.cancel(lang), role: .cancel) {}
+                Button(t("Delete", "Eliminar"), role: .destructive) {
+                    walletManager.deleteContact(contact)
+                    presentationMode.wrappedValue.dismiss()
+                }
+            }
+        }
+    }
+
+    private func save() {
+        do {
+            try walletManager.saveContact(contact)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            presentationMode.wrappedValue.dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }

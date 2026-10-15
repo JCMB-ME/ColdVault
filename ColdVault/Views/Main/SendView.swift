@@ -55,7 +55,10 @@ public struct SendView: View {
     @State private var signedPSBTData: Data?
     @State private var signedIsFinal: Bool = false
 
-    public init() {}
+    /// `recipient` pre-fills the destination (e.g. sending to a contact).
+    public init(recipient: String? = nil) {
+        _recipientAddress = State(initialValue: recipient ?? "")
+    }
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -125,10 +128,8 @@ public struct SendView: View {
             .navigationTitle(isAirGapFlow ? t("Sign Offline", "Firmar sin conexión") : L10n.sendBitcoin(lang))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(L10n.cancel(lang)) {
-                        presentationMode.wrappedValue.dismiss()
-                    }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
                 }
             }
             .sheet(item: $scanTarget) { target in
@@ -176,9 +177,28 @@ public struct SendView: View {
                             .symbolRenderingMode(.hierarchical)
                             .foregroundColor(Color(uiColor: .label))
                     }
+
+                    if !walletManager.contacts.isEmpty {
+                        Menu {
+                            ForEach(walletManager.contacts) { contact in
+                                Button(contact.name) { recipientAddress = contact.address }
+                            }
+                        } label: {
+                            Image(systemName: "person.crop.circle")
+                                .symbolRenderingMode(.hierarchical)
+                                .foregroundColor(Color(uiColor: .label))
+                        }
+                    }
                 }
                 .padding(14)
                 .glassCard(cornerRadius: 14)
+
+                if let name = walletManager.contactName(for: recipientAddress) {
+                    Label(name, systemImage: "person.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                        .padding(.horizontal, 4)
+                }
 
                 if !recipientAddress.isEmpty && BitcoinAddress.decode(recipientAddress) == nil {
                     Text(t("Invalid address (checksum or format).", "Dirección inválida (checksum o formato)."))

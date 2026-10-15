@@ -37,7 +37,7 @@ public final class WalletManager: ObservableObject {
             UserDefaults.standard.set(isAirGapped, forKey: "isAirGapped")
             BlockchainService.shared.isNetworkBlocked = isAirGapped
             if !isAirGapped {
-                Task { await refreshBalance() }
+                Task { await refreshAll() }
             }
         }
     }
@@ -48,6 +48,49 @@ public final class WalletManager: ObservableObject {
 
     @Published public var displayUnit: DisplayUnit {
         didSet { UserDefaults.standard.set(displayUnit.rawValue, forKey: "displayUnit") }
+    }
+
+    /// Decimals shown in the balance; nil = automatic. Custom values up to 16.
+    @Published public var displayDecimals: Int? {
+        didSet { UserDefaults.standard.set(displayDecimals ?? -1, forKey: "displayDecimals") }
+    }
+
+    /// Liquid Glass buttons (iOS 26+). Read by GlassPillModifier through @AppStorage.
+    @Published public var liquidGlass: Bool {
+        didSet { UserDefaults.standard.set(liquidGlass, forKey: "liquidGlass") }
+    }
+
+    // Home screen extras ("start minimal": all off by default).
+    @Published public var homeShowTransactions: Bool {
+        didSet { saveHomeOption(homeShowTransactions, "homeShowTransactions") }
+    }
+    @Published public var homeShowFiat: Bool {
+        didSet { saveHomeOption(homeShowFiat, "homeShowFiat") }
+    }
+    @Published public var homeShowPriceChart: Bool {
+        didSet { saveHomeOption(homeShowPriceChart, "homeShowPriceChart") }
+    }
+    @Published public var homeShowContacts: Bool {
+        didSet { saveHomeOption(homeShowContacts, "homeShowContacts") }
+    }
+    @Published public var fiatCurrency: String {
+        didSet {
+            UserDefaults.standard.set(fiatCurrency, forKey: "fiatCurrency")
+            Task { await refreshHomeData(force: true) }
+        }
+    }
+
+    @Published public internal(set) var fiatPrice: Double?
+    @Published public internal(set) var priceHistory: [PricePoint] = []
+    @Published public internal(set) var transactions: [WalletTransaction] = []
+    @Published public internal(set) var isLoadingTransactions: Bool = false
+    @Published public internal(set) var contacts: [Contact] = []
+    var lastPriceHistoryFetch: Date?
+    var priceHistoryCurrency: String?
+
+    private func saveHomeOption(_ value: Bool, _ key: String) {
+        UserDefaults.standard.set(value, forKey: key)
+        if value { Task { await refreshHomeData() } }
     }
 
     /// Follows the device language; there is no in-app language picker.
@@ -65,6 +108,17 @@ public final class WalletManager: ObservableObject {
         self.displayUnit = DisplayUnit(rawValue: savedUnit) ?? .sats
         // The app always speaks the iPhone's language (Spanish for any "es-*", else English).
         self.appLanguage = WalletManager.deviceLanguage
+        let defaults = UserDefaults.standard
+        let savedDecimals = defaults.object(forKey: "displayDecimals") as? Int ?? -1
+        self.displayDecimals = savedDecimals >= 0 ? savedDecimals : nil
+        self.liquidGlass = defaults.bool(forKey: "liquidGlass")
+        self.homeShowTransactions = defaults.bool(forKey: "homeShowTransactions")
+        self.homeShowFiat = defaults.bool(forKey: "homeShowFiat")
+        self.homeShowPriceChart = defaults.bool(forKey: "homeShowPriceChart")
+        self.homeShowContacts = defaults.bool(forKey: "homeShowContacts")
+        let savedCurrency = defaults.string(forKey: "fiatCurrency") ?? FiatCurrency.deviceDefault
+        self.fiatCurrency = FiatCurrency.supported.contains(savedCurrency) ? savedCurrency : "USD"
+        loadContacts()
 
         BlockchainService.shared.isNetworkBlocked = isAirGapped
         loadStoredWallet()
@@ -84,13 +138,13 @@ public final class WalletManager: ObservableObject {
         return (record.type == .mnemonic12 || record.type == .mnemonic24) && !usesAddressRotation
     }
 
-    private func derivers(for record: StoredWalletRecord) -> [AccountDeriver] {
+    func derivers(for record: StoredWalletRecord) -> [AccountDeriver] {
         return (record.accounts ?? []).enumerated().compactMap { index, account in
             AccountDeriver(account: account, accountIndex: index, isTestnet: record.isTestnet)
         }
     }
 
-    private func indexes(for record: StoredWalletRecord) -> [AddressIndexes] {
+    func indexes(for record: StoredWalletRecord) -> [AddressIndexes] {
         let count = record.accounts?.count ?? 0
         var result = Array((record.addressIndexes ?? []).prefix(count))
         while result.count < count { result.append(AddressIndexes()) }
@@ -208,7 +262,7 @@ public final class WalletManager: ObservableObject {
                 return
             }
             Task {
-                await refreshBalance()
+                await refreshAll()
             }
         } catch {
             self.hasWallet = false
@@ -235,8 +289,9 @@ public final class WalletManager: ObservableObject {
         self.lastBalanceUpdate = nil
         self.trackedByScript = [:]
         self.fundedAddresses = []
+        self.transactions = []
         Task {
-            await refreshBalance()
+            await refreshAll()
         }
     }
 
@@ -503,7 +558,7 @@ public final class WalletManager: ObservableObject {
                 current.accounts = accounts
                 current.addressIndexes = accounts.map { _ in AddressIndexes() }
                 saveMetadata(current)
-                Task { await refreshBalance() }
+                Task { await refreshAll() }
             }
         }
         return keyring
@@ -635,7 +690,7 @@ public final class WalletManager: ObservableObject {
         guard signed.virtualSize <= plan.estimatedVSize else { throw TransactionError.sizeMismatch }
 
         let txid = try await BlockchainService.shared.broadcast(signed, isTestnet: record.isTestnet)
-        Task { await refreshBalance() }
+        Task { await refreshAll() }
         return txid
     }
 
@@ -701,7 +756,7 @@ public final class WalletManager: ObservableObject {
             }
         }
         let txid = try await BlockchainService.shared.broadcast(tx, isTestnet: record.isTestnet)
-        Task { await refreshBalance() }
+        Task { await refreshAll() }
         return txid
     }
 
@@ -731,24 +786,11 @@ public final class WalletManager: ObservableObject {
         self.lastBalanceUpdate = nil
         self.trackedByScript = [:]
         self.fundedAddresses = []
+        self.transactions = []
     }
 
     // MARK: - Formatted Balance Display
-    public var formattedBalance: String {
-        switch displayUnit {
-        case .sats:
-            let formatter = NumberFormatter()
-            formatter.numberStyle = .decimal
-            formatter.groupingSeparator = "."
-            return formatter.string(from: NSNumber(value: balanceSats)) ?? "\(balanceSats)"
-        case .btc:
-            // Display form: no trailing zeros, so an empty wallet shows "0" like sats.
-            var text = WalletManager.formatBTC(balanceSats)
-            while text.hasSuffix("0") && text.contains(".") { text.removeLast() }
-            if text.hasSuffix(".") { text.removeLast() }
-            return text
-        }
-    }
+    public var formattedBalance: String { format(sats: balanceSats) }
 
     /// Exact sats → "0.00000000" string (no floating point).
     nonisolated public static func formatBTC(_ sats: UInt64) -> String {

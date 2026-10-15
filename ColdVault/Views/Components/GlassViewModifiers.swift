@@ -86,6 +86,7 @@ public struct GlassCardModifier: ViewModifier {
 // MARK: - Glass Pill Modifier
 public struct GlassPillModifier: ViewModifier {
     @Environment(\.colorScheme) var colorScheme
+    @AppStorage("liquidGlass") private var liquidGlass: Bool = false
     public var isEmphasized: Bool = false
     
     private var isDark: Bool {
@@ -120,7 +121,20 @@ public struct GlassPillModifier: ViewModifier {
         Color.black.opacity(isDark ? 0.45 : 0.15)
     }
     
+    @ViewBuilder
     public func body(content: Content) -> some View {
+        if liquidGlass, #available(iOS 26.0, *) {
+            // Apple's Liquid Glass: refracts what is behind and reacts to touch.
+            let glass: Glass = isEmphasized
+                ? Glass.regular.tint(Color.black.opacity(isDark ? 0.25 : 0.55)).interactive()
+                : Glass.regular.interactive()
+            content.glassEffect(glass, in: Capsule(style: .continuous))
+        } else {
+            frosted(content)
+        }
+    }
+
+    private func frosted(_ content: Content) -> some View {
         content
             .background(
                 ZStack {
@@ -153,8 +167,12 @@ public struct GlassPillModifier: ViewModifier {
 // MARK: - Ambient Atmospheric Background
 public struct GlassAmbientBackground: View {
     @Environment(\.colorScheme) var colorScheme
+    @AppStorage("appTheme") private var themeRaw: String = AppTheme.system.rawValue
     
     public init() {}
+
+    /// The exact orange of the Bitcoin logo (#F7931A).
+    public static let bitcoinOrange = Color(red: 247.0 / 255.0, green: 147.0 / 255.0, blue: 26.0 / 255.0)
     
     private var isDark: Bool {
         colorScheme == .dark
@@ -165,6 +183,15 @@ public struct GlassAmbientBackground: View {
     }
     
     public var body: some View {
+        if themeRaw == AppTheme.bitcoin.rawValue {
+            GlassAmbientBackground.bitcoinOrange
+                .ignoresSafeArea()
+        } else {
+            ambient
+        }
+    }
+
+    private var ambient: some View {
         ZStack {
             baseColor
                 .ignoresSafeArea()
@@ -242,5 +269,24 @@ public extension View {
     
     func glassPill(isEmphasized: Bool = false) -> some View {
         self.modifier(GlassPillModifier(isEmphasized: isEmphasized))
+    }
+}
+
+// MARK: - Sheet close button
+/// The close control of every sheet: an "×" on the right of the navigation bar.
+public struct SheetCloseButton: View {
+    let action: () -> Void
+
+    public init(action: @escaping () -> Void) {
+        self.action = action
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(Color(uiColor: .label))
+        }
+        .accessibilityLabel(Text("Close"))
     }
 }

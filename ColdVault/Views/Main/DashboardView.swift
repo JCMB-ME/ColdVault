@@ -12,6 +12,7 @@
 //
 
 import SwiftUI
+import Charts
 
 public enum DashboardAction {
     case receive
@@ -33,6 +34,9 @@ public struct DashboardView: View {
     @State private var pageProgress: CGFloat = 0
     @State private var pageDragBase: CGFloat?
     @State private var settingsRoute: SettingsRoute?
+
+    // Send to a contact from the home screen.
+    @State private var sendRecipient: SendRecipient?
     
     public init() {}
 
@@ -72,26 +76,46 @@ public struct DashboardView: View {
             SendView()
                 .environmentObject(walletManager)
         }
+        .sheet(item: $sendRecipient) { recipient in
+            SendView(recipient: recipient.address)
+                .environmentObject(walletManager)
+        }
+    }
+
+    private var hasHomeExtras: Bool {
+        walletManager.homeShowTransactions || walletManager.homeShowPriceChart
+            || (walletManager.homeShowContacts && !walletManager.contacts.isEmpty)
     }
 
     private var balancePage: some View {
         ZStack(alignment: .top) {
             GeometryReader { geo in
                 ScrollView(showsIndicators: false) {
-                    // The balance is centered in the full screen: the safe-area frame is
-                    // shifted by half the difference between the bottom and top insets.
-                    balanceDisplay
-                        .overlay(alignment: .bottom) {
-                            actionControls
-                                .fixedSize()
-                                .alignmentGuide(.bottom) { d in d[.top] - 14 }
+                    VStack(spacing: 0) {
+                        // The balance is centered in the full screen: the safe-area frame
+                        // is shifted by half the difference between the bottom and top insets.
+                        balanceDisplay
+                            .overlay(alignment: .bottom) {
+                                actionControls
+                                    .fixedSize()
+                                    .alignmentGuide(.bottom) { d in d[.top] - 14 }
+                            }
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .offset(y: (geo.safeAreaInsets.bottom - geo.safeAreaInsets.top) / 2)
+
+                        // Optional extras chosen in Settings › Home screen, below the fold.
+                        if hasHomeExtras {
+                            HomeExtrasView(onSendToContact: { contact in
+                                sendRecipient = SendRecipient(address: contact.address)
+                            })
+                            .environmentObject(walletManager)
+                            .padding(.bottom, 40)
                         }
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .offset(y: (geo.safeAreaInsets.bottom - geo.safeAreaInsets.top) / 2)
+                    }
                 }
                 // Pull down to refresh the balance (needs a scrollable container).
                 .refreshable {
-                    await walletManager.refreshBalance()
+                    await walletManager.refreshAll()
                 }
             }
             statusBadges
@@ -113,7 +137,7 @@ public struct DashboardView: View {
 
                 Text(walletManager.displayUnit.rawValue)
                     .font(.system(size: 22, weight: .medium, design: .default))
-                    .foregroundColor(Color(white: 0.55))
+                    .foregroundColor(Color(uiColor: .secondaryLabel))
                     .fixedSize()
             }
             .padding(.horizontal, 24)
@@ -123,6 +147,11 @@ public struct DashboardView: View {
 
     private var actionControls: some View {
         VStack(spacing: 14) {
+            if let fiat = walletManager.formattedFiatBalance {
+                Text("≈ \(fiat)")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundColor(Color(uiColor: .secondaryLabel))
+            }
             balanceStatus
 
             // SINGLE INTERACTIVE GLASS PILL BUTTON (Swipable: Receive <-> Send)
@@ -206,48 +235,30 @@ public struct DashboardView: View {
     // MARK: - Status badges (top)
 
     private var statusBadges: some View {
-        HStack {
+        // Centered, plain: icon + text in the secondary colour, no capsule.
+        HStack(spacing: 16) {
             if isWatchOnly {
-                HStack(spacing: 6) {
-                    Image(systemName: "eye.fill")
-                        .font(.system(size: 11, weight: .bold))
-                    Text(L10n.watchOnlyBadge(lang))
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Capsule().fill(.ultraThinMaterial))
-                .overlay(Capsule().stroke(Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.35), lineWidth: 1))
+                badge(icon: "eye", text: L10n.watchOnlyBadge(lang))
             } else if walletManager.isAirGapped {
-                HStack(spacing: 6) {
-                    Image(systemName: "snowflake")
-                        .font(.system(size: 11, weight: .bold))
-                    Text(L10n.airGapBadge(lang))
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(.blue)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Capsule().fill(.ultraThinMaterial))
-                .overlay(Capsule().stroke(Color.blue.opacity(0.35), lineWidth: 1))
+                badge(icon: "snowflake", text: L10n.airGapBadge(lang))
             }
-
             if walletManager.isTestnet {
-                Text("TESTNET4")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(.purple)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(.ultraThinMaterial))
-                    .overlay(Capsule().stroke(Color.purple.opacity(0.35), lineWidth: 1))
+                badge(icon: "testtube.2", text: "TESTNET4")
             }
-
-            Spacer()
         }
-        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity)
         .padding(.top, 14)
         .allowsHitTesting(false)
+    }
+
+    private func badge(icon: String, text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+            Text(text)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+        }
+        .foregroundColor(Color(uiColor: .secondaryLabel))
     }
 
     // MARK: - Pager
@@ -300,7 +311,7 @@ public struct DashboardView: View {
                     .foregroundColor(.orange)
             } else if let updated = walletManager.lastBalanceUpdate {
                 Text((lang == .english ? "Updated " : "Actualizado ") + updated.formatted(date: .omitted, time: .shortened))
-                    .foregroundColor(Color(white: 0.55))
+                    .foregroundColor(Color(uiColor: .secondaryLabel))
             }
         }
         .font(.system(size: 12, weight: .medium))
@@ -328,5 +339,181 @@ public struct DashboardView: View {
         let generator = UIImpactFeedbackGenerator(style: .light)
         generator.impactOccurred()
         walletManager.displayUnit = (walletManager.displayUnit == .sats) ? .btc : .sats
+    }
+}
+
+struct SendRecipient: Identifiable {
+    var id: String { address }
+    let address: String
+}
+
+/// Price chart, contacts and recent transactions, each shown only when enabled.
+struct HomeExtrasView: View {
+    @EnvironmentObject var walletManager: WalletManager
+    let onSendToContact: (Contact) -> Void
+
+    private var lang: AppLanguage { walletManager.appLanguage }
+    private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 28) {
+            if walletManager.homeShowPriceChart && !walletManager.isTestnet {
+                priceChart
+            }
+            if walletManager.homeShowContacts && !walletManager.contacts.isEmpty {
+                contactsRow
+            }
+            if walletManager.homeShowTransactions {
+                transactionsList
+            }
+        }
+        .padding(.horizontal, 20)
+    }
+
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(Color(uiColor: .secondaryLabel))
+            .padding(.leading, 4)
+    }
+
+    private func money(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = walletManager.fiatCurrency
+        formatter.maximumFractionDigits = 0
+        return formatter.string(from: NSNumber(value: value)) ?? "\(Int(value))"
+    }
+
+    // MARK: Price chart (30 days, hourly)
+    @ViewBuilder
+    private var priceChart: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle(t("Bitcoin price · 30 days", "Precio de Bitcoin · 30 días"))
+            if walletManager.isAirGapped {
+                placeholder(t("Offline", "Sin conexión"))
+            } else if let first = walletManager.priceHistory.first, let last = walletManager.priceHistory.last {
+                let change = (last.price - first.price) / first.price * 100
+                HStack(alignment: .firstTextBaseline) {
+                    Text(money(last.price))
+                        .font(.system(size: 22, weight: .bold))
+                    Text(String(format: "%+.1f%%", change))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(change >= 0 ? .green : .red)
+                }
+                .padding(.leading, 4)
+                Chart(walletManager.priceHistory) { point in
+                    LineMark(x: .value("Date", point.date), y: .value("Price", point.price))
+                        .interpolationMethod(.catmullRom)
+                        .foregroundStyle(Color(uiColor: .label))
+                }
+                .chartYScale(domain: .automatic(includesZero: false))
+                .chartXAxis(.hidden)
+                .chartYAxis {
+                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
+                        AxisValueLabel {
+                            if let price = value.as(Double.self) { Text(money(price)).font(.system(size: 10)) }
+                        }
+                    }
+                }
+                .frame(height: 160)
+            } else {
+                placeholder(t("Loading…", "Cargando…"))
+            }
+        }
+    }
+
+    // MARK: Contacts (tap to send)
+    private var contactsRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle(t("Send to", "Enviar a"))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(walletManager.contacts) { contact in
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            onSendToContact(contact)
+                        } label: {
+                            VStack(spacing: 6) {
+                                Text(contact.initials)
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundColor(Color(uiColor: .label))
+                                    .frame(width: 54, height: 54)
+                                    .background(Circle().fill(SettingsStyle.groupFill))
+                                Text(contact.name)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                                    .lineLimit(1)
+                                    .frame(width: 64)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(walletManager.isAirGapped && !walletManager.isWatchOnly)
+                    }
+                }
+                .padding(.horizontal, 4)
+            }
+        }
+    }
+
+    // MARK: Recent transactions
+    @ViewBuilder
+    private var transactionsList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle(t("Transactions", "Transacciones"))
+            if walletManager.isAirGapped {
+                placeholder(t("Offline", "Sin conexión"))
+            } else if walletManager.transactions.isEmpty {
+                placeholder(walletManager.isLoadingTransactions ? t("Loading…", "Cargando…")
+                                                                 : t("No transactions yet", "Aún no hay transacciones"))
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(walletManager.transactions.enumerated()), id: \.element.id) { index, tx in
+                        if index > 0 { Divider().padding(.leading, 56) }
+                        transactionRow(tx)
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
+            }
+        }
+    }
+
+    private func transactionRow(_ tx: WalletTransaction) -> some View {
+        let received = tx.net >= 0
+        let amount = walletManager.format(sats: UInt64(abs(tx.net)))
+        let url = URL(string: "https://mempool.space/\(walletManager.isTestnet ? "testnet4/" : "")tx/\(tx.txid)")
+        return Link(destination: url ?? URL(string: "https://mempool.space")!) {
+            HStack(spacing: 12) {
+                Image(systemName: received ? "arrow.down.left" : "arrow.up.right")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(Color(uiColor: .label))
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(Color(uiColor: .label).opacity(0.08)))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(received ? t("Received", "Recibido") : t("Sent", "Enviado"))
+                        .font(.system(size: 15))
+                        .foregroundColor(Color(uiColor: .label))
+                    Text(tx.confirmed
+                         ? (tx.date?.formatted(date: .abbreviated, time: .shortened) ?? "")
+                         : t("Pending", "Pendiente"))
+                        .font(.system(size: 12))
+                        .foregroundColor(tx.confirmed ? Color(uiColor: .secondaryLabel) : .orange)
+                }
+                Spacer()
+                Text("\(received ? "+" : "−")\(amount) \(walletManager.displayUnit.rawValue)")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundColor(received ? .green : Color(uiColor: .label))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+    }
+
+    private func placeholder(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 14))
+            .foregroundColor(Color(uiColor: .secondaryLabel))
+            .frame(maxWidth: .infinity, minHeight: 60)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
     }
 }

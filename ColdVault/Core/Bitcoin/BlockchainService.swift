@@ -65,6 +65,24 @@ public struct UTXO: Codable, Identifiable {
     }
 }
 
+public struct EsploraTransaction: Decodable {
+    public struct Output: Decodable {
+        public let scriptpubkey: String
+        public let value: UInt64
+    }
+    public struct Input: Decodable {
+        public let prevout: Output?
+    }
+    public struct Status: Decodable {
+        public let confirmed: Bool
+        public let block_time: Int?
+    }
+    public let txid: String
+    public let vin: [Input]
+    public let vout: [Output]
+    public let status: Status
+}
+
 public final class BlockchainService {
 
     public static let shared = BlockchainService()
@@ -172,6 +190,45 @@ public final class BlockchainService {
         let tx = try Transaction.parse(raw)
         guard tx.txid == txid.lowercased() else { throw BlockchainError.invalidResponse }
         return tx
+    }
+
+    // MARK: - Market data (always mainnet prices)
+    /// Latest BTC price per currency (USD, EUR, GBP, CAD, CHF, AUD, JPY).
+    public func fetchPrices() async throws -> [String: Double] {
+        let data = try await get("/v1/prices", isTestnet: false)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw BlockchainError.invalidResponse
+        }
+        var prices = [String: Double]()
+        for (key, value) in object where key != "time" {
+            if let number = value as? NSNumber, number.doubleValue > 0 { prices[key] = number.doubleValue }
+        }
+        guard !prices.isEmpty else { throw BlockchainError.invalidResponse }
+        return prices
+    }
+
+    /// Hourly price points of the last `days` days, oldest first.
+    public func fetchPriceHistory(currency: String, days: Int) async throws -> [PricePoint] {
+        guard currency.allSatisfy({ $0.isASCII && $0.isLetter }) else { throw BlockchainError.invalidResponse }
+        let data = try await get("/v1/historical-price?currency=\(currency)", isTestnet: false)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let prices = object["prices"] as? [[String: Any]] else { throw BlockchainError.invalidResponse }
+        let cutoff = Date().addingTimeInterval(-Double(days) * 86_400)
+        var points = [PricePoint]()
+        for entry in prices {
+            guard let time = (entry["time"] as? NSNumber)?.doubleValue,
+                  let price = (entry[currency] as? NSNumber)?.doubleValue, price > 0 else { continue }
+            let date = Date(timeIntervalSince1970: time)
+            if date >= cutoff { points.append(PricePoint(date: date, price: price)) }
+        }
+        return points.sorted { $0.date < $1.date }
+    }
+
+    // MARK: - Transaction history (most recent 25 per address)
+    public func fetchTransactions(address: String, isTestnet: Bool) async throws -> [EsploraTransaction] {
+        let checked = try checkedAddress(address, isTestnet: isTestnet)
+        let data = try await get("/address/\(checked)/txs", isTestnet: isTestnet)
+        return try JSONDecoder().decode([EsploraTransaction].self, from: data)
     }
 
     // MARK: - Broadcast

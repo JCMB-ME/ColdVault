@@ -157,10 +157,8 @@ public struct ReceiveView: View {
             .navigationTitle(L10n.receiveBitcoin(lang))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(L10n.close(lang)) {
-                        presentationMode.wrappedValue.dismiss()
-                    }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
                 }
             }
         }

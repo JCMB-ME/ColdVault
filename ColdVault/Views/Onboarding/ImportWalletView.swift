@@ -224,10 +224,8 @@ public struct ImportWalletView: View {
             .navigationTitle(L10n.importWalletTitle(lang))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(L10n.cancel(lang)) {
-                        presentationMode.wrappedValue.dismiss()
-                    }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
                 }
             }
             .sheet(isPresented: $showScanner) {
