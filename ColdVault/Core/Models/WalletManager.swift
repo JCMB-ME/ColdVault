@@ -93,6 +93,14 @@ public final class WalletManager: ObservableObject {
     @Published public var homeShowContacts: Bool {
         didSet { saveHomeOption(homeShowContacts, "homeShowContacts") }
     }
+    /// How many recent transactions the home screen lists (0 = all).
+    @Published public var homeTransactionCount: Int {
+        didSet { UserDefaults.standard.set(homeTransactionCount, forKey: "homeTransactionCount") }
+    }
+    /// Converter card (BTC / sats / fiat) on the home screen.
+    @Published public var homeShowCalculator: Bool {
+        didSet { saveHomeOption(homeShowCalculator, "homeShowCalculator") }
+    }
     /// One Receive/Send pill switched by swiping (on) or two separate buttons (off).
     @Published public var swipeActionButton: Bool {
         didSet { UserDefaults.standard.set(swipeActionButton, forKey: "swipeActionButton") }
@@ -145,6 +153,8 @@ public final class WalletManager: ObservableObject {
         self.homeShowFiat = defaults.bool(forKey: "homeShowFiat")
         self.homeShowPriceChart = defaults.bool(forKey: "homeShowPriceChart")
         self.homeShowContacts = defaults.bool(forKey: "homeShowContacts")
+        self.homeTransactionCount = defaults.object(forKey: "homeTransactionCount") as? Int ?? 10
+        self.homeShowCalculator = defaults.bool(forKey: "homeShowCalculator")
         self.swipeActionButton = defaults.bool(forKey: "swipeActionButton")
         let savedCurrency = defaults.string(forKey: "fiatCurrency") ?? FiatCurrency.deviceDefault
         self.fiatCurrency = FiatCurrency.supported.contains(savedCurrency) ? savedCurrency : "USD"

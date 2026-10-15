@@ -53,6 +53,10 @@ public struct ReceiveView: View {
                 .contentShape(Rectangle())
                 .onTapGesture(perform: reveal)
 
+            // Fixed title bar above the scrolling content (text never runs under it).
+            VStack(spacing: 0) {
+            SheetHeader(title: L10n.receiveBitcoin(lang))
+                .allowsHitTesting(false)
             GeometryReader { geo in
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 22) {
@@ -127,10 +131,12 @@ public struct ReceiveView: View {
                 }
                 .frame(maxWidth: .infinity)
                 // Centered in the sheet at first; at the top once raised.
-                .padding(.top, qrRaised ? 64 : max(64, (geo.size.height - ReceiveView.qrBlock) / 2))
+                // Centered on the sheet at first (minus half the title bar); at the top once raised.
+                .padding(.top, qrRaised ? 14 : max(14, (geo.size.height - ReceiveView.qrBlock) / 2 - 24))
                 .padding(.bottom, 24)
             }
             .scrollDisabled(revealStep == 0)
+            }
             }
 
             if revealStep == 0 {
@@ -144,13 +150,6 @@ public struct ReceiveView: View {
                 .allowsHitTesting(false)
                 .transition(.opacity)
             }
-        }
-        .overlay(alignment: .top) {
-            Text(L10n.receiveBitcoin(lang))
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(Color(uiColor: .label))
-                .padding(.top, 22)
-                .allowsHitTesting(false)
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)

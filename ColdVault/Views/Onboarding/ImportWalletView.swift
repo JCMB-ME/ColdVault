@@ -65,6 +65,9 @@ public struct ImportWalletView: View {
         ZStack {
             GlassAmbientBackground()
 
+            // Fixed title bar above the scrolling content (text never runs under it).
+            VStack(spacing: 0) {
+            SheetHeader(title: L10n.importWalletTitle(lang), onClose: { presentationMode.wrappedValue.dismiss() })
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 22) {
                     VStack(spacing: 8) {
@@ -153,23 +156,11 @@ public struct ImportWalletView: View {
                     }
                     .padding(.horizontal, 24)
                 }
-                .padding(.top, 64)
+                .padding(.top, 12)
                 .padding(.bottom, 32)
             }
             .scrollDismissesKeyboard(.interactively)
-        }
-        .overlay(alignment: .top) {
-            ZStack {
-                Text(L10n.importWalletTitle(lang))
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(Color(uiColor: .label))
-                HStack {
-                    Spacer()
-                    SheetCloseButton(floating: true) { presentationMode.wrappedValue.dismiss() }
-                }
-                .padding(.trailing, 14)
             }
-            .padding(.top, 18)
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)

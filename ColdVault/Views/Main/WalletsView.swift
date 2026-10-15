@@ -29,6 +29,14 @@ struct WalletsView: View {
     @State private var iconSlot: IconTarget?
     /// The wallet being dragged to a new position.
     @State private var draggingSlot: String?
+    @State private var deleteAccountTarget: AccountTarget?
+
+    private struct AccountTarget: Identifiable {
+        var id: String { "\(slot)-\(account)" }
+        let slot: String
+        let account: Int
+        let name: String
+    }
 
     private struct IconTarget: Identifiable {
         var id: String { slot }
@@ -68,23 +76,38 @@ struct WalletsView: View {
                     .padding(.bottom, 4)
                 }
 
-                ForEach(walletManager.library) { wallet in
+                ForEach(keyWallets) { wallet in
+                    let isDragging = draggingSlot == wallet.slot
                     walletCard(wallet)
                         .transition(.asymmetric(insertion: .scale(scale: 0.94).combined(with: .opacity),
                                                 removal: .opacity))
+                        // The card itself is what moves (no floating copy under the finger):
+                        // it lifts slightly while it swaps places with the others.
+                        .scaleEffect(isDragging ? 1.03 : 1)
+                        .shadow(color: Color.black.opacity(isDragging ? 0.16 : 0), radius: 16, x: 0, y: 8)
+                        .zIndex(isDragging ? 1 : 0)
+                        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isDragging)
                         // Press and hold, then drag to reorder.
                         .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 22, style: .continuous))
-                        .onDrag {
+                        .onDrag({
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                             draggingSlot = wallet.slot
                             return NSItemProvider(object: wallet.slot as NSString)
-                        }
+                        }, preview: {
+                            Color.clear.frame(width: 1, height: 1)
+                        })
                         .onDrop(of: [UTType.text], delegate: WalletDropDelegate(target: wallet.slot,
                                                                                  dragging: $draggingSlot,
                                                                                  walletManager: walletManager))
                 }
 
-                if walletManager.library.count > 1 {
+                // Every watch-only wallet together, in one card.
+                if !watchWallets.isEmpty {
+                    watchOnlyCard
+                        .transition(.opacity)
+                }
+
+                if keyWallets.count > 1 {
                     Text(t("Press and hold a wallet, then drag it to change the order.",
                            "Mantén presionada una billetera y arrástrala para cambiar el orden."))
                         .font(.system(size: 12))
@@ -147,6 +170,20 @@ struct WalletsView: View {
                 }
             }
         }
+        .alert(t("Delete this account?", "¿Eliminar esta cuenta?"),
+               isPresented: Binding(get: { deleteAccountTarget != nil }, set: { if !$0 { deleteAccountTarget = nil } }),
+               presenting: deleteAccountTarget) { target in
+            Button(L10n.cancel(lang), role: .cancel) {}
+            Button(t("Delete", "Eliminar"), role: .destructive) {
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                    walletManager.deleteAccount(slot: target.slot, account: target.account)
+                }
+            }
+        } message: { target in
+            Text(t("\"\(target.name)\" is removed from this iPhone. Its bitcoin stays in your recovery phrase: create a new account to see it again.",
+                   "\"\(target.name)\" se quita de este iPhone. Sus bitcoins siguen en tu frase de recuperación: crea una cuenta nueva para volver a verla."))
+        }
         .alert(L10n.deleteWalletConfirmTitle(lang), isPresented: Binding(get: { deleteSlot != nil },
                                                                          set: { if !$0 { deleteSlot = nil } })) {
             Button(L10n.cancel(lang), role: .cancel) {}
@@ -174,6 +211,115 @@ struct WalletsView: View {
         return accounts.filter { !$0.record.isTestnet }
             .compactMap { walletManager.cachedBalance(of: $0.record) }
             .reduce(0, +)
+    }
+
+    private var keyWallets: [LibraryWallet] { walletManager.library.filter { !isWatchOnly($0) } }
+    private var watchWallets: [LibraryWallet] { walletManager.library.filter { isWatchOnly($0) } }
+
+    private func isWatchOnly(_ wallet: LibraryWallet) -> Bool {
+        wallet.bundle.accounts.first?.record.type == .watchOnly
+    }
+
+    // MARK: - Watch-only wallets (one card)
+
+    private var watchOnlyCard: some View {
+        let wallets = watchWallets
+        return VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "eye")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                    .frame(width: 46, height: 46)
+                    .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(t("Watch-only", "Observación"))
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                    Text(wallets.count == 1 ? t("1 wallet · no keys", "1 billetera · sin claves")
+                                            : t("\(wallets.count) wallets · no keys", "\(wallets.count) billeteras · sin claves"))
+                        .font(.system(size: 13))
+                        .foregroundColor(Palette.secondary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
+
+            VStack(spacing: 4) {
+                ForEach(wallets) { wallet in
+                    ForEach(Array(wallet.bundle.accounts.enumerated()), id: \.element.id) { index, account in
+                        watchRow(wallet: wallet, index: index, account: account)
+                    }
+                }
+            }
+            .padding(.horizontal, 4)
+            .padding(.bottom, 8)
+        }
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color(uiColor: .label).opacity(wallets.contains { $0.slot == walletManager.activeSlot } ? 0.12 : 0),
+                        lineWidth: 1)
+        )
+    }
+
+    private func watchRow(wallet: LibraryWallet, index: Int, account: AccountSlot) -> some View {
+        let selected = wallet.slot == walletManager.activeSlot && index == wallet.bundle.selected
+        let title = wallet.bundle.accounts.count > 1 ? "\(wallet.bundle.name) · \(account.name)" : wallet.bundle.name
+        return HStack(spacing: 10) {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    walletManager.selectWallet(slot: wallet.slot, account: index)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { onSelect() }
+            } label: {
+                HStack(spacing: 12) {
+                    WalletAvatar(wallet: wallet, images: walletManager.walletImages, size: 32, highlighted: selected)
+                    Text(title)
+                        .font(.system(size: 16, weight: selected ? .semibold : .regular))
+                        .foregroundColor(Color(uiColor: .label))
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    if let sats = walletManager.cachedBalance(of: account.record) {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text(walletManager.format(sats: sats))
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(Color(uiColor: .label))
+                            Text(walletManager.displayUnit.rawValue)
+                                .font(.system(size: 11))
+                                .foregroundColor(Palette.secondary)
+                        }
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            Menu {
+                Button {
+                    renameText = wallet.bundle.name
+                    renameTarget = RenameTarget(slot: wallet.slot, account: nil)
+                } label: { Label(t("Rename", "Renombrar"), systemImage: "pencil") }
+                Button { iconSlot = IconTarget(slot: wallet.slot) } label: {
+                    Label(t("Picture or icon", "Imagen o icono"), systemImage: "photo")
+                }
+                Button(role: .destructive) {
+                    deleteSlot = wallet.slot
+                } label: { Label(t("Delete wallet", "Eliminar billetera"), systemImage: "trash") }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Palette.secondary)
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(minHeight: 50)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(uiColor: .systemBackground).opacity(selected ? 0.75 : 0))
+        )
     }
 
     // MARK: - One wallet
@@ -244,6 +390,15 @@ struct WalletsView: View {
                         Button { addAccount(to: wallet.slot) } label: {
                             Label(t("New account", "Nueva cuenta"), systemImage: "plus")
                         }
+                    }
+                    if isSeedWallet(wallet) && wallet.bundle.accounts.count > 1 {
+                        Menu {
+                            ForEach(Array(wallet.bundle.accounts.enumerated()), id: \.element.id) { index, account in
+                                Button(role: .destructive) {
+                                    deleteAccountTarget = AccountTarget(slot: wallet.slot, account: index, name: account.name)
+                                } label: { Text(account.name) }
+                            }
+                        } label: { Label(t("Delete account", "Eliminar cuenta"), systemImage: "minus.circle") }
                     }
                     Button(role: .destructive) {
                         deleteSlot = wallet.slot
@@ -344,6 +499,17 @@ struct WalletsView: View {
             )
             .contentShape(Rectangle())
         }
+        .contextMenu {
+            Button {
+                renameText = account.name
+                renameTarget = RenameTarget(slot: wallet.slot, account: index)
+            } label: { Label(t("Rename account", "Renombrar cuenta"), systemImage: "pencil") }
+            if isSeedWallet(wallet) && wallet.bundle.accounts.count > 1 {
+                Button(role: .destructive) {
+                    deleteAccountTarget = AccountTarget(slot: wallet.slot, account: index, name: account.name)
+                } label: { Label(t("Delete account", "Eliminar cuenta"), systemImage: "trash") }
+            }
+        }
     }
 
     private func addAccount(to slot: String) {
@@ -404,27 +570,28 @@ struct WalletIconPicker: View {
     var body: some View {
         ZStack {
             GlassAmbientBackground()
+            VStack(spacing: 0) {
+            SheetHeader(title: t("Picture", "Imagen"), onClose: { presentationMode.wrappedValue.dismiss() })
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 22) {
                     if let wallet = wallet {
-                        WalletAvatar(wallet: wallet, images: walletManager.walletImages, size: 108)
-                            .id("\(wallet.bundle.symbol ?? "")-\(walletManager.walletImages[slot]?.count ?? 0)")
-                            .transition(.scale(scale: 0.8).combined(with: .opacity))
+                        // Tap the picture (camera bubble) to choose a photo.
+                        PhotosPicker(selection: $photoItem, matching: .images) {
+                            ZStack(alignment: .bottomTrailing) {
+                                WalletAvatar(wallet: wallet, images: walletManager.walletImages, size: 108)
+                                    .id("\(wallet.bundle.symbol ?? "")-\(walletManager.walletImages[slot]?.count ?? 0)")
+                                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+                                CameraBadge()
+                                    .offset(x: 2, y: 2)
+                            }
+                        }
+                        .buttonStyle(.plain)
                         Text(wallet.bundle.name)
                             .font(.system(size: 20, weight: .semibold))
                             .foregroundColor(Color(uiColor: .label))
                     }
 
                     HStack(spacing: 10) {
-                        PhotosPicker(selection: $photoItem, matching: .images) {
-                            Label(t("Choose photo", "Elegir foto"), systemImage: "photo.on.rectangle")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(Color(uiColor: .systemBackground))
-                                .padding(.horizontal, 18)
-                                .frame(height: 40)
-                                .background(Capsule().fill(Color(uiColor: .label)))
-                        }
-                        .buttonStyle(.plain)
                         if walletManager.walletImages[slot] != nil {
                             Button {
                                 withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
@@ -459,22 +626,10 @@ struct WalletIconPicker: View {
                     }
                     .padding(.horizontal, 20)
                 }
-                .padding(.top, 64)
+                .padding(.top, 12)
                 .padding(.bottom, 32)
             }
-        }
-        .overlay(alignment: .top) {
-            ZStack {
-                Text(t("Picture", "Imagen"))
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(Color(uiColor: .label))
-                HStack {
-                    Spacer()
-                    SheetCloseButton(floating: true) { presentationMode.wrappedValue.dismiss() }
-                }
-                .padding(.trailing, 14)
             }
-            .padding(.top, 18)
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)

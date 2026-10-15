@@ -47,6 +47,12 @@ public struct CreateWalletView: View {
         ZStack {
             GlassAmbientBackground()
 
+            // Fixed title bar (title, step dots, close) above the scrolling content.
+            VStack(spacing: 0) {
+            SheetHeader(title: t("New wallet", "Nueva billetera"),
+                        onClose: { presentationMode.wrappedValue.dismiss() }) {
+                StepDots(count: 2, current: isVerifying ? 1 : 0)
+            }
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 24) {
                     if isVerifying {
@@ -59,27 +65,11 @@ public struct CreateWalletView: View {
                                                     removal: .move(edge: .leading).combined(with: .opacity)))
                     }
                 }
-                .padding(.top, 76)
+                .padding(.top, 12)
                 .padding(.bottom, 32)
             }
             .scrollDismissesKeyboard(.interactively)
-        }
-        // Title, step dots and close button, as on the Receive sheet.
-        .overlay(alignment: .top) {
-            ZStack {
-                VStack(spacing: 8) {
-                    Text(t("New wallet", "Nueva billetera"))
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(Color(uiColor: .label))
-                    StepDots(count: 2, current: isVerifying ? 1 : 0)
-                }
-                HStack {
-                    Spacer()
-                    SheetCloseButton(floating: true) { presentationMode.wrappedValue.dismiss() }
-                }
-                .padding(.trailing, 14)
             }
-            .padding(.top, 18)
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)

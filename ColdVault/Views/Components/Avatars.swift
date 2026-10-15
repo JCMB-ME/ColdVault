@@ -22,6 +22,12 @@ struct ContactAvatar: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
+            } else if let symbol = contact.symbol {
+                Image(systemName: symbol)
+                    .font(.system(size: size * 0.4, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(SettingsStyle.groupFill)
             } else {
                 Text(contact.initials)
                     .font(.system(size: size * 0.34, weight: .semibold))
@@ -33,6 +39,14 @@ struct ContactAvatar: View {
         .frame(width: size, height: size)
         .clipShape(Circle())
     }
+}
+
+extension ContactAvatar {
+    /// Built-in icons offered for contacts.
+    static let symbols = ["person.fill", "person.2.fill", "person.3.fill", "heart.fill", "house.fill",
+                          "briefcase.fill", "building.2.fill", "building.columns.fill", "cart.fill", "bag.fill",
+                          "creditcard.fill", "banknote.fill", "bitcoinsign.circle.fill", "gift.fill", "star.fill",
+                          "graduationcap.fill", "car.fill", "airplane", "pawprint.fill", "gamecontroller.fill"]
 }
 
 enum ContactPhoto {
@@ -279,5 +293,74 @@ struct TipRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 6)
         }
+    }
+}
+
+// MARK: - Sheet header
+
+/// Title (and optional accessory below it) with the glass close button, as a fixed bar
+/// above the sheet's scrolling content, so scrolled text never runs under the title.
+struct SheetHeader<Accessory: View>: View {
+    let title: String
+    let onClose: (() -> Void)?
+    let accessory: Accessory
+
+    init(title: String, onClose: (() -> Void)? = nil, @ViewBuilder accessory: () -> Accessory) {
+        self.title = title
+        self.onClose = onClose
+        self.accessory = accessory()
+    }
+
+    var body: some View {
+        ZStack {
+            VStack(spacing: 8) {
+                Text(title)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                accessory
+            }
+            if let onClose = onClose {
+                HStack {
+                    Spacer()
+                    SheetCloseButton(floating: true, action: onClose)
+                }
+                .padding(.trailing, 14)
+            }
+        }
+        .padding(.top, 18)
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity)
+    }
+}
+
+extension SheetHeader where Accessory == EmptyView {
+    init(title: String, onClose: (() -> Void)? = nil) {
+        self.init(title: title, onClose: onClose) { EmptyView() }
+    }
+}
+
+/// Icon in a small circle at the start of a settings / card row.
+struct RowIcon: View {
+    let systemName: String
+    var tint: Color = Color(uiColor: .label)
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(tint)
+            .frame(width: 32, height: 32)
+            .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+    }
+}
+
+/// Small camera bubble on the corner of an editable picture.
+struct CameraBadge: View {
+    var body: some View {
+        Image(systemName: "camera.fill")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(Color(uiColor: .systemBackground))
+            .frame(width: 32, height: 32)
+            .background(Circle().fill(Color(uiColor: .label)))
+            .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: 3))
     }
 }

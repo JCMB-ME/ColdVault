@@ -187,7 +187,11 @@ extension WalletManager {
         try await ensureSelfTest()
         let secret = try await loadSecret(reason: appLanguage == .english ? "Confirm to create a new account"
                                                                           : "Confirma para crear una cuenta nueva")
-        let number = (wallet.bundle.accounts.map { $0.number }.max() ?? 0) + 1
+        // The lowest free account number, so accounts stay contiguous (0, 1, 2…) after a
+        // deletion and every BIP-44 wallet finds them again when restoring the phrase.
+        let used = Set(wallet.bundle.accounts.map { $0.number })
+        var number: UInt32 = 0
+        while used.contains(number) { number += 1 }
         let isTestnet = record.isTestnet
         let keyring = try await Task.detached(priority: .userInitiated) {
             try WalletKeyring.from(secret: secret, isTestnet: isTestnet, account: number)
@@ -221,6 +225,25 @@ extension WalletManager {
               library[index].bundle.accounts.indices.contains(account) else { return }
         library[index].bundle.accounts[account].name = trimmed
         writeMetadata(library[index].bundle, slot: slot)
+    }
+
+    /// Removes an account from this iPhone (the wallet keeps at least one). Nothing is
+    /// lost: the account is derived from the phrase and comes back with "New account".
+    public func deleteAccount(slot: String, account: Int) {
+        guard let index = library.firstIndex(where: { $0.slot == slot }),
+              library[index].bundle.accounts.count > 1,
+              library[index].bundle.accounts.indices.contains(account) else { return }
+        var bundle = library[index].bundle
+        let wasSelected = bundle.selected == account
+        bundle.accounts.remove(at: account)
+        if bundle.selected > account || bundle.selected >= bundle.accounts.count {
+            bundle.selected = max(0, bundle.selected - 1)
+        }
+        library[index].bundle = bundle
+        writeMetadata(bundle, slot: slot)
+        if slot == activeSlot && wasSelected {
+            selectWallet(slot: slot, account: bundle.selected)
+        }
     }
 
     /// Last known balance of any account (from its on-device cache), for the wallet list.

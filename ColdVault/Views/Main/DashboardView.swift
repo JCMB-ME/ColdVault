@@ -536,19 +536,13 @@ public struct DashboardView: View {
             if walletManager.isAirGapped {
                 Label(t("Offline — balance not updated", "Sin conexión — saldo no actualizado"), systemImage: "wifi.slash")
                     .foregroundColor(Palette.secondary)
-            } else if walletManager.isLoadingBalance {
-                ProgressView()
             } else if walletManager.balanceError != nil {
                 Label(t("Couldn't update balance — pull to retry", "No se pudo actualizar el saldo — desliza para reintentar"),
                       systemImage: "exclamationmark.triangle.fill")
                     .foregroundColor(.orange)
-            } else if let updated = walletManager.lastBalanceUpdate {
-                Text(t("Updated ", "Actualizado ") + updated.formatted(date: .omitted, time: .shortened))
-                    .foregroundColor(Palette.secondary)
             }
         }
         .font(.system(size: 12, weight: .medium))
-        .frame(height: 18)
     }
 
     private func toggleDisplayUnit() {
@@ -598,6 +592,10 @@ struct HomeExtrasView: View {
             if walletManager.homeShowTransactions {
                 transactions
             }
+            if walletManager.homeShowCalculator {
+                CalculatorCard()
+                    .environmentObject(walletManager)
+            }
             if walletManager.homeShowPriceChart && !walletManager.isTestnet {
                 MinimalPriceChart()
                     .environmentObject(walletManager)
@@ -616,10 +614,10 @@ struct HomeExtrasView: View {
                 note(walletManager.isLoadingTransactions ? t("Loading…", "Cargando…")
                                                          : t("No transactions yet", "Aún no hay transacciones"))
             } else {
-                ForEach(walletManager.transactions.prefix(10)) { tx in
+                ForEach(walletManager.transactions.prefix(transactionLimit)) { tx in
                     TransactionCard(transaction: tx)
                 }
-                if walletManager.transactions.count > 10 {
+                if walletManager.transactions.count > transactionLimit {
                     Button(action: onShowHistory) {
                         Text(t("See all", "Ver todas"))
                             .font(.system(size: 14, weight: .semibold))
@@ -630,6 +628,11 @@ struct HomeExtrasView: View {
                 }
             }
         }
+    }
+
+    /// Settings › How many (0 = all).
+    private var transactionLimit: Int {
+        walletManager.homeTransactionCount > 0 ? walletManager.homeTransactionCount : Int.max
     }
 
     // MARK: Contacts (tap to send)

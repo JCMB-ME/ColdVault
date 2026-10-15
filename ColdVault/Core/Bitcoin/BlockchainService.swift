@@ -374,6 +374,44 @@ public final class BlockchainService {
         return points.sorted { $0.date < $1.date }
     }
 
+    /// Live BTC price in every currency (Coinbase spot exchange rates: one request,
+    /// updated continuously, direct BTC/MXN, BTC/JPY, BTC/CNY, BTC/USD quotes).
+    public func fetchSpotPrices() async throws -> [String: Double] {
+        guard let url = URL(string: "https://api.coinbase.com/v2/exchange-rates?currency=BTC") else {
+            throw BlockchainError.invalidResponse
+        }
+        let data = try await get(url: url)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let payload = object["data"] as? [String: Any],
+              let rates = payload["rates"] as? [String: Any] else { throw BlockchainError.invalidResponse }
+        var result = [String: Double]()
+        for code in FiatCurrency.supported {
+            if let text = rates[code] as? String, let value = Double(text), value > 0 { result[code] = value }
+        }
+        guard result["USD"] != nil else { throw BlockchainError.invalidResponse }
+        return result
+    }
+
+    /// All four app currencies, from the live spot quotes or, if unavailable, from
+    /// mempool.space prices × daily FX rates.
+    public func fetchFiatPrices() async throws -> [String: Double] {
+        if let spot = try? await fetchSpotPrices(), FiatCurrency.supported.allSatisfy({ spot[$0] != nil }) {
+            return spot
+        }
+        let prices = try await fetchPrices()
+        guard let usd = prices["USD"] else { throw BlockchainError.invalidResponse }
+        var result = ["USD": usd]
+        let rates = try? await fetchUSDExchangeRates()
+        for code in FiatCurrency.supported where code != "USD" {
+            if let direct = prices[code] {
+                result[code] = direct
+            } else if let rate = rates?[code] {
+                result[code] = usd * rate
+            }
+        }
+        return result
+    }
+
     /// USD → other currencies (open.er-api.com, free, updated daily). Used for MXN and CNY,
     /// which mempool.space does not price.
     public func fetchUSDExchangeRates() async throws -> [String: Double] {

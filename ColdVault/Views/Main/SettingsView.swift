@@ -36,6 +36,9 @@ public struct SettingsView: View {
     @State private var showCustomDecimals: Bool = false
     @State private var customDecimalsText: String = ""
     @State private var editingContact: Contact?
+    @State private var showCalculator = false
+    @State private var showCustomTransactions = false
+    @State private var customTransactionsText = ""
     /// Bumped on every reveal so the words animate in again.
     @State private var revealCount = 0
     @AppStorage("appLockEnabled") private var appLockEnabled = false
@@ -86,23 +89,47 @@ public struct SettingsView: View {
                 SettingsSection(header: t("Home screen", "Pantalla principal"),
                                 footer: t("Start minimal. Add only what you need. Swipe button: one Receive button you swipe to turn into Send.",
                                           "Empieza mínimo. Añade solo lo que necesites. Botón deslizable: un solo botón Recibir que se convierte en Enviar al deslizarlo.")) {
-                    SettingsRow(title: t("Transactions", "Transacciones")) {
-                        Toggle("", isOn: $walletManager.homeShowTransactions).labelsHidden()
+                    SettingsRow(title: t("Transactions", "Transacciones"), icon: "list.bullet") {
+                        Toggle("", isOn: $walletManager.homeShowTransactions.animation()).labelsHidden()
                     }
-                    SettingsDivider()
-                    SettingsRow(title: t("Fiat value", "Valor fiat")) {
+                    if walletManager.homeShowTransactions {
+                        SettingsDivider(inset: 60)
+                        Menu {
+                            ForEach([5, 10], id: \.self) { count in
+                                Button { walletManager.homeTransactionCount = count } label: {
+                                    menuLabel("\(count)", selected: walletManager.homeTransactionCount == count)
+                                }
+                            }
+                            Button { walletManager.homeTransactionCount = 0 } label: {
+                                menuLabel(t("All", "Todas"), selected: walletManager.homeTransactionCount == 0)
+                            }
+                            Button(t("Custom…", "Personalizado…")) {
+                                customTransactionsText = walletManager.homeTransactionCount > 0 ? "\(walletManager.homeTransactionCount)" : ""
+                                showCustomTransactions = true
+                            }
+                        } label: {
+                            SettingsRow(title: t("How many", "Cuántas"), value: transactionCountName, chevron: true,
+                                        icon: "number")
+                        }
+                    }
+                    SettingsDivider(inset: 60)
+                    SettingsRow(title: t("Fiat value", "Valor fiat"), icon: "dollarsign") {
                         Toggle("", isOn: $walletManager.homeShowFiat).labelsHidden()
                     }
-                    SettingsDivider()
-                    SettingsRow(title: t("Price chart", "Gráfico de precio")) {
+                    SettingsDivider(inset: 60)
+                    SettingsRow(title: t("Price chart", "Gráfico de precio"), icon: "chart.bar.xaxis") {
                         Toggle("", isOn: $walletManager.homeShowPriceChart).labelsHidden()
                     }
-                    SettingsDivider()
-                    SettingsRow(title: t("Contacts", "Contactos")) {
+                    SettingsDivider(inset: 60)
+                    SettingsRow(title: t("Contacts", "Contactos"), icon: "person.2") {
                         Toggle("", isOn: $walletManager.homeShowContacts).labelsHidden()
                     }
-                    SettingsDivider()
-                    SettingsRow(title: t("Swipe button", "Botón deslizable")) {
+                    SettingsDivider(inset: 60)
+                    SettingsRow(title: t("Calculator", "Calculadora"), icon: "plus.forwardslash.minus") {
+                        Toggle("", isOn: $walletManager.homeShowCalculator).labelsHidden()
+                    }
+                    SettingsDivider(inset: 60)
+                    SettingsRow(title: t("Swipe button", "Botón deslizable"), icon: "hand.draw") {
                         Toggle("", isOn: $walletManager.swipeActionButton).labelsHidden()
                     }
                 }
@@ -113,9 +140,10 @@ public struct SettingsView: View {
                             ForEach(DisplayUnit.allCases) { unit in Text(unit.rawValue).tag(unit) }
                         }
                     } label: {
-                        SettingsRow(title: t("Unit", "Unidad"), value: walletManager.displayUnit.rawValue, chevron: true)
+                        SettingsRow(title: t("Unit", "Unidad"), value: walletManager.displayUnit.rawValue, chevron: true,
+                                    icon: "bitcoinsign.circle")
                     }
-                    SettingsDivider()
+                    SettingsDivider(inset: 60)
                     Menu {
                         Button(t("Automatic", "Automático")) { walletManager.displayDecimals = nil }
                         ForEach(0...4, id: \.self) { value in
@@ -126,40 +154,42 @@ public struct SettingsView: View {
                             showCustomDecimals = true
                         }
                     } label: {
-                        SettingsRow(title: t("Decimals", "Decimales"), value: decimalsName, chevron: true)
+                        SettingsRow(title: t("Decimals", "Decimales"), value: decimalsName, chevron: true, icon: "textformat.123")
                     }
-                    SettingsDivider()
+                    SettingsDivider(inset: 60)
                     Menu {
                         // Explicit buttons (not a Picker) so every currency is always listed.
                         ForEach(FiatCurrency.supported, id: \.self) { code in
                             Button {
                                 walletManager.fiatCurrency = code
                             } label: {
-                                if walletManager.fiatCurrency == code {
-                                    Label(FiatCurrency.name(code, lang), systemImage: "checkmark")
-                                } else {
-                                    Text(FiatCurrency.name(code, lang))
-                                }
+                                menuLabel(FiatCurrency.name(code, lang), selected: walletManager.fiatCurrency == code)
                             }
                         }
                     } label: {
-                        SettingsRow(title: t("Currency", "Moneda"), value: walletManager.fiatCurrency, chevron: true)
+                        SettingsRow(title: t("Currency", "Moneda"), value: walletManager.fiatCurrency, chevron: true,
+                                    icon: "banknote")
                     }
-                    SettingsDivider()
+                    SettingsDivider(inset: 60)
+                    Button { showCalculator = true } label: {
+                        SettingsRow(title: t("Calculator", "Calculadora"), chevron: true, icon: "plus.forwardslash.minus")
+                    }
+                    SettingsDivider(inset: 60)
                     Button { route = .contacts } label: {
                         SettingsRow(title: t("Contacts", "Contactos"),
-                                    value: walletManager.contacts.isEmpty ? nil : "\(walletManager.contacts.count)", chevron: true)
+                                    value: walletManager.contacts.isEmpty ? nil : "\(walletManager.contacts.count)", chevron: true,
+                                    icon: "person.crop.circle")
                     }
-                    SettingsDivider()
+                    SettingsDivider(inset: 60)
                     Button {
                         backupSlot = walletManager.activeSlot
                         route = .backup
                     } label: {
-                        SettingsRow(title: t("Backup", "Respaldo"), chevron: true)
+                        SettingsRow(title: t("Backup", "Respaldo"), chevron: true, icon: "key")
                     }
-                    SettingsDivider()
+                    SettingsDivider(inset: 60)
                     Button { route = .security } label: {
-                        SettingsRow(title: t("Security", "Seguridad"), chevron: true)
+                        SettingsRow(title: t("Security", "Seguridad"), chevron: true, icon: "lock.shield")
                     }
                 }
 
@@ -170,10 +200,11 @@ public struct SettingsView: View {
                             ForEach(AppTheme.allCases) { theme in Text(themeName(theme)).tag(theme) }
                         }
                     } label: {
-                        SettingsRow(title: t("Theme", "Tema"), value: themeName(walletManager.appTheme), chevron: true)
+                        SettingsRow(title: t("Theme", "Tema"), value: themeName(walletManager.appTheme), chevron: true,
+                                    icon: "circle.lefthalf.filled")
                     }
-                    SettingsDivider()
-                    SettingsRow(title: "Liquid Glass") {
+                    SettingsDivider(inset: 60)
+                    SettingsRow(title: "Liquid Glass", icon: "drop") {
                         Toggle("", isOn: $walletManager.liquidGlass).labelsHidden()
                     }
                 }
@@ -183,14 +214,15 @@ public struct SettingsView: View {
                                           "Air-Gap corta toda conexión a internet. Testnet vuelve a derivar tus direcciones (Face ID). Servidor: usa tu propio nodo para que los servidores públicos nunca vean tus direcciones.")) {
                     Button { route = .server } label: {
                         SettingsRow(title: t("Server", "Servidor"),
-                                    value: ElectrumServerConfig.current?.host ?? t("Public", "Públicos"), chevron: true)
+                                    value: ElectrumServerConfig.current?.host ?? t("Public", "Públicos"), chevron: true,
+                                    icon: "server.rack")
                     }
-                    SettingsDivider()
-                    SettingsRow(title: t("Air-Gap mode", "Modo Air-Gap")) {
+                    SettingsDivider(inset: 60)
+                    SettingsRow(title: t("Air-Gap mode", "Modo Air-Gap"), icon: "airplane") {
                         Toggle("", isOn: $walletManager.isAirGapped).labelsHidden()
                     }
-                    SettingsDivider()
-                    SettingsRow(title: "Testnet4") {
+                    SettingsDivider(inset: 60)
+                    SettingsRow(title: "Testnet4", icon: "testtube.2") {
                         if isSwitchingNetwork {
                             ProgressView()
                         } else {
@@ -208,6 +240,9 @@ public struct SettingsView: View {
             .padding(.bottom, 40)
             .buttonStyle(.plain)
         }
+        .sheet(isPresented: $showCalculator) {
+            CalculatorView().environmentObject(walletManager)
+        }
         .alert(t("Decimals", "Decimales"), isPresented: $showCustomDecimals) {
             TextField("8", text: $customDecimalsText)
                 .keyboardType(.numberPad)
@@ -219,6 +254,32 @@ public struct SettingsView: View {
             }
         } message: {
             Text(t("Number of decimals to show (0–16).", "Cuántos decimales mostrar (0–16)."))
+        }
+        .alert(t("Transactions", "Transacciones"), isPresented: $showCustomTransactions) {
+            TextField("20", text: $customTransactionsText)
+                .keyboardType(.numberPad)
+            Button(L10n.cancel(lang), role: .cancel) {}
+            Button("OK") {
+                if let value = Int(customTransactionsText.trimmingCharacters(in: .whitespaces)), (1...1000).contains(value) {
+                    walletManager.homeTransactionCount = value
+                }
+            }
+        } message: {
+            Text(t("How many recent transactions to show on the home screen.",
+                   "Cuántas transacciones recientes mostrar en la pantalla principal."))
+        }
+    }
+
+    private var transactionCountName: String {
+        walletManager.homeTransactionCount == 0 ? t("All", "Todas") : "\(walletManager.homeTransactionCount)"
+    }
+
+    @ViewBuilder
+    private func menuLabel(_ text: String, selected: Bool) -> some View {
+        if selected {
+            Label(text, systemImage: "checkmark")
+        } else {
+            Text(text)
         }
     }
 
@@ -540,47 +601,61 @@ public struct SettingsView: View {
         SettingsTitle(text: t("Contacts", "Contactos"), topPadding: 0)
 
         if walletManager.contacts.isEmpty {
-            Text(t("Save the addresses of friends, family or your other wallets to send to them without copying addresses.",
-                   "Guarda las direcciones de amigos, familia u otras billeteras tuyas para enviarles sin copiar direcciones."))
-                .font(.system(size: 14))
-                .foregroundColor(Palette.secondary)
-                .padding(.horizontal, 4)
+            VStack(spacing: 12) {
+                Image(systemName: "person.2")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                    .frame(width: 64, height: 64)
+                    .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+                Text(t("No contacts yet", "Aún no hay contactos"))
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                Text(t("Save the addresses of friends, family or your other wallets to send to them without copying addresses.",
+                       "Guarda las direcciones de amigos, familia u otras billeteras tuyas para enviarles sin copiar direcciones."))
+                    .font(.system(size: 13))
+                    .foregroundColor(Palette.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 26)
+            .padding(.horizontal, 20)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
         } else {
-            SettingsSection(header: t("Saved", "Guardados"), footer: nil) {
-                ForEach(Array(walletManager.contacts.enumerated()), id: \.element.id) { index, contact in
-                    if index > 0 { SettingsDivider() }
+            VStack(spacing: 4) {
+                ForEach(walletManager.contacts) { contact in
                     Button { editingContact = contact } label: {
                         HStack(spacing: 12) {
-                            ContactAvatar(contact: contact, size: 36)
+                            ContactAvatar(contact: contact, size: 44)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(contact.name)
-                                    .font(.system(size: 16))
+                                    .font(.system(size: 16, weight: .semibold))
                                     .foregroundColor(Color(uiColor: .label))
-                                Text(shortAddress(contact.address))
-                                    .font(.system(size: 12, design: .monospaced))
+                                    .lineLimit(1)
+                                Text(contact.note.isEmpty ? shortAddress(contact.address) : contact.note)
+                                    .font(contact.note.isEmpty ? .system(size: 12, design: .monospaced) : .system(size: 13))
                                     .foregroundColor(Palette.secondary)
+                                    .lineLimit(1)
                             }
                             Spacer(minLength: 12)
                             Chevron()
                         }
-                        .padding(.horizontal, 16)
-                        .frame(minHeight: 60)
+                        .padding(.horizontal, 10)
+                        .frame(minHeight: 62)
                         .contentShape(Rectangle())
                     }
                 }
             }
+            .padding(6)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
         }
 
         Button {
             editingContact = Contact(name: "", address: "")
         } label: {
-            SettingsRow(title: t("Add contact", "Añadir contacto")) {
-                Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(Color(uiColor: .label))
-            }
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
+            ActionPillLabel(icon: "plus", title: t("Add contact", "Añadir contacto"), minWidth: 128)
         }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 4)
         .sheet(item: $editingContact) { contact in
             ContactEditorView(contact: contact)
                 .environmentObject(walletManager)
@@ -724,8 +799,8 @@ struct SettingsSection<Content: View>: View {
                 .foregroundColor(Palette.secondary)
                 .padding(.leading, 16)
             VStack(spacing: 0) { content }
-                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             if let footer = footer {
                 Text(footer)
                     .font(.system(size: 12))
@@ -739,31 +814,39 @@ struct SettingsSection<Content: View>: View {
 struct SettingsRow<Trailing: View>: View {
     let title: String
     var titleColor: Color = Color(uiColor: .label)
+    /// Optional icon in a small circle, as in the wallet cards.
+    var icon: String?
     let trailing: Trailing
 
-    init(title: String, titleColor: Color = Color(uiColor: .label), @ViewBuilder trailing: () -> Trailing) {
+    init(title: String, titleColor: Color = Color(uiColor: .label), icon: String? = nil,
+         @ViewBuilder trailing: () -> Trailing) {
         self.title = title
         self.titleColor = titleColor
+        self.icon = icon
         self.trailing = trailing()
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 12) {
+            if let icon = icon {
+                RowIcon(systemName: icon, tint: titleColor)
+            }
             Text(title)
                 .font(.system(size: 16))
                 .foregroundColor(titleColor)
             Spacer(minLength: 12)
             trailing
         }
-        .padding(.horizontal, 16)
-        .frame(minHeight: 52)
+        .padding(.horizontal, icon == nil ? 16 : 14)
+        .frame(minHeight: icon == nil ? 52 : 56)
         .contentShape(Rectangle())
     }
 }
 
 extension SettingsRow where Trailing == SettingsRowValue {
-    init(title: String, value: String? = nil, chevron: Bool = false, titleColor: Color = Color(uiColor: .label)) {
-        self.init(title: title, titleColor: titleColor) {
+    init(title: String, value: String? = nil, chevron: Bool = false, titleColor: Color = Color(uiColor: .label),
+         icon: String? = nil) {
+        self.init(title: title, titleColor: titleColor, icon: icon) {
             SettingsRowValue(value: value, chevron: chevron)
         }
     }
@@ -794,8 +877,11 @@ struct Chevron: View {
 }
 
 struct SettingsDivider: View {
+    /// 16 for plain rows, 60 for rows with an icon (the line starts at the text).
+    var inset: CGFloat = 16
+
     var body: some View {
-        Divider().padding(.leading, 16)
+        Divider().padding(.leading, inset)
     }
 }
 
@@ -873,12 +959,15 @@ struct ContactEditorView: View {
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                GlassAmbientBackground()
-                ScrollView {
+        ZStack {
+            GlassAmbientBackground()
+            VStack(spacing: 0) {
+                SheetHeader(title: isNew ? t("New contact", "Nuevo contacto") : t("Edit contact", "Editar contacto"),
+                            onClose: { presentationMode.wrappedValue.dismiss() })
+                ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 22) {
                         photoPicker
+                        iconGrid
 
                         SettingsSection(header: t("Name", "Nombre"), footer: nil) {
                             TextField(t("E.g. Mom, Savings", "Ej. Mamá, Ahorros"), text: $contact.name)
@@ -887,7 +976,7 @@ struct ContactEditorView: View {
                                 .frame(minHeight: 52)
                         }
                         SettingsSection(header: t("Bitcoin address", "Dirección Bitcoin"), footer: nil) {
-                            HStack {
+                            HStack(spacing: 14) {
                                 TextField("bc1…", text: $contact.address)
                                     .font(.system(size: 14, design: .monospaced))
                                     .textInputAutocapitalization(.never)
@@ -922,60 +1011,55 @@ struct ContactEditorView: View {
                                 .padding(.horizontal, 16)
                         }
 
-                        if !isNew {
-                            Button {
-                                showDeleteConfirmation = true
-                            } label: {
-                                SettingsRow(title: t("Delete contact", "Eliminar contacto"), titleColor: .red)
-                                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
+                        VStack(spacing: 14) {
+                            PrimaryCapsuleButton(title: t("Save", "Guardar"), icon: "checkmark") { save() }
+                            if !isNew {
+                                Button {
+                                    showDeleteConfirmation = true
+                                } label: {
+                                    Text(t("Delete contact", "Eliminar contacto"))
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(.red)
+                                }
                             }
-                            .buttonStyle(.plain)
                         }
+                        .padding(.horizontal, 4)
+                        .padding(.top, 4)
                     }
-                    .padding(20)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 32)
+                    .buttonStyle(.plain)
                 }
+                .scrollDismissesKeyboard(.interactively)
             }
-            .navigationTitle(isNew ? t("New contact", "Nuevo contacto") : t("Edit contact", "Editar contacto"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(t("Save", "Guardar")) { save() }
-                        .font(.system(size: 16, weight: .semibold))
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
-                }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .sheet(isPresented: $showScanner) {
+            QRScannerView { code in
+                contact.address = BitcoinAddress.parsePaymentURI(code)?.address
+                    ?? code.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            .sheet(isPresented: $showScanner) {
-                QRScannerView { code in
-                    contact.address = BitcoinAddress.parsePaymentURI(code)?.address
-                        ?? code.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-            }
-            .alert(t("Delete this contact?", "¿Eliminar este contacto?"), isPresented: $showDeleteConfirmation) {
-                Button(L10n.cancel(lang), role: .cancel) {}
-                Button(t("Delete", "Eliminar"), role: .destructive) {
-                    walletManager.deleteContact(contact)
-                    presentationMode.wrappedValue.dismiss()
-                }
+        }
+        .alert(t("Delete this contact?", "¿Eliminar este contacto?"), isPresented: $showDeleteConfirmation) {
+            Button(L10n.cancel(lang), role: .cancel) {}
+            Button(t("Delete", "Eliminar"), role: .destructive) {
+                walletManager.deleteContact(contact)
+                presentationMode.wrappedValue.dismiss()
             }
         }
     }
 
-    /// Photo in a large circle; tap to pick one from the library.
+    /// Photo in a large circle with the camera bubble; tap to pick one from the library.
     private var photoPicker: some View {
         VStack(spacing: 10) {
             PhotosPicker(selection: $photoItem, matching: .images) {
                 ZStack(alignment: .bottomTrailing) {
                     ContactAvatar(contact: contact, size: 104)
-                        .id(contact.photo?.count ?? 0)
+                        .id("\(contact.photo?.count ?? 0)-\(contact.symbol ?? "")")
                         .transition(.scale(scale: 0.85).combined(with: .opacity))
-                    Image(systemName: "camera.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Color(uiColor: .systemBackground))
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(Color(uiColor: .label)))
-                        .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: 3))
+                    CameraBadge()
                 }
             }
             .buttonStyle(.plain)
@@ -991,7 +1075,7 @@ struct ContactEditorView: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                Text(t("Add photo", "Añadir foto"))
+                Text(t("Add a photo or choose an icon", "Añade una foto o elige un icono"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Palette.secondary)
             }
@@ -1007,6 +1091,52 @@ struct ContactEditorView: View {
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) { contact.photo = photo }
             }
         }
+    }
+
+    /// Default icons (and the initials), same grid as the wallet pictures.
+    private var iconGrid: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(t("ICONS", "ICONOS"))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Palette.secondary)
+                .padding(.leading, 16)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 5), spacing: 12) {
+                iconCell(nil)
+                ForEach(ContactAvatar.symbols, id: \.self) { symbol in
+                    iconCell(symbol)
+                }
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+        }
+    }
+
+    /// One icon choice; nil = the initials of the name.
+    private func iconCell(_ symbol: String?) -> some View {
+        let selected = contact.photo == nil && contact.symbol == symbol
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+                contact.symbol = symbol
+                contact.photo = nil
+            }
+            photoItem = nil
+        } label: {
+            Group {
+                if let symbol = symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 18, weight: .semibold))
+                } else {
+                    Text(contact.name.isEmpty ? "Aa" : contact.initials)
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                }
+            }
+            .foregroundColor(selected ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+            .frame(width: 50, height: 50)
+            .background(Circle().fill(selected ? Color(uiColor: .label) : Color(uiColor: .systemBackground).opacity(0.9)))
+            .scaleEffect(selected ? 1.06 : 1)
+        }
+        .buttonStyle(.plain)
     }
 
     private func save() {

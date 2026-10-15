@@ -17,15 +17,19 @@ public struct Contact: Codable, Identifiable, Equatable {
     public var name: String
     public var address: String
     public var note: String
-    /// Small square JPEG (256 px), nil = initials.
+    /// Small square JPEG (256 px), nil = icon or initials.
     public var photo: Data?
+    /// Built-in icon (SF Symbol) used when there is no photo; nil = initials.
+    public var symbol: String?
 
-    public init(id: UUID = UUID(), name: String, address: String, note: String = "", photo: Data? = nil) {
+    public init(id: UUID = UUID(), name: String, address: String, note: String = "", photo: Data? = nil,
+                symbol: String? = nil) {
         self.id = id
         self.name = name
         self.address = address
         self.note = note
         self.photo = photo
+        self.symbol = symbol
     }
 
     public var initials: String {
@@ -206,7 +210,7 @@ extension WalletManager {
 
     public func refreshHomeData(force: Bool = false) async {
         guard activeRecord != nil, !isAirGapped else { return }
-        if (homeShowFiat || homeShowPriceChart) && !isTestnet {
+        if (homeShowFiat || homeShowPriceChart || homeShowCalculator) && !isTestnet {
             await refreshMarketData(force: force)
         }
         if homeShowTransactions {
@@ -216,7 +220,11 @@ extension WalletManager {
 
     func refreshMarketData(force: Bool) async {
         let currency = fiatCurrency
-        if let prices = try? await BlockchainService.shared.fetchPrices(), let usd = prices["USD"] {
+        if let spot = try? await BlockchainService.shared.fetchSpotPrices(),
+           let usd = spot["USD"], let price = spot[currency] {
+            usdPrice = usd
+            fiatPrice = price
+        } else if let prices = try? await BlockchainService.shared.fetchPrices(), let usd = prices["USD"] {
             usdPrice = usd
             if currency == "USD" {
                 fiatPrice = usd
