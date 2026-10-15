@@ -13,7 +13,6 @@ import SwiftUI
 
 private enum Shared {
     static let suite = "group.com.coldvault.wallet"
-    static let bitcoinOrange = Color(red: 247.0 / 255.0, green: 147.0 / 255.0, blue: 26.0 / 255.0)
 }
 
 struct BalanceEntry: TimelineEntry {
@@ -62,9 +61,8 @@ struct BalanceWidgetView: View {
     @Environment(\.widgetFamily) private var family
     let entry: BalanceEntry
 
-    private var isBitcoin: Bool { entry.theme == "Bitcoin" }
-    private var primary: Color { isBitcoin ? .white : .primary }
-    private var secondary: Color { isBitcoin ? Color.white.opacity(0.78) : .secondary }
+    private var primary: Color { .primary }
+    private var secondary: Color { .secondary }
     private func t(_ en: String, _ es: String) -> String { entry.spanish ? es : en }
 
     private var updatedText: String? {
@@ -147,7 +145,7 @@ struct BalanceWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: BalanceProvider()) { entry in
             BalanceWidgetView(entry: entry)
-                .widgetBackground(entry.theme == "Bitcoin" ? Shared.bitcoinOrange : Color(uiColor: .systemBackground))
+                .widgetBackground(Color(uiColor: .systemBackground))
         }
         .configurationDisplayName("ColdVault")
         .description("Saldo de tu billetera · Your wallet balance")

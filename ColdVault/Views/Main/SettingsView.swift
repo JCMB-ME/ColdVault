@@ -396,7 +396,6 @@ public struct SettingsView: View {
         case .system: return t("System", "Sistema")
         case .dark: return t("Dark", "Oscuro")
         case .light: return t("Light", "Claro")
-        case .bitcoin: return "Bitcoin"
         }
     }
 
@@ -460,12 +459,8 @@ public struct SettingsView: View {
 // MARK: - Style components
 
 enum SettingsStyle {
-    /// Row groups: light grey (dark grey in dark mode); translucent white on the Bitcoin orange.
-    static var groupFill: Color {
-        UserDefaults.standard.string(forKey: "appTheme") == AppTheme.bitcoin.rawValue
-            ? Color.white.opacity(0.18)
-            : Color(uiColor: .secondarySystemBackground)
-    }
+    /// Row groups: light grey (dark grey in dark mode).
+    static var groupFill: Color { Color(uiColor: .secondarySystemBackground) }
 }
 
 private struct SettingsTitle: View {

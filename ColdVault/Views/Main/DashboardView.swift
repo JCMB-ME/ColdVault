@@ -61,19 +61,32 @@ public struct DashboardView: View {
             // read as one continuous screen sliding sideways (no card, no seam).
             GlassAmbientBackground()
 
-            // UIKit paging (UIPageViewController): it follows the finger and coexists
-            // with the vertical scroll views inside each page. A SwiftUI drag gesture on
-            // an ancestor loses touches that start inside a ScrollView on iOS 18+.
-            TabView(selection: $page) {
-                balancePage
-                    .tag(0)
-                SettingsView(route: $settingsRoute)
-                    .environmentObject(walletManager)
-                    .tag(1)
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .onChange(of: page) { _ in
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            if #available(iOS 17.0, *) {
+                // Paging scroll view: follows the finger and snaps to each page. It is
+                // locked the moment a finger touches the swipe pill, so swiping the pill
+                // never moves to Settings; a swipe that starts anywhere else does.
+                GeometryReader { geo in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 0) {
+                            balancePage
+                                .frame(width: geo.size.width, height: geo.size.height)
+                            settingsPage
+                                .frame(width: geo.size.width, height: geo.size.height)
+                        }
+                        .scrollTargetLayout()
+                    }
+                    .scrollTargetBehavior(.paging)
+                    .scrollDisabled(isPillDragging)
+                }
+            } else {
+                // iOS 16: UIKit paging.
+                TabView(selection: $page) {
+                    balancePage
+                        .tag(0)
+                    settingsPage
+                        .tag(1)
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
             }
         }
         .sheet(isPresented: $showReceiveSheet) {
@@ -96,22 +109,31 @@ public struct DashboardView: View {
 
     // MARK: - Balance page
 
+    private var settingsPage: some View {
+        SettingsView(route: $settingsRoute)
+            .environmentObject(walletManager)
+    }
+
     private var balancePage: some View {
-        ZStack(alignment: .top) {
+        VStack(spacing: 0) {
+            // Badges sit above the scroll view, so the pull-to-refresh spinner appears
+            // below them instead of on top of "Watch-only".
+            statusBadges
+
             GeometryReader { geo in
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
-                        // Top padding that puts the middle of the balance line exactly at
-                        // the middle of the screen (not of the safe area).
-                        Color.clear.frame(height: max(0, geo.size.height / 2
-                            + (geo.safeAreaInsets.bottom - geo.safeAreaInsets.top) / 2
+                        // Puts the middle of the balance line exactly at the middle of
+                        // the screen, whatever is above the scroll view.
+                        Color.clear.frame(height: max(0, UIScreen.main.bounds.height / 2
+                            - geo.frame(in: .global).minY
                             - DashboardView.balanceHeight / 2))
 
                         balanceDisplay
                             .frame(height: DashboardView.balanceHeight)
 
                         belowBalance
-                            .padding(.top, 10)
+                            .padding(.top, 6)
 
                         // Keep the first screen tall enough for pull-to-refresh.
                         Color.clear.frame(height: geo.size.height / 2)
@@ -123,7 +145,6 @@ public struct DashboardView: View {
                     await walletManager.refreshAll()
                 }
             }
-            statusBadges
         }
     }
 
@@ -155,13 +176,14 @@ public struct DashboardView: View {
                     .font(.system(size: 17, weight: .medium))
                     .foregroundColor(Palette.secondary)
             }
-            balanceStatus
 
             if walletManager.swipeActionButton {
                 swipeActionPill
             } else {
                 actionButtons
             }
+
+            balanceStatus
 
             HomeExtrasView(onSendToContact: { contact in
                 sendRecipient = SendRecipient(address: contact.address)
@@ -177,7 +199,7 @@ public struct DashboardView: View {
 
     /// Default: Receive and Send side by side.
     private var actionButtons: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             actionButton(icon: "arrow.down.left", title: L10n.receive(lang)) {
                 showReceiveSheet = true
             }
@@ -192,16 +214,7 @@ public struct DashboardView: View {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             action()
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 14, weight: .bold))
-                Text(title)
-                    .font(.system(size: 16, weight: .semibold))
-            }
-            .foregroundColor(.white)
-            .frame(minWidth: 120, minHeight: 48)
-            .padding(.horizontal, 18)
-            .modifier(GlassPillModifier(isEmphasized: true))
+            ActionPillLabel(icon: icon, title: title)
         }
         .buttonStyle(PlainButtonStyle())
     }
@@ -211,16 +224,9 @@ public struct DashboardView: View {
     /// priority so the scroll view and the page swipe never steal it.
     private var swipeActionPill: some View {
         VStack(spacing: 14) {
-            HStack(spacing: 8) {
-                Image(systemName: currentAction == .receive ? "arrow.down.left" : "arrow.up.right")
-                    .font(.system(size: 14, weight: .bold))
-                Text(currentAction == .receive ? L10n.receive(lang) : L10n.send(lang))
-                    .font(.system(size: 16, weight: .semibold))
-            }
-            .foregroundColor(.white)
-            .frame(minWidth: 148, minHeight: 48)
-            .padding(.horizontal, 26)
-            .modifier(GlassPillModifier(isEmphasized: true))
+            ActionPillLabel(icon: currentAction == .receive ? "arrow.down.left" : "arrow.up.right",
+                            title: currentAction == .receive ? L10n.receive(lang) : L10n.send(lang),
+                            minWidth: 128)
             .scaleEffect(isButtonPressed ? 0.94 : 1.0)
             .offset(x: buttonDragOffset)
             .contentShape(Capsule())
@@ -283,7 +289,8 @@ public struct DashboardView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 14)
+        .padding(.top, isWatchOnly || walletManager.isAirGapped || walletManager.isTestnet ? 14 : 0)
+        .padding(.bottom, isWatchOnly || walletManager.isAirGapped || walletManager.isTestnet ? 6 : 0)
         .allowsHitTesting(false)
     }
 
@@ -452,7 +459,7 @@ struct TransactionCard: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(Color(uiColor: .label))
                     .frame(width: 42, height: 42)
-                    .background(Circle().fill(Palette.isBitcoin ? Color.white.opacity(0.25) : Color(uiColor: .systemBackground).opacity(0.9)))
+                    .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(received ? t("Received", "Recibido") : t("Sent", "Enviado"))
                         .font(.system(size: 16, weight: .semibold))
@@ -513,7 +520,7 @@ struct TransactionHistoryView: View {
 
 // MARK: - Minimal price chart
 
-/// Centered title, price and change, a thin line with no axes, and period buttons.
+/// Centered title, price and change, Japanese candlesticks with no axes, and period buttons.
 struct MinimalPriceChart: View {
     @EnvironmentObject var walletManager: WalletManager
     @State private var period: PricePeriod = .month
@@ -530,7 +537,7 @@ struct MinimalPriceChart: View {
     }
 
     var body: some View {
-        let points = walletManager.priceSeries(period)
+        let candles = walletManager.priceCandles(period)
         VStack(spacing: 6) {
             Text(t("Bitcoin price · ", "Precio de Bitcoin · ") + period.title(lang))
                 .font(.system(size: 12, weight: .medium))
@@ -542,28 +549,38 @@ struct MinimalPriceChart: View {
                     .font(.system(size: 14))
                     .foregroundColor(Palette.secondary)
                     .frame(height: 150)
-            } else if let first = points.first, let last = points.last, points.count > 1 {
-                let change = (last.price - first.price) / first.price * 100
+            } else if let first = candles.first, let last = candles.last, candles.count > 1 {
+                let change = (last.close - first.open) / first.open * 100
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(money(last.price))
+                    Text(money(last.close))
                         .font(.system(size: 20, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
                     Text(String(format: "%+.1f%%", change))
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Palette.secondary)
+                        .foregroundColor(change >= 0 ? .green : .red)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
 
-                Chart(points) { point in
-                    LineMark(x: .value("t", point.date), y: .value("p", point.price))
-                        .interpolationMethod(.monotone)
-                        .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round))
-                        .foregroundStyle(Color(uiColor: .label))
+                // Japanese candlesticks: wick (low–high) and body (open–close).
+                GeometryReader { geo in
+                    let bodyWidth = max(1.5, min(9, geo.size.width / CGFloat(candles.count) * 0.62))
+                    Chart(candles) { candle in
+                        RuleMark(x: .value("t", candle.date),
+                                 yStart: .value("low", candle.low),
+                                 yEnd: .value("high", candle.high))
+                            .lineStyle(StrokeStyle(lineWidth: 1))
+                            .foregroundStyle(candle.isUp ? Color.green : Color.red)
+                        RectangleMark(x: .value("t", candle.date),
+                                      yStart: .value("open", min(candle.open, candle.close)),
+                                      yEnd: .value("close", max(candle.open, candle.close) + max(1e-6, abs(candle.close) * 0.0002)),
+                                      width: .fixed(bodyWidth))
+                            .foregroundStyle(candle.isUp ? Color.green : Color.red)
+                    }
+                    .chartXAxis(.hidden)
+                    .chartYAxis(.hidden)
+                    .chartYScale(domain: .automatic(includesZero: false))
                 }
-                .chartXAxis(.hidden)
-                .chartYAxis(.hidden)
-                .chartYScale(domain: .automatic(includesZero: false))
-                .frame(height: 130)
+                .frame(height: 150)
                 .padding(.vertical, 8)
             } else {
                 ProgressView()
@@ -586,6 +603,38 @@ struct MinimalPriceChart: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .center)
+        }
+    }
+}
+
+/// Compact black capsule (white in dark mode) with a small icon and label, as in the
+/// reference design; Liquid Glass instead when enabled in Settings.
+struct ActionPillLabel: View {
+    @AppStorage("liquidGlass") private var liquidGlass: Bool = false
+    let icon: String
+    let title: String
+    var minWidth: CGFloat = 0
+
+    var body: some View {
+        let label = HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .bold))
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
+        }
+        .padding(.horizontal, 20)
+        .frame(minWidth: minWidth, minHeight: 40)
+        .contentShape(Capsule())
+
+        if liquidGlass {
+            label
+                .foregroundColor(.white)
+                .modifier(GlassPillModifier(isEmphasized: true))
+        } else {
+            label
+                .foregroundColor(Color(uiColor: .systemBackground))
+                .background(Capsule(style: .continuous).fill(Color(uiColor: .label)))
+                .shadow(color: Color.black.opacity(0.12), radius: 6, x: 0, y: 3)
         }
     }
 }

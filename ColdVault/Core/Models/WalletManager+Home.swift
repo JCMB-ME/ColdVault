@@ -76,6 +76,16 @@ public enum PricePeriod: String, CaseIterable, Identifiable {
     }
 }
 
+public struct PriceCandle: Identifiable, Equatable {
+    public var id: Date { date }
+    public let date: Date          // start of the candle
+    public let open: Double
+    public let high: Double
+    public let low: Double
+    public let close: Double
+    public var isUp: Bool { close >= open }
+}
+
 public struct WalletTransaction: Identifiable, Equatable {
     public var id: String { txid }
     public let txid: String
@@ -196,6 +206,58 @@ extension WalletManager {
             priceHistory = history
             lastPriceHistoryFetch = Date()
         }
+    }
+
+    /// OHLC candles for a period in the chosen currency: 1D → 1 h, 1W → 4 h, 1M → 1 day,
+    /// 6M → 5 days, 1Y → 1 week, All → 1 month. Built from the price history.
+    public func priceCandles(_ period: PricePeriod) -> [PriceCandle] {
+        guard !priceHistory.isEmpty else { return [] }
+        let factor = (fiatPrice != nil && usdPrice != nil && usdPrice! > 0) ? fiatPrice! / usdPrice! : 1
+        let bucket: TimeInterval
+        switch period {
+        case .day: bucket = 3_600
+        case .week: bucket = 4 * 3_600
+        case .month: bucket = 86_400
+        case .sixMonths: bucket = 5 * 86_400
+        case .year: bucket = 7 * 86_400
+        case .all: bucket = 30 * 86_400
+        }
+        var points = priceHistory
+        if let seconds = period.seconds {
+            let cutoff = Date().addingTimeInterval(-seconds)
+            points = points.filter { $0.date >= cutoff }
+        }
+        if let current = usdPrice { points.append(PricePoint(date: Date(), price: current)) }
+
+        var candles = [PriceCandle]()
+        var currentKey: Double?
+        var open = 0.0, high = 0.0, low = 0.0, close = 0.0
+        func flush() {
+            if let key = currentKey {
+                candles.append(PriceCandle(date: Date(timeIntervalSince1970: key * bucket),
+                                           open: open * factor, high: high * factor,
+                                           low: low * factor, close: close * factor))
+            }
+        }
+        for point in points {
+            let key = (point.date.timeIntervalSince1970 / bucket).rounded(.down)
+            if key != currentKey {
+                flush()
+                // Each candle opens where the previous one closed, so the series is continuous.
+                let previousClose = candles.last.map { $0.close / factor } ?? point.price
+                currentKey = key
+                open = previousClose
+                high = max(previousClose, point.price)
+                low = min(previousClose, point.price)
+                close = point.price
+            } else {
+                high = max(high, point.price)
+                low = min(low, point.price)
+                close = point.price
+            }
+        }
+        flush()
+        return candles
     }
 
     /// Price points for a period in the chosen currency (USD history scaled by today's

@@ -53,15 +53,8 @@ public struct GlassCardModifier: ViewModifier {
         }
     }
     
-    @ViewBuilder
     public func body(content: Content) -> some View {
-        if Palette.isBitcoin {
-            content
-                .background(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color.white.opacity(0.16)))
-        } else {
-            frosted(content)
-        }
+        frosted(content)
     }
 
     private func frosted(_ content: Content) -> some View {
@@ -134,11 +127,7 @@ public struct GlassPillModifier: ViewModifier {
     
     @ViewBuilder
     public func body(content: Content) -> some View {
-        if Palette.isBitcoin && !liquidGlass {
-            content
-                .background(Capsule(style: .continuous)
-                    .fill(isEmphasized ? Color.black.opacity(0.88) : Color.white.opacity(0.22)))
-        } else if liquidGlass, #available(iOS 26.0, *) {
+        if liquidGlass, #available(iOS 26.0, *) {
             // Apple's Liquid Glass: refracts what is behind and reacts to touch.
             let glass: Glass = isEmphasized
                 ? Glass.regular.tint(Color.black.opacity(isDark ? 0.25 : 0.55)).interactive()
@@ -182,12 +171,8 @@ public struct GlassPillModifier: ViewModifier {
 // MARK: - Ambient Atmospheric Background
 public struct GlassAmbientBackground: View {
     @Environment(\.colorScheme) var colorScheme
-    @AppStorage("appTheme") private var themeRaw: String = AppTheme.system.rawValue
     
     public init() {}
-
-    /// The exact orange of the Bitcoin logo (#F7931A).
-    public static let bitcoinOrange = Color(red: 247.0 / 255.0, green: 147.0 / 255.0, blue: 26.0 / 255.0)
     
     private var isDark: Bool {
         colorScheme == .dark
@@ -198,15 +183,6 @@ public struct GlassAmbientBackground: View {
     }
     
     public var body: some View {
-        if themeRaw == AppTheme.bitcoin.rawValue {
-            GlassAmbientBackground.bitcoinOrange
-                .ignoresSafeArea()
-        } else {
-            ambient
-        }
-    }
-
-    private var ambient: some View {
         ZStack {
             baseColor
                 .ignoresSafeArea()
@@ -306,21 +282,10 @@ public struct SheetCloseButton: View {
     }
 }
 
-// MARK: - Theme palette
-/// Colours that depend on the theme. On the Bitcoin theme everything is white on
-/// the logo orange (instead of the grey system colours, which look muddy there).
+// MARK: - Palette
+/// Secondary text and control colours used across the app.
 public enum Palette {
-    public static var isBitcoin: Bool {
-        UserDefaults.standard.string(forKey: "appTheme") == AppTheme.bitcoin.rawValue
-    }
-    public static var secondary: Color {
-        isBitcoin ? Color.white.opacity(0.78) : Color(uiColor: .secondaryLabel)
-    }
-    public static var tertiary: Color {
-        isBitcoin ? Color.white.opacity(0.55) : Color(uiColor: .tertiaryLabel)
-    }
-    /// Controls (toggles, selected states).
-    public static var accent: Color {
-        isBitcoin ? Color.black.opacity(0.85) : Color.accentColor
-    }
+    public static var secondary: Color { Color(uiColor: .secondaryLabel) }
+    public static var tertiary: Color { Color(uiColor: .tertiaryLabel) }
+    public static var accent: Color { Color.accentColor }
 }

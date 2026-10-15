@@ -38,7 +38,6 @@ enum ThemeApplier {
         switch theme {
         case .light:  style = .light
         case .dark:   style = .dark
-        case .bitcoin: style = .dark          // white text on the orange background
         case .system: style = .unspecified
         }
         for scene in UIApplication.shared.connectedScenes {
