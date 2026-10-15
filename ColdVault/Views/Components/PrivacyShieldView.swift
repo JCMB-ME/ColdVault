@@ -2,50 +2,52 @@
 //  PrivacyShieldView.swift
 //  ColdVault
 //
-//  Anti-screenshot and App Switcher security shield.
-//  Protects private keys, seed words, and balances from being captured
-//  in iOS app snapshots when switching apps.
+//  App Switcher privacy: when the app leaves the foreground the whole window
+//  (including any open sheet) is blurred, so balances, addresses and seed words are
+//  unreadable in the snapshot iOS takes. Nothing else is drawn on top.
 //
 
 import SwiftUI
+import UIKit
 
 public struct PrivacyShieldModifier: ViewModifier {
-    @State private var isInactive: Bool = false
-    
     public func body(content: Content) -> some View {
-        ZStack {
-            content
-                .blur(radius: isInactive ? 24 : 0)
-            
-            if isInactive {
-                Color.black.opacity(0.95)
-                    .ignoresSafeArea()
-                
-                VStack(spacing: 16) {
-                    Image(systemName: "lock.shield.fill")
-                        .font(.system(size: 60))
-                        .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10)) // Bitcoin Orange
-                    
-                    Text("ColdVault")
-                        .font(.system(size: 24, weight: .bold))
-                        .foregroundColor(.white)
-                    
-                    Text("Bóveda Protegida")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.gray)
-                }
+        content
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+                PrivacyBlur.show()
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isInactive = true
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                PrivacyBlur.hide()
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isInactive = false
-            }
-        }
+    }
+}
+
+/// A blur view added on top of the key window (above presented sheets too).
+@MainActor
+enum PrivacyBlur {
+    private static let tag = 0x0C01D
+
+    private static var keyWindow: UIWindow? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }
+    }
+
+    static func show() {
+        guard let window = keyWindow, window.viewWithTag(tag) == nil else { return }
+        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .regular))
+        blur.tag = tag
+        blur.frame = window.bounds
+        blur.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        window.addSubview(blur)
+    }
+
+    static func hide() {
+        guard let blur = keyWindow?.viewWithTag(tag) else { return }
+        UIView.animate(withDuration: 0.2, animations: { blur.alpha = 0 }, completion: { _ in
+            blur.removeFromSuperview()
+        })
     }
 }
 

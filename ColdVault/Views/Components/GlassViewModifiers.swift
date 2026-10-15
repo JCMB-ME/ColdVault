@@ -183,56 +183,9 @@ public struct GlassAmbientBackground: View {
     }
     
     public var body: some View {
-        ZStack {
-            baseColor
-                .ignoresSafeArea()
-            
-            if isDark {
-                RadialGradient(
-                    gradient: Gradient(colors: [
-                        Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.07),
-                        Color.clear
-                    ]),
-                    center: .top,
-                    startRadius: 40,
-                    endRadius: 360
-                )
-                .ignoresSafeArea()
-                
-                RadialGradient(
-                    gradient: Gradient(colors: [
-                        Color.blue.opacity(0.04),
-                        Color.clear
-                    ]),
-                    center: .bottomTrailing,
-                    startRadius: 20,
-                    endRadius: 300
-                )
-                .ignoresSafeArea()
-            } else {
-                RadialGradient(
-                    gradient: Gradient(colors: [
-                        Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.05),
-                        Color.clear
-                    ]),
-                    center: .top,
-                    startRadius: 50,
-                    endRadius: 320
-                )
-                .ignoresSafeArea()
-                
-                RadialGradient(
-                    gradient: Gradient(colors: [
-                        Color.gray.opacity(0.05),
-                        Color.clear
-                    ]),
-                    center: .bottomLeading,
-                    startRadius: 20,
-                    endRadius: 280
-                )
-                .ignoresSafeArea()
-            }
-        }
+        // Plain background: no tinted glows (they read as an orange haze in dark mode).
+        baseColor
+            .ignoresSafeArea()
     }
 }
 
