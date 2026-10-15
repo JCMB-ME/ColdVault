@@ -537,6 +537,15 @@ public final class WalletManager: ObservableObject {
         guard let addresses = keyring.addresses, addresses.segwit == record.primaryAddress else {
             throw WalletError.secretMismatch
         }
+        // Receive and change addresses are derived from the account keys stored in the
+        // metadata; before spending, check they really belong to this secret (a changed
+        // metadata item could otherwise send the change elsewhere).
+        if let stored = record.accounts, !stored.isEmpty {
+            let derived = Set(keyring.walletAccounts().map { "\($0.scriptType)|\($0.xpub)" })
+            guard stored.allSatisfy({ derived.contains("\($0.scriptType)|\($0.xpub)") }) else {
+                throw WalletError.secretMismatch
+            }
+        }
         // Older HD records have no xpubs yet: add them now that the secret is unlocked.
         if record.accounts == nil, var current = activeRecord, current.primaryAddress == record.primaryAddress {
             let accounts = keyring.walletAccounts()
@@ -624,7 +633,7 @@ public final class WalletManager: ObservableObject {
                                   scriptPubKey: tracked.scriptPubKey, confirmed: $0.status?.confirmed ?? false)
                 }
             }
-            return coins
+            return try await verifiedCoins(coins, isTestnet: record.isTestnet)
         }
         for address in staticAddresses {
             guard let decoded = BitcoinAddress.decode(address), decoded.isTestnet == record.isTestnet else {
@@ -637,7 +646,36 @@ public final class WalletManager: ObservableObject {
                               scriptPubKey: decoded.scriptPubKey, confirmed: $0.status?.confirmed ?? false)
             }
         }
-        return coins
+        return try await verifiedCoins(coins, isTestnet: record.isTestnet)
+    }
+
+    /// The server only reports coins; it is not trusted with their amounts. Each
+    /// non-Taproot coin is checked against its previous transaction (which must hash to
+    /// the txid), so a lying server cannot make us pay a hidden fee (legacy inputs do
+    /// not sign their amount) or feed impossible values. Taproot signatures commit to
+    /// every amount, so a lie there only produces a transaction the network rejects.
+    private func verifiedCoins(_ coins: [SpendableCoin], isTestnet: Bool) async throws -> [SpendableCoin] {
+        var seen = Set<String>()
+        var previous = [String: Transaction]()
+        var result = [SpendableCoin]()
+        for coin in coins {
+            guard seen.insert("\(coin.txid):\(coin.vout)").inserted else { continue }   // duplicates
+            guard coin.value > 0, coin.value <= 2_100_000_000_000_000 else { throw BlockchainError.invalidResponse }
+            if coin.type != .p2tr {
+                let tx: Transaction
+                if let cached = previous[coin.txid] {
+                    tx = cached
+                } else {
+                    tx = try await BlockchainService.shared.fetchRawTransaction(txid: coin.txid, isTestnet: isTestnet)
+                    previous[coin.txid] = tx
+                }
+                guard Int(coin.vout) < tx.outputs.count, tx.outputs[Int(coin.vout)] == coin.prevout else {
+                    throw BlockchainError.invalidResponse
+                }
+            }
+            result.append(coin)
+        }
+        return result
     }
 
     /// Validates the recipient (checksum, network, type), fetches UTXOs and selects coins.

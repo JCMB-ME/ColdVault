@@ -37,6 +37,7 @@ public struct SettingsView: View {
     @State private var editingContact: Contact?
     /// Bumped on every reveal so the words animate in again.
     @State private var revealCount = 0
+    @AppStorage("appLockEnabled") private var appLockEnabled = false
     /// Backup lists every wallet: the one opened (expanded) and the one whose secret is shown.
     @State private var backupSlot: String?
     @State private var revealedSlot: String?
@@ -55,6 +56,15 @@ public struct SettingsView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
                 revealedSecret = nil
                 revealedSlot = nil
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.userDidTakeScreenshotNotification)) { _ in
+                guard revealedSecret != nil, let slot = revealedSlot,
+                      walletManager.library.first(where: { $0.slot == slot })?.bundle.accounts.first?.record.type != .watchOnly
+                else { return }
+                withAnimation { revealedSecret = nil; revealedSlot = nil }
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                errorMessage = t("A screenshot was taken while your phrase was visible. Delete it from Photos (and from Recently Deleted), and from iCloud if it synced.",
+                                 "Se tomó una captura con tu frase visible. Bórrala de Fotos (y de \"Eliminados\"), y de iCloud si se sincronizó.")
             }
             .sheet(item: $route, onDismiss: {
                 // Closing Backup always hides the phrase again.
@@ -246,8 +256,13 @@ public struct SettingsView: View {
             .alert(L10n.deleteWalletConfirmTitle(lang), isPresented: $showDeleteConfirmation) {
                 Button(L10n.cancel(lang), role: .cancel) {}
                 Button(L10n.deletePermanently(lang), role: .destructive) {
-                    route = nil
-                    walletManager.deleteWallet()
+                    // Someone holding the unlocked phone must not be able to erase the keys.
+                    Task {
+                        guard await AppLock.authenticate(reason: t("Confirm to delete this wallet",
+                                                                   "Confirma para eliminar esta billetera")) else { return }
+                        route = nil
+                        walletManager.deleteWallet()
+                    }
                 }
             } message: {
                 Text(L10n.deleteWalletConfirmDesc(lang))
@@ -367,7 +382,7 @@ public struct SettingsView: View {
                         .transition(.scale(scale: 0.9).combined(with: .opacity))
                     HStack(spacing: 10) {
                         Button {
-                            UIPasteboard.general.string = parts.text
+                            SecurePasteboard.copy(parts.text, expiresIn: 120)
                             UINotificationFeedbackGenerator().notificationOccurred(.success)
                             copiedBackup = true
                             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedBackup = false }
@@ -406,6 +421,7 @@ public struct SettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .fill(Color(uiColor: .systemBackground).opacity(0.9)))
+                        .concealWhenCaptured()
                 }
 
                 if let passphrase = parts.passphrase {
@@ -488,6 +504,15 @@ public struct SettingsView: View {
                     }
                 }
                 .disabled(isRescanning || walletManager.isAirGapped)
+            }
+        }
+
+        SettingsSection(header: t("App", "App"),
+                        footer: t("Asks for Face ID or your passcode every time ColdVault opens. Your keys always need it anyway.",
+                                  "Pide Face ID o tu código cada vez que abres ColdVault. Tus claves siempre lo piden de todos modos.")) {
+            SettingsRow(title: t("Lock with Face ID", "Bloquear con Face ID")) {
+                Toggle("", isOn: Binding(get: { appLockEnabled }, set: { setAppLock($0) }))
+                    .labelsHidden()
             }
         }
 
@@ -611,6 +636,15 @@ public struct SettingsView: View {
                 errorMessage = error.localizedDescription
             }
             isRevealing = false
+        }
+    }
+
+    /// Turning the lock on or off needs Face ID / passcode first.
+    private func setAppLock(_ on: Bool) {
+        Task {
+            let ok = await AppLock.authenticate(reason: on ? t("Turn on the app lock", "Activa el bloqueo de la app")
+                                                           : t("Turn off the app lock", "Desactiva el bloqueo de la app"))
+            if ok { appLockEnabled = on }
         }
     }
 

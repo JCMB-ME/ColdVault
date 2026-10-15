@@ -236,6 +236,7 @@ extension WalletManager {
     /// Deletes the selected wallet (all its accounts and its secret) from this iPhone.
     public func deleteWallet() {
         let slot = activeSlot
+        let deletedAccounts = activeWallet?.bundle.accounts.map { $0.record } ?? []
         SecureKeyStore.shared.slot = slot
         SecureKeyStore.shared.delete()
         library.removeAll { $0.slot == slot }
@@ -246,7 +247,7 @@ extension WalletManager {
         trackedByScript = [:]
         fundedAddresses = []
         transactions = []
-        clearCaches()
+        clearCaches(for: deletedAccounts)
         Task { await ElectrumClient.shared.disconnect() }
 
         if let next = library.first {

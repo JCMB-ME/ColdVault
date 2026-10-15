@@ -68,7 +68,16 @@ public final class SecureKeyStore {
     }
 
     public func saveLibrary(_ data: Data) throws {
-        _ = deleteItem(account: libraryAccount)
+        // Update in place: deleting first could lose the list if the app is killed in
+        // between (the wallets would still exist but be missing from the app).
+        let match: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: libraryAccount
+        ]
+        let updated = SecItemUpdate(match as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if updated == errSecSuccess { return }
+        guard updated == errSecItemNotFound else { throw SecureKeyStoreError.keychainSaveFailed(updated) }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

@@ -562,11 +562,22 @@ extension WalletManager {
                                     fiatPrice: fiatPrice, usdPrice: usdPrice, fiatCurrency: fiatCurrency)
         WalletManager.balanceMemo[url.lastPathComponent] = balanceSats
         if let data = try? JSONEncoder().encode(cache) {
-            try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            try? data.write(to: url, options: [.atomic, .completeFileProtection])
         }
     }
 
     /// Removes every cached balance / history (e.g. when the wallet is deleted).
+    /// Removes the cached balance and history of some accounts (a deleted wallet).
+    func clearCaches(for records: [StoredWalletRecord]) {
+        guard let folder = WalletManager.cacheFolder else { return }
+        for record in records {
+            let key = BitcoinHash.sha256(Data("\(record.primaryAddress)|\(record.isTestnet)".utf8)).hexEncodedString
+            let name = "wallet-\(key.prefix(16)).json"
+            WalletManager.balanceMemo[name] = nil
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+        }
+    }
+
     func clearCaches() {
         WalletManager.balanceMemo.removeAll()
         guard let folder = WalletManager.cacheFolder,

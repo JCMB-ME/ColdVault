@@ -153,6 +153,7 @@ struct SeedWordsGrid: View {
                     .offset(y: index < shown ? 0 : 10)
             }
         }
+        .concealWhenCaptured()
         .onAppear(perform: play)
     }
 

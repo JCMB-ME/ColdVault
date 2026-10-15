@@ -503,7 +503,7 @@ public struct SendView: View {
                 .multilineTextAlignment(.center)
                 .textSelection(.enabled)
             HStack(spacing: 16) {
-                Button(L10n.copy(lang)) { UIPasteboard.general.string = txid }
+                Button(L10n.copy(lang)) { SecurePasteboard.copy(txid) }
                 if let url = URL(string: "https://mempool.space/\(walletManager.isTestnet ? "testnet4/" : "")tx/\(txid)") {
                     Link(t("View in explorer", "Ver en explorador"), destination: url)
                 }

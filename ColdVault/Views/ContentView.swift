@@ -22,6 +22,7 @@ public struct ContentView: View {
             }
         }
         .tint(Palette.accent)
+        .withAppLock()
         .withPrivacyShield()
         // The theme is applied to the whole window (not with preferredColorScheme), so
         // every screen, including open sheets and the settings panel, switches at once.

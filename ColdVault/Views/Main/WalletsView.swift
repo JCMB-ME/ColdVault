@@ -152,9 +152,14 @@ struct WalletsView: View {
             Button(L10n.cancel(lang), role: .cancel) {}
             Button(L10n.deletePermanently(lang), role: .destructive) {
                 guard let slot = deleteSlot else { return }
-                walletManager.selectWallet(slot: slot, account: nil)
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                    walletManager.deleteWallet()
+                // Someone holding the unlocked phone must not be able to erase the keys.
+                Task {
+                    guard await AppLock.authenticate(reason: t("Confirm to delete this wallet",
+                                                               "Confirma para eliminar esta billetera")) else { return }
+                    walletManager.selectWallet(slot: slot, account: nil)
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                        walletManager.deleteWallet()
+                    }
                 }
             }
         } message: {

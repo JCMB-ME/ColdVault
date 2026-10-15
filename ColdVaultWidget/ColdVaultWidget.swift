@@ -87,6 +87,12 @@ struct BalanceWidgetView: View {
     }
 
     var body: some View {
+        // Redacted while the iPhone is locked (Lock Screen / StandBy).
+        content.privacySensitive()
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch family {
         case .accessoryInline:
             Text(entry.hasWallet ? "₿ \(entry.balance) \(entry.unit)" : "ColdVault")

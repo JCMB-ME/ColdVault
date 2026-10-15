@@ -227,7 +227,7 @@ public struct ReceiveView: View {
     }
 
     private func copyAddress() {
-        UIPasteboard.general.string = currentAddress
+        SecurePasteboard.copy(currentAddress)
         copied = true
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {

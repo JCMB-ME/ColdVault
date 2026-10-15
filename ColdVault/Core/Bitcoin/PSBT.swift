@@ -429,9 +429,12 @@ public enum PSBTSigner {
         } else {
             paysScript = output.scriptPubKey == ScriptTemplates.p2sh(script)
         }
-        return paysScript && derivations.contains { entry in
+        // Only if this wallet holds enough of the keys to spend it alone: a 1-of-2 or
+        // 2-of-3 that includes someone else's keys must not be hidden as "change".
+        let ours = Set(derivations.filter { entry in
             multisig.keys.contains(entry.publicKey) && keyring.extendedKey(origin: entry.origin)?.publicKey == entry.publicKey
-        }
+        }.map { $0.publicKey })
+        return paysScript && ours.count >= multisig.required
     }
 
     public static func summarize(_ psbt: PSBT, keyring: WalletKeyring) -> PSBTSummary {
