@@ -13,6 +13,10 @@ settings:
   CODE_SIGN_IDENTITY: ""
   CODE_SIGNING_ALLOWED: NO
 
+packages:
+  CSecp256k1:
+    path: Vendor/CSecp256k1
+
 targets:
   ColdVault:
     type: application
@@ -20,6 +24,9 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - path: ColdVault
+    dependencies:
+      - package: CSecp256k1
+        product: CSecp256k1
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.coldvault.wallet
       INFOPLIST_FILE: ColdVault/Info.plist

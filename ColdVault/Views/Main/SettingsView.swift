@@ -16,8 +16,25 @@ public struct SettingsView: View {
     @State private var isRevealing: Bool = false
     @State private var showDeleteConfirmation: Bool = false
     @State private var errorMessage: String?
-    
-    public init() {}
+    @State private var isSwitchingNetwork: Bool = false
+    @State private var isExporting: Bool = false
+    @State private var descriptors: [WalletKeyring.AccountDescriptor] = []
+    @State private var showDescriptors: Bool = false
+
+    /// Set when the panel is shown as the dashboard's sliding card instead of a sheet.
+    private let onClose: (() -> Void)?
+
+    public init(onClose: (() -> Void)? = nil) {
+        self.onClose = onClose
+    }
+
+    private func close() {
+        if let onClose = onClose {
+            onClose()
+        } else {
+            presentationMode.wrappedValue.dismiss()
+        }
+    }
     
     private var lang: AppLanguage {
         walletManager.appLanguage
@@ -77,6 +94,32 @@ public struct SettingsView: View {
                             }
                             .padding(.vertical, 4)
                             .listRowBackground(Color.clear)
+
+                            Button(lang == .english ? "Hide" : "Ocultar") {
+                                revealedSecret = nil
+                            }
+                            .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
+                        }
+
+                        if walletManager.activeRecord?.type == .mnemonic12 || walletManager.activeRecord?.type == .mnemonic24 {
+                            Button(action: exportDescriptors) {
+                                HStack {
+                                    Label(lang == .english ? "Export watch-only (xpub)" : "Exportar observación (xpub)",
+                                          systemImage: "qrcode")
+                                        .symbolRenderingMode(.hierarchical)
+                                        .foregroundColor(Color(uiColor: .label))
+                                    Spacer()
+                                    if isExporting { ProgressView() }
+                                }
+                            }
+                            .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
+                        }
+
+                        if let error = errorMessage {
+                            Text(error)
+                                .font(.system(size: 13))
+                                .foregroundColor(.red)
+                                .listRowBackground(Color.red.opacity(0.08))
                         }
                     }
                     
@@ -94,15 +137,20 @@ public struct SettingsView: View {
                         .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
                         
                         Toggle(isOn: Binding(
-                            get: { walletManager.activeRecord?.isTestnet ?? false },
-                            set: { val in
-                                walletManager.activeRecord?.isTestnet = val
-                                Task { await walletManager.refreshBalance() }
-                            }
+                            get: { walletManager.isTestnet },
+                            set: { val in switchNetwork(toTestnet: val) }
                         )) {
-                            Label(lang == .english ? "Bitcoin Testnet4 Network" : "Red Bitcoin Testnet4", systemImage: "network")
-                                .symbolRenderingMode(.hierarchical)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label(lang == .english ? "Bitcoin Testnet4 Network" : "Red Bitcoin Testnet4", systemImage: "network")
+                                    .symbolRenderingMode(.hierarchical)
+                                Text(walletManager.isWatchOnly
+                                     ? (lang == .english ? "Defined by the watched address." : "Lo define la dirección observada.")
+                                     : (lang == .english ? "Re-derives your addresses for the selected network." : "Vuelve a derivar tus direcciones para la red elegida."))
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                            }
                         }
+                        .disabled(walletManager.isWatchOnly || isSwitchingNetwork)
                         .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
                     }
                     
@@ -169,15 +217,22 @@ public struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(L10n.close(lang)) {
-                        presentationMode.wrappedValue.dismiss()
+                        close()
                     }
                 }
+            }
+            .onDisappear {
+                revealedSecret = nil
+                descriptors = []
+            }
+            .sheet(isPresented: $showDescriptors, onDismiss: { descriptors = [] }) {
+                DescriptorExportView(descriptors: descriptors, lang: lang)
             }
             .alert(L10n.deleteWalletConfirmTitle(lang), isPresented: $showDeleteConfirmation) {
                 Button(L10n.cancel(lang), role: .cancel) {}
                 Button(L10n.deletePermanently(lang), role: .destructive) {
                     walletManager.deleteWallet()
-                    presentationMode.wrappedValue.dismiss()
+                    close()
                 }
             } message: {
                 Text(L10n.deleteWalletConfirmDesc(lang))
@@ -197,6 +252,87 @@ public struct SettingsView: View {
             } catch {
                 self.errorMessage = error.localizedDescription
                 self.isRevealing = false
+            }
+        }
+    }
+
+    private func switchNetwork(toTestnet: Bool) {
+        isSwitchingNetwork = true
+        errorMessage = nil
+        Task {
+            do {
+                try await walletManager.setNetwork(isTestnet: toTestnet)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isSwitchingNetwork = false
+        }
+    }
+
+    private func exportDescriptors() {
+        isExporting = true
+        errorMessage = nil
+        Task {
+            do {
+                descriptors = try await walletManager.exportDescriptors()
+                showDescriptors = true
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isExporting = false
+        }
+    }
+}
+
+/// Public account descriptors as QR codes, for Sparrow / Bitcoin Core / ColdVault watch-only.
+private struct DescriptorExportView: View {
+    let descriptors: [WalletKeyring.AccountDescriptor]
+    let lang: AppLanguage
+    @Environment(\.presentationMode) var presentationMode
+    @State private var selected = 0
+
+    private var current: WalletKeyring.AccountDescriptor? {
+        guard !descriptors.isEmpty else { return nil }
+        return descriptors[min(selected, descriptors.count - 1)]
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    Picker("Account", selection: $selected) {
+                        ForEach(0..<descriptors.count, id: \.self) { index in
+                            Text(descriptors[index].label).tag(index)
+                        }
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+
+                    if let item = current {
+                        QRCodeView(string: item.descriptor, size: 240)
+                        Text(item.descriptor)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding(10)
+                            .background(Color(uiColor: .secondarySystemBackground))
+                            .cornerRadius(10)
+                        ShareLink(item: item.descriptor) {
+                            Label(L10n.share(lang), systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    Text(lang == .english
+                         ? "Public data only: it lets a watch-only wallet see balances and create PSBTs, but never spend. It does reveal your full transaction history, so share it only with your own devices."
+                         : "Solo datos públicos: permite a una billetera de observación ver saldos y crear PSBTs, pero nunca gastar. Sí revela todo tu historial, compártelo solo con tus propios dispositivos.")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .padding(20)
+            }
+            .navigationTitle(lang == .english ? "Watch-only export" : "Exportar observación")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L10n.close(lang)) { presentationMode.wrappedValue.dismiss() }
+                }
             }
         }
     }

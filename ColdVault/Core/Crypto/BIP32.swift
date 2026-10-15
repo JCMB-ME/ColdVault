@@ -78,23 +78,14 @@ public enum BIP32 {
         let ir = bytes.suffix(32)
         
         // Compute fingerprint of parent: first 4 bytes of HASH160(parent.publicKey)
-        let sha = SHA256.hash(data: parent.publicKey)
-        let rip = RIPEMD160.hash(Data(sha))
-        let fingerprint = rip.prefix(4).withUnsafeBytes { $0.load(as: UInt32.self) }.bigEndian
+        let fp = [UInt8](fingerprintData(of: parent.publicKey))
+        let fingerprint = UInt32(fp[0]) << 24 | UInt32(fp[1]) << 16 | UInt32(fp[2]) << 8 | UInt32(fp[3])
         
         if let parentPriv = parent.privateKey {
-            let ilNum = Secp256k1.BigUInt256(data: il)
-            let parentNum = Secp256k1.BigUInt256(data: parentPriv)
-            let n = Secp256k1.BigUInt256.n
-            
-            if !(ilNum < n) { return nil }
-            
-            // childKey = (il + parentPriv) mod n
-            let childKeyNum = ilNum.addMod(parentNum, modulus: n)
-            if childKeyNum.isZero { return nil }
-            
-            let childPriv = childKeyNum.toData()
-            guard let childPub = Secp256k1.computePublicKey(privateKey: childPriv) else { return nil }
+            // childKey = (il + parentPriv) mod n, computed by libsecp256k1. It fails when
+            // il ≥ n or the sum is zero; BIP-32 says to skip such (astronomically rare) indices.
+            guard let childPriv = Secp256k1.privateKeyTweakAdd(parentPriv, tweak: il),
+                  let childPub = Secp256k1.computePublicKey(privateKey: childPriv) else { return nil }
             
             return ExtendedKey(
                 privateKey: childPriv,
@@ -106,24 +97,45 @@ public enum BIP32 {
             )
         }
         
-        return nil
+        // Public parent (CKDpub): only non-hardened children, childPub = parentPub + il·G.
+        guard !isHardened,
+              let childPub = Secp256k1.publicKeyTweakAdd(parent.publicKey, tweak: il) else { return nil }
+        return ExtendedKey(
+            privateKey: nil,
+            publicKey: childPub,
+            chainCode: ir,
+            depth: parent.depth + 1,
+            parentFingerprint: fingerprint,
+            childIndex: index
+        )
+    }
+    
+    /// The same key without its private part (an account xpub), safe to keep in memory
+    /// and on disk for deriving receive / change addresses without Face ID.
+    public static func neutered(_ key: ExtendedKey) -> ExtendedKey {
+        ExtendedKey(privateKey: nil, publicKey: key.publicKey, chainCode: key.chainCode,
+                    depth: key.depth, parentFingerprint: key.parentFingerprint, childIndex: key.childIndex)
     }
     
     // MARK: - Derive by Path (e.g. "m/84'/0'/0'/0/0")
     public static func derivePath(master: ExtendedKey, path: String) -> ExtendedKey? {
         let components = path.components(separatedBy: "/")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        guard components.first == "m" else { return nil }
         var current = master
-        
-        for comp in components {
-            let trimmed = comp.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if trimmed == "m" || trimmed.isEmpty { continue }
-            
+
+        for trimmed in components.dropFirst() {
+            // Reject empty segments ("m//0") instead of silently skipping them.
+            guard !trimmed.isEmpty else { return nil }
+
             let isHardened = trimmed.hasSuffix("'") || trimmed.hasSuffix("h")
             let numStr = isHardened ? String(trimmed.dropLast()) : trimmed
-            
-            guard var index = UInt32(numStr) else { return nil }
+
+            // Indices must fit in 31 bits; the hardened flag is the top bit.
+            // Without this check "m/2147483648'" would trap on UInt32 overflow.
+            guard var index = UInt32(numStr), index < 0x80000000 else { return nil }
             if isHardened {
-                index += 0x80000000
+                index |= 0x80000000
             }
             
             guard let next = derive(parent: current, index: index) else {
@@ -133,5 +145,55 @@ public enum BIP32 {
         }
         
         return current
+    }
+    
+    // MARK: - Fingerprints & Serialization
+    /// First 4 bytes of HASH160(publicKey), as used in BIP-32 / PSBT / descriptors.
+    public static func fingerprintData(of publicKey: Data) -> Data {
+        let sha = SHA256.hash(data: publicKey)
+        return Data(RIPEMD160.hash(Data(sha)).prefix(4))
+    }
+    
+    /// Derives a child by raw indices (hardened indices have the top bit set).
+    public static func derive(master: ExtendedKey, indices: [UInt32]) -> ExtendedKey? {
+        var current = master
+        for index in indices {
+            guard let next = derive(parent: current, index: index) else { return nil }
+            current = next
+        }
+        return current
+    }
+    
+    /// Parses a Base58Check extended public key (any version: xpub, tpub, zpub, vpub…).
+    /// The key must be a valid compressed point.
+    public static func parseExtendedPublicKey(_ text: String) -> (key: ExtendedKey, version: UInt32)? {
+        guard let data = Base58Check.decodeCheck(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              data.count == 78 else { return nil }
+        let b = [UInt8](data)
+        func be32(_ o: Int) -> UInt32 {
+            UInt32(b[o]) << 24 | UInt32(b[o + 1]) << 16 | UInt32(b[o + 2]) << 8 | UInt32(b[o + 3])
+        }
+        let publicKey = Data(b[45..<78])
+        guard b[45] == 0x02 || b[45] == 0x03,
+              Secp256k1.parsePublicKey(publicKey) == publicKey else { return nil }
+        let key = ExtendedKey(privateKey: nil, publicKey: publicKey, chainCode: Data(b[13..<45]),
+                              depth: b[4], parentFingerprint: be32(5), childIndex: be32(9))
+        return (key, be32(0))
+    }
+
+    /// Base58Check extended public key (xpub 0x0488B21E / tpub 0x043587CF).
+    public static func serializePublic(_ key: ExtendedKey, version: UInt32) -> String {
+        var data = Data()
+        func appendBE(_ value: UInt32) {
+            data.append(contentsOf: [UInt8(value >> 24 & 0xff), UInt8(value >> 16 & 0xff),
+                                     UInt8(value >> 8 & 0xff), UInt8(value & 0xff)])
+        }
+        appendBE(version)
+        data.append(key.depth)
+        appendBE(key.parentFingerprint)
+        appendBE(key.childIndex)
+        data.append(key.chainCode)
+        data.append(key.publicKey)
+        return Base58Check.encodeCheck(data)
     }
 }

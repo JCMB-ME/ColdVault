@@ -21,15 +21,31 @@ public struct ContentView: View {
                 WelcomeView()
             }
         }
-        .preferredColorScheme(selectedColorScheme)
         .withPrivacyShield()
+        // The theme is applied to the whole window (not with preferredColorScheme), so
+        // every screen, including open sheets and the settings panel, switches at once.
+        .onAppear { ThemeApplier.apply(walletManager.appTheme) }
+        .onChange(of: walletManager.appTheme) { theme in
+            ThemeApplier.apply(theme)
+        }
     }
-    
-    private var selectedColorScheme: ColorScheme? {
-        switch walletManager.appTheme {
-        case .light:  return .light
-        case .dark:   return .dark
-        case .system: return nil
+}
+
+enum ThemeApplier {
+    static func apply(_ theme: AppTheme) {
+        let style: UIUserInterfaceStyle
+        switch theme {
+        case .light:  style = .light
+        case .dark:   style = .dark
+        case .system: style = .unspecified
+        }
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows {
+                UIView.transition(with: window, duration: 0.25, options: .transitionCrossDissolve) {
+                    window.overrideUserInterfaceStyle = style
+                }
+            }
         }
     }
 }

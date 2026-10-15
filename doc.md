@@ -40,7 +40,9 @@ flowchart TD
 
     subgraph BitcoinCore ["Capa de Lógica Bitcoin"]
         BitcoinAddress["BitcoinAddress\n(Parse, Validate, Derive)"]
-        BitcoinTransaction["BitcoinTransaction\n(Serialization, Signatures)"]
+        BitcoinTransaction["BitcoinTransaction\n(Tx, Sighash legacy/BIP143/BIP341, Coin selection)"]
+        PSBT["PSBT (BIP-174)\n(Signer, Finalizer, Extractor)"]
+        WalletDerivation["WalletDerivation\n(Keyring, Descriptors, Self-test)"]
         BlockchainService["BlockchainService\n(Mempool / Blockstream API)"]
     end
 
@@ -68,11 +70,11 @@ flowchart TD
 
 #### [`Secp256k1.swift`](file:///D:/web2/wallet/ColdVault/Core/Crypto/Secp256k1.swift)
 - **Propósito:** Operaciones sobre la curva elíptica $y^2 = x^3 + 7 \pmod p$.
-- **Implementación:**
-  - Coordenadas Jacobianas $(X : Y : Z)$ para evitar divisiones modulares costosas durante la suma y duplicación de puntos.
-  - Multiplicación escalar binaria (Double-and-Add) de tiempo constante con mitigación contra canales laterales.
-  - Generador $G$, orden $n$ y primo de campo $p = 2^{256} - 2^{32} - 977$.
-  - Compresión de clave pública en formato de 33 bytes (`0x02` para $Y$ par, `0x03` para $Y$ impar).
+- **Implementación:** envoltorio Swift sobre **libsecp256k1 v0.7.1** (bitcoin-core), vendorizada sin modificaciones en `Vendor/CSecp256k1` como paquete Swift local (ver `Vendor/CSecp256k1/VENDOR.md` con el hash SHA-256 del tarball oficial para verificarla).
+  - Toda operación con claves secretas (clave pública, derivación BIP-32 privada, tweak Taproot, firma ECDSA y Schnorr) se hace en libsecp256k1: tiempo constante y contexto aleatorizado (blinding) con bytes del CSPRNG.
+  - `privateKeyTweakAdd` / `publicKeyTweakAdd` (BIP-32 CKDpriv / CKDpub), `taprootOutputKey` (`Q = lift_x(P) + H_TapTweak(P)·G`), `taprootTweakedPrivateKey`, `parsePublicKey` (solo SEC1 estándar, rechaza claves "híbridas").
+  - Los buffers con claves se borran con `memset_s` tras usarse.
+- La implementación propia anterior (BigUInt256, no constante en tiempo) se eliminó.
 
 #### [`RIPEMD160.swift`](file:///D:/web2/wallet/ColdVault/Core/Crypto/RIPEMD160.swift)
 - **Propósito:** Función de resumen criptográfico de 160 bits requerida por Bitcoin para obtener el `HASH160` ($\text{RIPEMD160}(\text{SHA256}(pubKey))$).
@@ -88,7 +90,9 @@ flowchart TD
 
 #### [`BIP39.swift`](file:///D:/web2/wallet/ColdVault/Core/Crypto/BIP39.swift) & [`BIP39Wordlist.swift`](file:///D:/web2/wallet/ColdVault/Core/Crypto/BIP39Wordlist.swift)
 - **Propósito:** Generación de entropía criptográfica (128 bits para 12 palabras, 256 bits para 24 palabras) usando el generador de números aleatorios seguro de Apple (`SecRandomCopyBytes`).
-- **Semilla:** Derivación mediante `PBKDF2` (HMAC-SHA512, 2048 iteraciones, sal `"mnemonic" + passphrase`).
+- **Semilla:** Derivación mediante `PBKDF2` (HMAC-SHA512, 2048 iteraciones, sal `"mnemonic" + passphrase`, normalización NFKD). Un fallo de PBKDF2 lanza error en lugar de devolver una semilla en ceros.
+- **Entropía adicional opcional:** `generateMnemonic(wordCount:additionalEntropy:)` mezcla datos del usuario (p. ej. dados) con `SHA-256(entropíaSistema || extra)`; nunca reduce la entropía del RNG del sistema.
+- **Autotest (`CryptoSelfTest`):** antes de crear o importar una wallet se derivan los vectores oficiales BIP-84/86/44; si algún byte difiere, la app se niega a continuar.
 
 #### [`BIP32.swift`](file:///D:/web2/wallet/ColdVault/Core/Crypto/BIP32.swift)
 - **Propósito:** Derivación jerárquica determinista (HD Wallets).
@@ -97,8 +101,10 @@ flowchart TD
 #### [`SecureKeyStore.swift`](file:///D:/web2/wallet/ColdVault/Core/Crypto/SecureKeyStore.swift)
 - **Propósito:** Almacenamiento seguro en el hardware Enclave / Keychain de iOS.
 - **Atributos de Protección:**
-  - `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`: La clave no se respalda en iCloud ni se transfiere a otros dispositivos por copia de seguridad.
-  - Puerta biométrica: Para revelar la frase o firmar transacciones, se invoca `LocalAuthentication` (`LAPolicy.deviceOwnerAuthenticationWithBiometrics`) exigiendo Face ID o Touch ID.
+  - Dos ítems separados: **metadatos** (direcciones, tipo) con `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, y **secreto** (frase/WIF) con `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly` + `SecAccessControl(.userPresence)`.
+  - El propio iOS exige Face ID / Touch ID / código en cada lectura del secreto; no depende de la UI de la app. El secreto no se carga en memoria al iniciar y se destruye si se quita el código del dispositivo.
+  - Sin código de desbloqueo configurado, la app se niega a guardar claves.
+  - Las wallets guardadas con el formato antiguo (un solo ítem sin control de acceso) se migran automáticamente al iniciar; el ítem antiguo solo se borra si la migración tuvo éxito.
 
 ---
 
@@ -111,13 +117,41 @@ flowchart TD
   - **Clave Privada:** Detecta formato WIF (51/52 caracteres Base58) o Hex (64 caracteres) $\rightarrow$ Importa par de claves con control total.
   - **Dirección Pública (Modo Observación):** Si se ingresa una dirección SegWit (`bc1q...`), Taproot (`bc1p...`), Legacy (`1...`) o P2SH (`3...`) (incluyendo la dirección Génesis de Satoshi `1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa`), el parser la reconoce automáticamente como `.watchOnly(address, format)`. Sanitiza prefijos `bitcoin:` y parámetros URI.
 
+#### `Signatures.swift` (Core/Crypto)
+- Aritmética escalar mod n (reducción de 512 bits por plegado con 2^256 − n), ECDSA RFC 6979 con low-S y DER estricto, Schnorr BIP-340 y la clave privada ajustada BIP-341 para gastos Taproot por key-path.
+- Toda firma se verifica con la clave pública antes de devolverse.
+- Validado contra RFC 6979 ("Satoshi Nakamoto"), los vectores BIP-340 y los vectores de wallet BIP-341.
+
+#### `AddressBook.swift` (Core/Bitcoin)
+- **Rotación de direcciones:** las billeteras HD guardan en los metadatos la xpub de cada cuenta (BIP-84, BIP-86, BIP-44), así que las direcciones nuevas se derivan sin Face ID ni secreto (CKDpub).
+- **Escaneo con gap limit (BIP-44):** recorre recibir (`/0/i`, hueco 20) y cambio (`/1/i`, hueco 10) de cada cuenta, suma el saldo de todas las direcciones usadas y guarda el primer índice libre. Recibir muestra siempre una dirección sin usar (con botón "Nueva dirección" sin pasar del gap limit) y el cambio va a una dirección de cambio nueva del mismo tipo que el destino (SegWit o Taproot).
+- **Billeteras de observación HD:** importación de descriptores `wpkh(...)`, `tr(...)`, `pkh(...)` (con o sin origen `[huella/ruta]`, sufijo `/0/*` o `/<0;1>/*`, checksum verificado) o de una zpub/vpub. Sus PSBT llevan las rutas BIP-32 / BIP-371 de entradas y cambio, así que Sparrow, Keystone o ColdVault en Air-Gap encuentran la clave y reconocen el cambio.
+- Las billeteras creadas antes de esta versión activan la rotación con un toque (una confirmación de Face ID) o automáticamente la próxima vez que firman.
+
+#### `UniformResource.swift` (Core/Bitcoin)
+- **QR animados BC-UR** (BCR-2020-005/006/012): Bytewords, CRC-32, Xoshiro256**, muestreador alias y códigos fuente (fountain) del encoder/decoder de referencia de Blockchain Commons, validados con sus vectores.
+- Los PSBT se muestran como `ur:crypto-psbt` (un QR si cabe, si no una animación de 4 fotogramas/s) y el escáner reconstruye QR animados de Sparrow, Keystone, Passport, BlueWallet o ColdVault aunque se pierdan fotogramas.
+
+#### `PSBT.swift` (Core/Bitcoin)
+- BIP-174 v0: parser estricto (claves duplicadas, tx global firmada o en formato witness, datos truncados → error), serializador byte-idéntico, firmante + finalizador para P2PKH / P2WPKH / P2TR (key-path) y extractor.
+- El firmante localiza la clave por las rutas BIP-32 / Taproot del PSBT (solo si el fingerprint es el nuestro, re-derivando y comprobando el script) o por coincidencia con los scripts propios. Compatible con Sparrow / Electrum / Core.
+- El `non_witness_utxo` se verifica contra el txid gastado.
+
+#### `WalletDerivation.swift` (Core/Bitcoin)
+- `WalletKeyring`: claves de la billetera, construidas solo tras Face ID y descartadas tras firmar. Exporta descriptores BIP-380 (`wpkh(...)`, `tr(...)`, `pkh(...)` con checksum) para billeteras de observación.
+- `WalletSecret`: formato JSON del secreto en el Keychain (frase + passphrase BIP-39 opcional, o WIF); acepta el formato antiguo (cadena simple).
+- `CryptoSelfTest`: antes de crear, importar o firmar reproduce las direcciones BIP-84/86/44, una firma RFC 6979 y una firma BIP-340 oficiales; si algo difiere, la app se niega a continuar.
+
 #### [`BitcoinTransaction.swift`](file:///D:/web2/wallet/ColdVault/Core/Bitcoin/BitcoinTransaction.swift)
+- Modelo de transacción con (de)serialización SegWit, sighash legacy / BIP-143 / BIP-341, firma de P2PKH / P2WPKH / P2TR, estimación de peso (cota superior exacta: 73 bytes por firma ECDSA) y selección de monedas largest-first con cambio, umbral de dust (546 sats), envío total y RBF (`nSequence = 0xfffffffd`).
+- Antes de transmitir se comprueba que el tamaño real no supera el estimado (la comisión aprobada nunca baja).
 - **Propósito:** Serialización de transacciones SegWit v0 (BIP-141/143) y P2WPKH.
 - **Estructura:** Cálculo de Hash de Transacción con nVersion, vin, vout, witness data y nLockTime.
 
 #### [`BlockchainService.swift`](file:///D:/web2/wallet/ColdVault/Core/Bitcoin/BlockchainService.swift)
 - **Propósito:** Consulta de saldo, UTXOs y transmisión de transacciones con la red Bitcoin (vía API Mempool.space / Blockstream Esplora).
-- **Protección Air-Gap:** Si el usuario activa el modo Air-Gap, el servicio bloquea toda petición HTTP externa y conmuta a modo local sin conexión.
+- **Protección Air-Gap:** Si el usuario activa el modo Air-Gap, `isNetworkBlocked` hace que toda petición falle antes de tocar la red.
+- Los errores HTTP se propagan (antes devolvían 0 en silencio). El saldo suma las tres direcciones de la billetera; las direcciones se validan (checksum y red) antes de formar URLs; al transmitir se exige que el servidor devuelva exactamente el txid calculado.
 
 ---
 
@@ -166,10 +200,14 @@ flowchart TD
 - Muestra el código QR dentro de un marco de cristal, permite copiar la dirección con háptica, compartir por AirDrop/Apps nativas y cambiar el formato de dirección derivado (SegWit, Taproot, Legacy).
 
 #### [`SendView.swift`](file:///D:/web2/wallet/ColdVault/Views/Main/SendView.swift)
-- Campos de cristal para dirección receptora y monto. Selector de comisiones (Económica, Normal, Rápida). Requiere autenticación biométrica y en modo Air-Gap genera un código QR con la transacción firmada offline.
+- Tres flujos reales con pantalla de revisión obligatoria:
+  - **Online:** UTXOs → selección de monedas → revisión (destino, monto, comisión, cambio) → Face ID → firma verificada → transmisión → txid.
+  - **Solo observación:** construye la misma transacción como PSBT (QR) para un firmador frío y luego escanea la transacción firmada; solo la transmite si gasta exactamente las mismas entradas y paga exactamente las mismas salidas.
+  - **Air-Gap:** escanea un PSBT, Face ID, muestra salidas y comisión (el cambio se verifica re-derivando la clave), firma y muestra la transacción firmada como QR.
+- Comisiones reales de mempool.space (más opción manual), URIs BIP-21 (`bitcoin:...?amount=`) y validación estricta de la dirección destino.
 
 #### [`SettingsView.swift`](file:///D:/web2/wallet/ColdVault/Views/Main/SettingsView.swift)
-- Conmutadores para modo Air-Gap, red Testnet4, revelación de clave respaldada bajo Face ID, cambio de idioma/apariencia y eliminación segura de la wallet.
+- Conmutadores para modo Air-Gap y red Testnet4 (re-deriva las direcciones con Face ID; antes solo cambiaba la API), revelación de la frase (y passphrase) bajo Face ID, exportación de descriptores xpub para observación, idioma/apariencia y eliminación segura de la wallet. Los errores se muestran.
 
 ---
 
@@ -201,14 +239,14 @@ El proyecto se compila y prueba automáticamente en **GitHub Actions** utilizand
 Si eres un agente de IA que toma el relevo de este proyecto, aquí están las pautas fundamentales:
 
 ### 5.1 Reglas Críticas del Proyecto
-1. **No agregar dependencias de pods o frameworks de terceros en C/C++** a menos que sea estrictamente indispensable. La pureza de Swift garantiza auditabilidad directa.
+1. **No agregar dependencias de terceros.** La única excepción es libsecp256k1, vendorizada sin cambios y con hash verificable en `Vendor/CSecp256k1`; si se actualiza, sigue el procedimiento de `VENDOR.md`.
 2. **Preservar el minimalismo visual:** La pantalla principal debe mantener siempre el balance limpio y el botón central swipable. No añadas botones recargados o barras de navegación pesadas en el Dashboard.
 3. **Mantener la cobertura de tests:** Cada función criptográfica o parser de Bitcoin debe tener su test vector en [`ColdVaultTests/ColdVaultTests.swift`](file:///D:/web2/walletTests/ColdVaultTests.swift).
 4. **Respetar el ciclo de CI:** Para compilar, sube tus commits a la rama `main` del repositorio `joshemartinez/ColdVault`. El flujo generará automáticamente el binario listo para descargar.
 
 ### 5.2 Posibles Tareas Siguientes
-- **Transmisión de PSBT por QR animado (BC-UR / Fountain Codes):** Para transacciones grandes que excedan la capacidad de un único código QR en modo Air-Gap, implementar fragmentación UR (Uniform Resources).
-- **Soporte de Entrada Taproot (Schnorr Signatures - BIP-340):** Actualmente la derivación P2TR está implementada en direcciones; añadir la rutina de firma Schnorr para enviar desde direcciones Taproot.
+- **Importar xpub por QR UR (`ur:crypto-account` / `crypto-output`):** hoy la billetera de observación se importa pegando los descriptores (o una zpub) como texto o QR de texto.
+- **Taproot por script path y multisig:** solo se firman P2PKH, P2WPKH y P2TR key-path.
 - **Historial de Transacciones Local:** Almacenar transacciones entrantes y salientes en caché cifrada para visualizarlas en modo sin conexión.
 - **Soporte de Monedas Fiat Adicionales:** Conversor de sats a USD/EUR consultando APIs públicas de tickers.
 

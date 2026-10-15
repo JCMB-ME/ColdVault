@@ -16,6 +16,9 @@ public struct ImportWalletView: View {
     @Environment(\.presentationMode) var presentationMode
     
     @State private var inputText: String = ""
+    @State private var passphrase: String = ""
+    @State private var usePassphrase: Bool = false
+    @State private var pastedFromClipboard: Bool = false
     @State private var showScanner: Bool = false
     @State private var isImporting: Bool = false
     @State private var errorMessage: String?
@@ -29,6 +32,16 @@ public struct ImportWalletView: View {
     // Live detection computed property
     private var detectedPayload: WalletImportPayload {
         BitcoinAddress.parseImportString(inputText)
+    }
+
+    /// Output descriptors / zpub for an HD watch-only wallet (nil: not that kind of input).
+    private var detectedDescriptors: Result<WatchOnlyImport, Error>? {
+        do {
+            guard let parsed = try WatchOnlyDescriptorParser.parse(inputText) else { return nil }
+            return .success(parsed)
+        } catch {
+            return .failure(error)
+        }
     }
     
     public var body: some View {
@@ -57,6 +70,10 @@ public struct ImportWalletView: View {
                         VStack(alignment: .trailing, spacing: 8) {
                             TextEditor(text: $inputText)
                                 .font(.system(size: 15, design: .monospaced))
+                                // Keep the keyboard from learning / suggesting seed words.
+                                .autocorrectionDisabled(true)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.asciiCapable)
                                 .frame(height: 140)
                                 .scrollContentBackground(.hidden)
                                 .padding(12)
@@ -77,6 +94,7 @@ public struct ImportWalletView: View {
                                     generator.impactOccurred()
                                     if let string = UIPasteboard.general.string {
                                         inputText = string.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        pastedFromClipboard = true
                                     }
                                 }) {
                                     Label(L10n.paste(lang), systemImage: "doc.on.clipboard")
@@ -109,9 +127,38 @@ public struct ImportWalletView: View {
                         .padding(.horizontal, 20)
                         
                         // Live Detection Feedback Card
-                        if !inputText.isEmpty {
+                        if let descriptors = detectedDescriptors {
+                            descriptorBanner(descriptors)
+                                .padding(.horizontal, 20)
+                        } else if !inputText.isEmpty {
                             detectionBannerView
                                 .padding(.horizontal, 20)
+                        }
+
+                        // Optional BIP-39 passphrase ("25th word") for seed imports
+                        if case .mnemonic = detectedPayload {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Toggle(isOn: $usePassphrase) {
+                                    Text(lang == .english ? "Uses a BIP-39 passphrase" : "Usa passphrase BIP-39")
+                                        .font(.system(size: 14, weight: .semibold))
+                                }
+                                if usePassphrase {
+                                    SecureField(lang == .english ? "Passphrase (case-sensitive)" : "Passphrase (distingue mayúsculas)",
+                                                text: $passphrase)
+                                        .textInputAutocapitalization(.never)
+                                        .autocorrectionDisabled(true)
+                                        .padding(10)
+                                        .glassCard(cornerRadius: 10)
+                                    Text(lang == .english
+                                         ? "A different passphrase opens a different wallet. Type it exactly as you set it."
+                                         : "Una passphrase distinta abre otra billetera. Escríbela exactamente como la configuraste.")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                                }
+                            }
+                            .padding(14)
+                            .glassCard(cornerRadius: 14)
+                            .padding(.horizontal, 20)
                         }
                         
                         // Info card explaining Watch-Only mode with Glass styling
@@ -126,8 +173,8 @@ public struct ImportWalletView: View {
                             }
                             
                             Text(lang == .english
-                                 ? "If you paste any public Bitcoin address (e.g. 1A1zP1eP..., bc1q...), the wallet will be added in watch-only mode to check balances without risking private keys."
-                                 : "Si pegas únicamente una dirección pública de Bitcoin (ej. 1A1zP1eP..., bc1q...), la billetera se agregará en modo observación para consultar balances sin exponer ninguna clave privada.")
+                                 ? "If you paste a public Bitcoin address (e.g. 1A1zP1eP..., bc1q...), the wallet will be added in watch-only mode to check balances without risking private keys. Paste the descriptors exported by your cold wallet (wpkh(...), tr(...)) or a zpub to follow every address and create PSBTs for it."
+                                 : "Si pegas una dirección pública de Bitcoin (ej. 1A1zP1eP..., bc1q...), la billetera se agregará en modo observación para consultar balances sin exponer ninguna clave privada. Pega los descriptores exportados por tu billetera fría (wpkh(...), tr(...)) o una zpub para seguir todas sus direcciones y crear PSBTs para ella.")
                                 .font(.system(size: 13))
                                 .foregroundColor(Color(uiColor: .secondaryLabel))
                                 .lineSpacing(2)
@@ -186,12 +233,21 @@ public struct ImportWalletView: View {
             .sheet(isPresented: $showScanner) {
                 QRScannerView { scannedCode in
                     self.inputText = scannedCode.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.pastedFromClipboard = false
                 }
+            }
+            .onDisappear {
+                inputText = ""
+                passphrase = ""
             }
         }
     }
     
     private var canImport: Bool {
+        if let descriptors = detectedDescriptors {
+            if case .success = descriptors { return true }
+            return false
+        }
         switch detectedPayload {
         case .mnemonic, .privateKey, .watchOnly:
             return true
@@ -200,6 +256,41 @@ public struct ImportWalletView: View {
         }
     }
     
+    @ViewBuilder
+    private func descriptorBanner(_ result: Result<WatchOnlyImport, Error>) -> some View {
+        switch result {
+        case .success(let parsed):
+            HStack(spacing: 8) {
+                Image(systemName: "eye.circle.fill")
+                    .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(lang == .english ? "HD watch-only wallet" : "Billetera HD de solo observación")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
+                    Text(parsed.accounts.map { $0.label }.joined(separator: " · ") + (parsed.isTestnet ? " · Testnet" : ""))
+                        .font(.system(size: 12))
+                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                }
+                Spacer()
+            }
+            .padding(12)
+            .background(Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.12))
+            .cornerRadius(12)
+        case .failure(let error):
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundColor(.orange)
+                Text(error.localizedDescription)
+                    .font(.system(size: 13))
+                    .foregroundColor(.orange)
+                Spacer()
+            }
+            .padding(12)
+            .background(Color.orange.opacity(0.1))
+            .cornerRadius(12)
+        }
+    }
+
     @ViewBuilder
     private var detectionBannerView: some View {
         switch detectedPayload {
@@ -221,7 +312,7 @@ public struct ImportWalletView: View {
             .background(Color.green.opacity(0.1))
             .cornerRadius(12)
             
-        case .privateKey(_, let isCompressed):
+        case .privateKey(_, let isCompressed, _):
             HStack(spacing: 8) {
                 Image(systemName: "key.fill")
                     .foregroundColor(.green)
@@ -239,7 +330,7 @@ public struct ImportWalletView: View {
             .background(Color.green.opacity(0.1))
             .cornerRadius(12)
             
-        case .watchOnly(let address, let format):
+        case .watchOnly(_, let format, let isTestnet):
             HStack(spacing: 8) {
                 Image(systemName: "eye.circle.fill")
                     .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
@@ -247,7 +338,7 @@ public struct ImportWalletView: View {
                     Text(L10n.watchOnlyDetectedTitle(lang))
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
-                    Text("\(L10n.watchOnlyDetectedDesc(lang)) (\(format.rawValue))")
+                    Text("\(L10n.watchOnlyDetectedDesc(lang)) (\(format.rawValue)\(isTestnet ? " · Testnet" : ""))")
                         .font(.system(size: 12))
                         .foregroundColor(Color(uiColor: .secondaryLabel))
                 }
@@ -275,15 +366,31 @@ public struct ImportWalletView: View {
     private func performImport() {
         isImporting = true
         errorMessage = nil
-        
-        do {
-            _ = try walletManager.importWallet(input: inputText)
-            let generator = UINotificationFeedbackGenerator()
-            generator.notificationOccurred(.success)
-            presentationMode.wrappedValue.dismiss()
-        } catch {
-            self.errorMessage = error.localizedDescription
-            self.isImporting = false
+        let input = inputText
+        let isSecret: Bool
+        switch detectedPayload {
+        case .mnemonic, .privateKey: isSecret = true
+        default: isSecret = false
+        }
+        let phrase = usePassphrase ? passphrase : ""
+
+        Task {
+            do {
+                try await walletManager.importWallet(input: input, passphrase: phrase)
+                // A seed or key left on the clipboard is readable by other apps and
+                // synced by Universal Clipboard: wipe it if it came from there.
+                if isSecret && pastedFromClipboard,
+                   UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines) == input {
+                    UIPasteboard.general.string = ""
+                }
+                inputText = ""
+                passphrase = ""
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                presentationMode.wrappedValue.dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+                isImporting = false
+            }
         }
     }
 }

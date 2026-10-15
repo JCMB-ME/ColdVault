@@ -16,13 +16,18 @@ public enum WalletSecurityType: String, Codable {
 
 public struct StoredWalletRecord: Codable {
     public let type: WalletSecurityType
-    public let secretPayload: String // Mnemonic phrase, WIF, or Address (if watch-only)
+    public var secretPayload: String // Empty for keyed wallets; address or descriptors if watch-only
     public let primaryAddress: String
     public let taprootAddress: String
     public let legacyAddress: String
     public let createdAt: Date
     public var isTestnet: Bool
-    
+    /// Account xpubs (HD wallets and descriptor watch-only wallets). nil for single-key
+    /// wallets and for records created before address rotation existed.
+    public var accounts: [WalletAccount]?
+    /// Next unused receive / change index per account (same order as `accounts`).
+    public var addressIndexes: [AddressIndexes]?
+
     public init(
         type: WalletSecurityType,
         secretPayload: String,
@@ -30,7 +35,9 @@ public struct StoredWalletRecord: Codable {
         taprootAddress: String,
         legacyAddress: String,
         createdAt: Date = Date(),
-        isTestnet: Bool = false
+        isTestnet: Bool = false,
+        accounts: [WalletAccount]? = nil,
+        addressIndexes: [AddressIndexes]? = nil
     ) {
         self.type = type
         self.secretPayload = secretPayload
@@ -39,6 +46,8 @@ public struct StoredWalletRecord: Codable {
         self.legacyAddress = legacyAddress
         self.createdAt = createdAt
         self.isTestnet = isTestnet
+        self.accounts = accounts
+        self.addressIndexes = addressIndexes
     }
 }
 

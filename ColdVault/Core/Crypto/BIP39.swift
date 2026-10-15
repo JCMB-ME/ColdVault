@@ -15,7 +15,8 @@ public enum BIP39Error: LocalizedError {
     case invalidWord(String)
     case checksumFailed
     case entropyGenerationFailed
-    
+    case seedDerivationFailed
+
     public var errorDescription: String? {
         switch self {
         case .invalidWordCount:
@@ -26,33 +27,58 @@ public enum BIP39Error: LocalizedError {
             return "El checksum de la frase semilla es inválido. Revisa si hay errores tipográficos."
         case .entropyGenerationFailed:
             return "Error al generar entropía criptográfica mediante el hardware TRNG."
+        case .seedDerivationFailed:
+            return "Error al derivar la semilla (PBKDF2)."
         }
     }
 }
 
 public enum BIP39 {
-    
+
     // MARK: - Generate Mnemonic
-    public static func generateMnemonic(wordCount: Int = 12) throws -> String {
+    /// Generates a mnemonic from the system CSPRNG (`SecRandomCopyBytes`).
+    ///
+    /// `additionalEntropy` (e.g. dice rolls or coin flips typed by the user) is mixed in
+    /// with SHA-256(systemEntropy || additionalEntropy). Hashing can never lower the
+    /// entropy below that of the system RNG, so a weak user input is harmless, while a
+    /// good one protects against a compromised or backdoored RNG.
+    public static func generateMnemonic(wordCount: Int = 12, additionalEntropy: Data? = nil) throws -> String {
         guard wordCount == 12 || wordCount == 24 else {
             throw BIP39Error.invalidWordCount
         }
-        
+
         let byteCount = (wordCount == 12) ? 16 : 32 // 128 or 256 bits of entropy
         var entropy = Data(count: byteCount)
-        let status = entropy.withUnsafeMutableBytes { ptr in
-            SecRandomCopyBytes(kSecRandomDefault, byteCount, ptr.baseAddress!)
+        defer { entropy.resetBytes(in: 0..<entropy.count) }
+
+        let status = entropy.withUnsafeMutableBytes { ptr -> OSStatus in
+            guard let base = ptr.baseAddress else { return errSecAllocate }
+            return SecRandomCopyBytes(kSecRandomDefault, byteCount, base)
         }
         guard status == errSecSuccess else {
             throw BIP39Error.entropyGenerationFailed
         }
-        
+
+        // Sanity check against a catastrophically broken RNG (all bytes identical,
+        // e.g. an untouched zero buffer). Probability for a healthy RNG: 2^-120 or less.
+        if let first = entropy.first, entropy.allSatisfy({ $0 == first }) {
+            throw BIP39Error.entropyGenerationFailed
+        }
+
+        if let extra = additionalEntropy, !extra.isEmpty {
+            var mixInput = entropy
+            mixInput.append(extra)
+            let mixed = Data(SHA256.hash(data: mixInput))
+            mixInput.resetBytes(in: 0..<mixInput.count)
+            entropy = mixed.prefix(byteCount)
+        }
+
         guard let mnemonic = entropyToMnemonic(entropy) else {
             throw BIP39Error.entropyGenerationFailed
         }
         return mnemonic
     }
-    
+
     // MARK: - Entropy to Mnemonic
     public static func entropyToMnemonic(_ entropy: Data) -> String? {
         let entBits = entropy.count * 8
@@ -60,23 +86,23 @@ public enum BIP39 {
             return nil
         }
         let csBits = entBits / 32
-        
+
         let hash = SHA256.hash(data: entropy)
         let hashBytes = Array(hash)
-        
+
         var bitString = ""
         for byte in entropy {
             let s = String(byte, radix: 2)
             bitString += String(repeating: "0", count: 8 - s.count) + s
         }
-        
+
         for i in 0..<csBits {
             let byteIdx = i / 8
             let bitIdx = 7 - (i % 8)
             let bit = (hashBytes[byteIdx] >> bitIdx) & 1
             bitString.append(bit == 1 ? "1" : "0")
         }
-        
+
         var words = [String]()
         let totalWords = bitString.count / 11
         for i in 0..<totalWords {
@@ -88,21 +114,27 @@ public enum BIP39 {
             }
             words.append(BIP39Wordlist.english[index])
         }
-        
+
         return words.joined(separator: " ")
     }
-    
-    // MARK: - Validate Mnemonic
-    public static func validateMnemonic(_ mnemonic: String) -> Bool {
-        let words = mnemonic.trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
+
+    // MARK: - Normalization
+    /// Lowercased words separated by single spaces. The English wordlist is all
+    /// lowercase ASCII, so this is the canonical form every BIP-39 wallet hashes.
+    public static func normalizedWords(_ mnemonic: String) -> [String] {
+        return mnemonic.lowercased()
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
-        
+    }
+
+    // MARK: - Validate Mnemonic
+    public static func validateMnemonic(_ mnemonic: String) -> Bool {
+        let words = normalizedWords(mnemonic)
+
         guard words.count == 12 || words.count == 24 else {
             return false
         }
-        
+
         var bitString = ""
         for word in words {
             guard let index = BIP39Wordlist.englishIndexMap[word] else {
@@ -111,13 +143,13 @@ public enum BIP39 {
             let s = String(index, radix: 2)
             bitString += String(repeating: "0", count: 11 - s.count) + s
         }
-        
+
         let csBits = words.count == 12 ? 4 : 8
         let entBits = bitString.count - csBits
-        
+
         let entBitString = String(bitString.prefix(entBits))
         let csBitString = String(bitString.suffix(csBits))
-        
+
         var entropyBytes = [UInt8]()
         for i in 0..<(entBits / 8) {
             let start = entBitString.index(entBitString.startIndex, offsetBy: i * 8)
@@ -126,11 +158,11 @@ public enum BIP39 {
             guard let byte = UInt8(slice, radix: 2) else { return false }
             entropyBytes.append(byte)
         }
-        
+
         let entropyData = Data(entropyBytes)
         let hash = SHA256.hash(data: entropyData)
         let hashBytes = Array(hash)
-        
+
         var expectedCsBitString = ""
         for i in 0..<csBits {
             let byteIdx = i / 8
@@ -138,37 +170,46 @@ public enum BIP39 {
             let bit = (hashBytes[byteIdx] >> bitIdx) & 1
             expectedCsBitString.append(bit == 1 ? "1" : "0")
         }
-        
+
         return csBitString == expectedCsBitString
     }
-    
+
     // MARK: - Mnemonic to 512-bit Seed (PBKDF2-HMAC-SHA512)
-    public static func mnemonicToSeed(mnemonic: String, passphrase: String = "") -> Data {
-        let normalizedMnemonic = mnemonic.trimmingCharacters(in: .whitespacesAndNewlines)
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
+    /// Throws instead of returning a zero buffer if PBKDF2 fails: a silent all-zero seed
+    /// would produce a master key known to everyone.
+    public static func mnemonicToSeed(mnemonic: String, passphrase: String = "") throws -> Data {
+        // BIP-39 mandates NFKD for both the mnemonic and the "mnemonic"+passphrase salt.
+        let normalizedMnemonic = normalizedWords(mnemonic)
             .joined(separator: " ")
-            .precomposedStringWithCanonicalMapping
-        
-        let saltData = ("mnemonic" + passphrase).precomposedStringWithCanonicalMapping.data(using: .utf8) ?? Data()
-        
+            .decomposedStringWithCompatibilityMapping
+        let passwordData = Data(normalizedMnemonic.utf8)
+        let saltData = Data(("mnemonic" + passphrase).decomposedStringWithCompatibilityMapping.utf8)
+
         var derivedKey = Data(count: 64)
-        _ = derivedKey.withUnsafeMutableBytes { derivedKeyBytes in
-            normalizedMnemonic.withCString { mnemonicCStr in
-                saltData.withUnsafeBytes { saltBytes in
-                    CCKeyDerivationPBKDF(
+        let status = derivedKey.withUnsafeMutableBytes { derivedKeyBytes -> Int32 in
+            passwordData.withUnsafeBytes { passwordBytes -> Int32 in
+                saltData.withUnsafeBytes { saltBytes -> Int32 in
+                    guard let out = derivedKeyBytes.bindMemory(to: UInt8.self).baseAddress,
+                          let pwd = passwordBytes.bindMemory(to: Int8.self).baseAddress,
+                          let salt = saltBytes.bindMemory(to: UInt8.self).baseAddress else {
+                        return Int32(kCCParamError)
+                    }
+                    return CCKeyDerivationPBKDF(
                         CCPBKDFAlgorithm(kCCPBKDF2),
-                        mnemonicCStr,
-                        strlen(mnemonicCStr),
-                        saltBytes.bindMemory(to: UInt8.self).baseAddress!,
+                        pwd,
+                        passwordData.count,
+                        salt,
                         saltData.count,
                         CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA512),
                         2048,
-                        derivedKeyBytes.bindMemory(to: UInt8.self).baseAddress!,
+                        out,
                         64
                     )
                 }
             }
+        }
+        guard status == Int32(kCCSuccess) else {
+            throw BIP39Error.seedDerivationFailed
         }
         return derivedKey
     }

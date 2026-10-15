@@ -10,24 +10,26 @@ on:
 jobs:
   build:
     name: Build & Test iOS App
-    runs-on: macos-14
+    # Xcode 27 image: newest iOS SDK (iOS 27).
+    runs-on: xcode-27
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Select Latest Xcode 16 SDK
+      - name: Select Xcode 27 (iOS 27 SDK)
         run: |
           echo "Available Xcode installations:"
           ls -d /Applications/Xcode* || true
-          if [ -d "/Applications/Xcode_16.2.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_16.2.app
-          elif [ -d "/Applications/Xcode_16.1.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_16.1.app
-          elif [ -d "/Applications/Xcode_16.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_16.app
-          fi
+          sudo xcode-select -s /Applications/Xcode_27.app
           xcodebuild -version
+          xcodebuild -showsdks | grep -i ios
+
+      - name: Pick iPhone simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k in sorted(d, reverse=True) if 'iOS' in k for x in d[k] if x['name'].startswith('iPhone')))")
+          echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl list devices available | grep "$UDID"
 
       - name: Install XcodeGen
         run: |
@@ -42,7 +44,7 @@ jobs:
           xcodebuild test \
             -project ColdVault.xcodeproj \
             -scheme ColdVault \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -destination "id=$SIM_UDID" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
