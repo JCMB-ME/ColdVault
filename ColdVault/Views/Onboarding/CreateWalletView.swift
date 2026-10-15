@@ -75,10 +75,9 @@ public struct CreateWalletView: View {
                 }
                 HStack {
                     Spacer()
-                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
-                        .frame(width: 44, height: 44)
+                    SheetCloseButton(floating: true) { presentationMode.wrappedValue.dismiss() }
                 }
-                .padding(.trailing, 10)
+                .padding(.trailing, 14)
             }
             .padding(.top, 18)
         }
@@ -189,7 +188,7 @@ public struct CreateWalletView: View {
 
     /// Placeholder cells with a "tap to show" hint; tap reveals the words one by one.
     private var hiddenGrid: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+        LazyVGrid(columns: SeedWordsGrid.columns, spacing: 8) {
             ForEach(0..<wordCountSelection, id: \.self) { index in
                 SeedWordCell(number: index + 1, word: "", hidden: true)
             }

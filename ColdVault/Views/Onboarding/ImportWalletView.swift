@@ -165,10 +165,9 @@ public struct ImportWalletView: View {
                     .foregroundColor(Color(uiColor: .label))
                 HStack {
                     Spacer()
-                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
-                        .frame(width: 44, height: 44)
+                    SheetCloseButton(floating: true) { presentationMode.wrappedValue.dismiss() }
                 }
-                .padding(.trailing, 10)
+                .padding(.trailing, 14)
             }
             .padding(.top, 18)
         }

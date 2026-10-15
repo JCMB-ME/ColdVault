@@ -373,7 +373,12 @@ public struct DashboardView: View {
                     .foregroundColor(Palette.secondary)
             }
 
-            if walletManager.swipeActionButton {
+            if isWatchOnly {
+                // Watch-only: no keys, nothing to send from here.
+                actionButton(icon: "arrow.down.left", title: L10n.receive(lang)) {
+                    showReceiveSheet = true
+                }
+            } else if walletManager.swipeActionButton {
                 swipeActionPill
             } else {
                 actionButtons
@@ -586,11 +591,12 @@ struct HomeExtrasView: View {
 
     var body: some View {
         VStack(spacing: 28) {
+            // Contacts first (tap to send; not on watch-only wallets), then the history.
+            if walletManager.homeShowContacts && !walletManager.contacts.isEmpty && !walletManager.isWatchOnly {
+                contactsRow
+            }
             if walletManager.homeShowTransactions {
                 transactions
-            }
-            if walletManager.homeShowContacts && !walletManager.contacts.isEmpty {
-                contactsRow
             }
             if walletManager.homeShowPriceChart && !walletManager.isTestnet {
                 MinimalPriceChart()

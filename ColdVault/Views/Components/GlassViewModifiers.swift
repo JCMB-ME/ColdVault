@@ -219,19 +219,53 @@ public extension View {
 // MARK: - Sheet close button
 /// The close control of every sheet: an "×" on the right of the navigation bar.
 public struct SheetCloseButton: View {
+    /// Floating over the sheet (no navigation bar): draws its own glass circle, the
+    /// same look the system gives to toolbar buttons.
+    let floating: Bool
     let action: () -> Void
 
-    public init(action: @escaping () -> Void) {
+    public init(floating: Bool = false, action: @escaping () -> Void) {
+        self.floating = floating
         self.action = action
     }
 
     public var body: some View {
-        Button(action: action) {
-            Image(systemName: "xmark")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(Color(uiColor: .label))
+        if floating {
+            Button(action: action) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .modifier(GlassCircle())
+            .accessibilityLabel(Text("Close"))
+        } else {
+            Button(action: action) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+            }
+            .accessibilityLabel(Text("Close"))
         }
-        .accessibilityLabel(Text("Close"))
+    }
+}
+
+/// Liquid Glass circle on iOS 26+, frosted material circle before.
+struct GlassCircle: ViewModifier {
+    @Environment(\.colorScheme) var colorScheme
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(Glass.regular.interactive(), in: Circle())
+        } else {
+            content
+                .background(Circle().fill(.ultraThinMaterial))
+                .overlay(Circle().stroke(Color.white.opacity(colorScheme == .dark ? 0.18 : 0.6), lineWidth: 0.8))
+                .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
+        }
     }
 }
 

@@ -5,7 +5,7 @@
 //  Small guards for sensitive screens:
 //   • secrets are blurred while the screen is being recorded, mirrored or AirPlayed;
 //   • copies stay on this iPhone (no Universal Clipboard) and can expire;
-//   • optional app lock: Face ID / passcode every time the app comes back.
+//   • optional app lock: Face ID / passcode (tap Unlock) every time the app comes back.
 //
 
 import SwiftUI
@@ -87,14 +87,15 @@ struct AppLockModifier: ViewModifier {
                 .transition(.opacity)
             }
         }
-        .onAppear { if locked { unlock() } }
+        // Face ID never starts on its own: the user taps "Unlock" when ready.
+        .onAppear { if locked && !enabled { locked = false } }
         .onChange(of: scenePhase) { phase in
             if phase == .background, enabled {
                 locked = true
                 // Close any open sheet (Send, Backup…) so nothing is left behind the lock.
                 AppLock.dismissPresentedSheets()
-            } else if phase == .active, locked {
-                unlock()
+            } else if phase == .active, locked, !enabled {
+                locked = false
             }
         }
     }
