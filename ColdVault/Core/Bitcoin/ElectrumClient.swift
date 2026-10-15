@@ -32,12 +32,62 @@ public enum ElectrumError: LocalizedError {
     }
 }
 
+/// Your own Electrum server (Umbrel, Start9, Electrs, Fulcrum…). When set, it is the
+/// only server used for mainnet: addresses never reach public servers.
+public struct ElectrumServerConfig: Codable, Equatable {
+    public var host: String
+    public var port: UInt16
+    public var useTLS: Bool
+    /// SHA-256 of the server's TLS certificate (hex), for self-signed node certificates.
+    public var pinnedFingerprint: String?
+
+    public init(host: String, port: UInt16, useTLS: Bool, pinnedFingerprint: String? = nil) {
+        self.host = host
+        self.port = port
+        self.useTLS = useTLS
+        self.pinnedFingerprint = pinnedFingerprint
+    }
+
+    static let defaultsKey = "customElectrumServer"
+
+    public static var current: ElectrumServerConfig? {
+        guard let data = UserDefaults.standard.data(forKey: defaultsKey) else { return nil }
+        return try? JSONDecoder().decode(ElectrumServerConfig.self, from: data)
+    }
+
+    public static func save(_ config: ElectrumServerConfig?) {
+        if let config = config, let data = try? JSONEncoder().encode(config) {
+            UserDefaults.standard.set(data, forKey: defaultsKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
+        }
+    }
+}
+
 public actor ElectrumClient {
     public static let shared = ElectrumClient()
 
     struct Server {
         let host: String
         let port: UInt16
+        var tls: Bool = true
+        var pin: String? = nil
+        var custom: Bool = false
+    }
+
+    /// Your own server if configured, otherwise the public ones.
+    private var servers: [Server] {
+        if let own = ElectrumServerConfig.current {
+            return [Server(host: own.host, port: own.port, tls: own.useTLS, pin: own.pinnedFingerprint, custom: true)]
+        }
+        return ElectrumClient.mainnetServers
+    }
+
+    /// Forget the connection and any back-off (after the server setting changes).
+    public func reset() {
+        disconnect()
+        unavailableUntil = nil
+        serverIndex = 0
     }
 
     /// Public servers whose TLS certificates validate (fastest first).
@@ -165,10 +215,11 @@ public actor ElectrumClient {
     }
 
     private func connectWithFailover() async throws {
-        for attempt in 0..<ElectrumClient.mainnetServers.count {
-            let server = ElectrumClient.mainnetServers[(serverIndex + attempt) % ElectrumClient.mainnetServers.count]
+        let list = servers
+        for attempt in 0..<list.count {
+            let server = list[(serverIndex + attempt) % list.count]
             if (try? await open(server)) != nil {
-                serverIndex = (serverIndex + attempt) % ElectrumClient.mainnetServers.count
+                serverIndex = (serverIndex + attempt) % list.count
                 // Handshake; also re-subscribes after a reconnect.
                 _ = try? await send("server.version", ["ColdVault 1.0", "1.4"])
                 let previous = Array(subscribed)
@@ -189,8 +240,9 @@ public actor ElectrumClient {
 
     private func open(_ server: Server) async throws {
         guard let port = NWEndpoint.Port(rawValue: server.port) else { throw ElectrumError.unavailable }
-        // Default TLS options: the system validates the certificate chain and host name.
-        let parameters = NWParameters(tls: NWProtocolTLS.Options(), tcp: NWProtocolTCP.Options())
+        // Public servers: the system validates the certificate chain and host name.
+        // Your own server: system trust, or the certificate fingerprint you pinned.
+        let parameters = ElectrumClient.parameters(for: server, queue: queue)
         let newConnection = NWConnection(host: NWEndpoint.Host(server.host), port: port, using: parameters)
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -237,7 +289,7 @@ public actor ElectrumClient {
         connection?.cancel()
         connection = nil
         failAll(ElectrumError.unavailable)
-        if advanceServer { serverIndex = (serverIndex + 1) % ElectrumClient.mainnetServers.count }
+        if advanceServer { serverIndex = (serverIndex + 1) % max(1, servers.count) }
     }
 
     nonisolated private func receive(on connection: NWConnection) {
@@ -286,6 +338,133 @@ public actor ElectrumClient {
             notificationHandler?(hash)
         }
     }
+}
+
+// MARK: - TLS and connection test
+
+extension ElectrumClient {
+    static func parameters(for server: Server, queue: DispatchQueue,
+                           observe: ((_ fingerprint: String?, _ systemTrusted: Bool) -> Void)? = nil) -> NWParameters {
+        let tcp = NWProtocolTCP.Options()
+        tcp.connectionTimeout = 8
+        guard server.tls else { return NWParameters(tls: nil, tcp: tcp) }
+        let tls = NWProtocolTLS.Options()
+        if server.custom {
+            let pin = server.pin
+            sec_protocol_options_set_verify_block(tls.securityProtocolOptions, { _, trust, complete in
+                let secTrust = sec_trust_copy_ref(trust).takeRetainedValue()
+                let fingerprint = ElectrumClient.leafFingerprint(secTrust)
+                let systemTrusted = SecTrustEvaluateWithError(secTrust, nil)
+                observe?(fingerprint, systemTrusted)
+                if let pin = pin {
+                    complete(fingerprint == pin)
+                } else {
+                    complete(systemTrusted)
+                }
+            }, queue)
+        }
+        return NWParameters(tls: tls, tcp: tcp)
+    }
+
+    static func leafFingerprint(_ trust: SecTrust) -> String? {
+        guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate], let leaf = chain.first else { return nil }
+        return Data(SHA256.hash(data: SecCertificateCopyData(leaf) as Data)).hexEncodedString
+    }
+
+    public enum ProbeResult {
+        case ok(software: String)
+        /// TLS works but the certificate is not trusted by iOS (self-signed): pin it?
+        case untrusted(fingerprint: String)
+        case failed(String)
+    }
+
+    /// Connects once to a server and asks its version (Settings › Server › Test).
+    public static func probe(_ config: ElectrumServerConfig) async -> ProbeResult {
+        guard let port = NWEndpoint.Port(rawValue: config.port), config.port > 0 else { return .failed("Puerto inválido.") }
+        let queue = DispatchQueue(label: "coldvault.electrum.probe")
+        let seen = ProbeObservation()
+        let server = Server(host: config.host, port: config.port, tls: config.useTLS,
+                            pin: config.pinnedFingerprint, custom: true)
+        let parameters = ElectrumClient.parameters(for: server, queue: queue) { fingerprint, trusted in
+            seen.record(fingerprint, trusted)
+        }
+        let connection = NWConnection(host: NWEndpoint.Host(config.host), port: port, using: parameters)
+        defer { connection.cancel() }
+
+        let ready: Bool = await withCheckedContinuation { continuation in
+            let once = ResumeOnce()
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    if once.claim() { continuation.resume(returning: true) }
+                case .failed, .cancelled, .waiting:
+                    if once.claim() { continuation.resume(returning: false) }
+                default:
+                    break
+                }
+            }
+            connection.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + 10) {
+                if once.claim() { continuation.resume(returning: false) }
+            }
+        }
+        guard ready else {
+            if config.useTLS, config.pinnedFingerprint == nil, let fingerprint = seen.fingerprint, !seen.trusted {
+                return .untrusted(fingerprint: fingerprint)
+            }
+            if config.pinnedFingerprint != nil, let fingerprint = seen.fingerprint, fingerprint != config.pinnedFingerprint {
+                return .failed("El certificado del servidor cambió. Si no lo cambiaste tú, alguien podría estar interceptando la conexión.")
+            }
+            return .failed("No se pudo conectar con \(config.host):\(config.port).")
+        }
+
+        var request = Data(#"{"jsonrpc":"2.0","id":1,"method":"server.version","params":["ColdVault 1.0","1.4"]}"#.utf8)
+        request.append(0x0a)
+        let buffer = ProbeBuffer()
+        let line: Data? = await withCheckedContinuation { continuation in
+            let once = ResumeOnce()
+            connection.send(content: request, completion: .contentProcessed { error in
+                if error != nil, once.claim() { continuation.resume(returning: nil) }
+            })
+            func receive() {
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) { data, _, done, error in
+                    if let data = data { buffer.data.append(data) }
+                    if let newline = buffer.data.firstIndex(of: 0x0a) {
+                        if once.claim() { continuation.resume(returning: buffer.data[buffer.data.startIndex..<newline]) }
+                    } else if done || error != nil || buffer.data.count > 1 << 16 {
+                        if once.claim() { continuation.resume(returning: nil) }
+                    } else {
+                        receive()
+                    }
+                }
+            }
+            receive()
+            queue.asyncAfter(deadline: .now() + 10) {
+                if once.claim() { continuation.resume(returning: nil) }
+            }
+        }
+        guard let line = line,
+              let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+              let result = object["result"] as? [Any], let software = result.first as? String else {
+            return .failed("El servidor respondió, pero no habla el protocolo Electrum.")
+        }
+        return .ok(software: software)
+    }
+}
+
+private final class ProbeObservation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _fingerprint: String?
+    private var _trusted = false
+    func record(_ fingerprint: String?, _ trusted: Bool) {
+        lock.lock(); _fingerprint = fingerprint; _trusted = trusted; lock.unlock()
+    }
+    var fingerprint: String? { lock.lock(); defer { lock.unlock() }; return _fingerprint }
+    var trusted: Bool { lock.lock(); defer { lock.unlock() }; return _trusted }
+}
+
+private final class ProbeBuffer: @unchecked Sendable {
+    var data = Data()
 }
 
 /// Thread-safe "resume exactly once" flag for continuation callbacks.

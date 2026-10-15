@@ -15,6 +15,7 @@ public enum SettingsRoute: Hashable, Identifiable {
     case backup
     case security
     case contacts
+    case server
 
     public var id: Self { self }
 }
@@ -178,8 +179,13 @@ public struct SettingsView: View {
                 }
 
                 SettingsSection(header: "Cold wallet",
-                                footer: t("Air-Gap cuts every network connection. Testnet re-derives your addresses (Face ID).",
-                                          "Air-Gap corta toda conexión a internet. Testnet vuelve a derivar tus direcciones (Face ID).")) {
+                                footer: t("Air-Gap cuts every network connection. Testnet re-derives your addresses (Face ID). Server: use your own node so public servers never see your addresses.",
+                                          "Air-Gap corta toda conexión a internet. Testnet vuelve a derivar tus direcciones (Face ID). Servidor: usa tu propio nodo para que los servidores públicos nunca vean tus direcciones.")) {
+                    Button { route = .server } label: {
+                        SettingsRow(title: t("Server", "Servidor"),
+                                    value: ElectrumServerConfig.current?.host ?? t("Public", "Públicos"), chevron: true)
+                    }
+                    SettingsDivider()
                     SettingsRow(title: t("Air-Gap mode", "Modo Air-Gap")) {
                         Toggle("", isOn: $walletManager.isAirGapped).labelsHidden()
                     }
@@ -233,6 +239,7 @@ public struct SettingsView: View {
                         case .backup: backupContent
                         case .security: securityContent
                         case .contacts: contactsContent
+                        case .server: ElectrumServerView().environmentObject(walletManager)
                         }
 
                         errorText
@@ -631,6 +638,15 @@ public struct SettingsView: View {
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) {
                     revealedSlot = slot
                     revealedSecret = secret
+                }
+                // Not left on screen (or in memory) longer than needed: hidden after 2 minutes.
+                let shown = revealCount
+                DispatchQueue.main.asyncAfter(deadline: .now() + 120) {
+                    guard revealCount == shown, revealedSecret != nil else { return }
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+                        revealedSecret = nil
+                        revealedSlot = nil
+                    }
                 }
             } catch {
                 errorMessage = error.localizedDescription

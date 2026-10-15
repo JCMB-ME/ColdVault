@@ -32,6 +32,9 @@ public final class WalletManager: ObservableObject {
     @Published public internal(set) var activeSlot: String = "primary"
     /// Custom wallet pictures (small JPEG) by slot.
     @Published public internal(set) var walletImages: [String: Data] = [:]
+    /// Accounts whose receive addresses were re-derived from the secret this session
+    /// (the metadata they normally come from has no Face ID protection).
+    @Published public internal(set) var verifiedAccounts: Set<String> = []
 
     // Address rotation: what the last gap-limit scan found (in memory only).
     var trackedByScript: [Data: TrackedAddress] = [:]
@@ -510,7 +513,9 @@ public final class WalletManager: ObservableObject {
             return secret
         }
 
-        let data = try await SecureKeyStore.shared.loadSecret(reason: reason)
+        var data = try await SecureKeyStore.shared.loadSecret(reason: reason)
+        // The raw Keychain bytes are wiped as soon as they are decoded.
+        defer { data.resetBytes(in: 0..<data.count) }
         guard let secret = WalletSecret.decode(data) else {
             throw SecureKeyStoreError.dataCorrupted
         }
@@ -545,6 +550,9 @@ public final class WalletManager: ObservableObject {
             guard stored.allSatisfy({ derived.contains("\($0.scriptType)|\($0.xpub)") }) else {
                 throw WalletError.secretMismatch
             }
+            verifiedAccounts.insert(verificationKey(record))
+        } else if addresses.taproot == record.taprootAddress && addresses.legacy == record.legacyAddress {
+            verifiedAccounts.insert(verificationKey(record))
         }
         // Older HD records have no xpubs yet: add them now that the secret is unlocked.
         if record.accounts == nil, var current = activeRecord, current.primaryAddress == record.primaryAddress {
@@ -557,6 +565,26 @@ public final class WalletManager: ObservableObject {
             }
         }
         return keyring
+    }
+
+    func verificationKey(_ record: StoredWalletRecord) -> String {
+        "\(activeSlot)|\(record.accountNumber ?? 0)|\(record.isTestnet)|\(record.primaryAddress)"
+    }
+
+    /// Whether the receive addresses on screen were checked against the secret.
+    public var receiveAddressesVerified: Bool {
+        guard let record = activeRecord else { return false }
+        return verifiedAccounts.contains(verificationKey(record))
+    }
+
+    /// Re-derives the receive addresses from the recovery phrase / key (Face ID) and
+    /// checks they are the ones on screen.
+    public func verifyReceiveAddresses() async throws {
+        guard let record = activeRecord, record.type != .watchOnly else { throw WalletError.unsupportedForWatchOnly }
+        _ = try await loadKeyring(reason: appLanguage == .english
+                                  ? "Confirm to check that these addresses are yours"
+                                  : "Confirma para comprobar que estas direcciones son tuyas")
+        guard receiveAddressesVerified else { throw WalletError.secretMismatch }
     }
 
     public func exportDescriptors() async throws -> [WalletKeyring.AccountDescriptor] {
@@ -736,8 +764,16 @@ public final class WalletManager: ObservableObject {
         var psbt = PSBT(unsignedTx: plan.transaction)
         for (index, coin) in plan.coins.enumerated() {
             switch coin.type {
-            case .p2wpkh, .p2tr:
+            case .p2tr:
                 psbt.setWitnessUTXO(index, output: coin.prevout)
+            case .p2wpkh:
+                // Full previous transaction too, so any signer can check the amount.
+                let previous = try await BlockchainService.shared.fetchRawTransaction(txid: coin.txid, isTestnet: record.isTestnet)
+                guard Int(coin.vout) < previous.outputs.count, previous.outputs[Int(coin.vout)] == coin.prevout else {
+                    throw BlockchainError.invalidResponse
+                }
+                psbt.setWitnessUTXO(index, output: coin.prevout)
+                psbt.setNonWitnessUTXO(index, transaction: previous)
             case .p2pkh:
                 // Legacy inputs need the full previous transaction (BIP-174).
                 let previous = try await BlockchainService.shared.fetchRawTransaction(txid: coin.txid, isTestnet: record.isTestnet)

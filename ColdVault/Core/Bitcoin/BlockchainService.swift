@@ -142,6 +142,10 @@ public final class BlockchainService {
 
     // MARK: - Electrum (mainnet): one pipelined TLS connection, mempool.space as fallback
 
+    /// With your own Electrum server nothing about your addresses goes to public
+    /// services: no fallback to mempool.space for balances, coins, history or broadcast.
+    public var usesOwnServer: Bool { ElectrumServerConfig.current != nil }
+
     private func scriptPubKey(_ address: String, isTestnet: Bool) throws -> Data {
         guard let decoded = BitcoinAddress.decode(address.trimmingCharacters(in: .whitespacesAndNewlines)),
               decoded.isTestnet == isTestnet else { throw BlockchainError.invalidAddress }
@@ -270,7 +274,10 @@ public final class BlockchainService {
 
     // MARK: - Address activity: has it ever been used, and its balance (confirmed + mempool)
     public func fetchAddressActivity(address: String, isTestnet: Bool) async throws -> AddressActivity {
-        if !isTestnet, let activity = try? await electrumActivity(address) { return activity }
+        if !isTestnet {
+            if usesOwnServer { return try await electrumActivity(address) }
+            if let activity = try? await electrumActivity(address) { return activity }
+        }
         let checked = try checkedAddress(address, isTestnet: isTestnet)
         let data = try await get("/address/\(checked)", isTestnet: isTestnet)
         let decoded = try JSONDecoder().decode(AddressResponse.self, from: data)
@@ -305,7 +312,10 @@ public final class BlockchainService {
 
     // MARK: - UTXOs
     public func fetchUTXOs(address: String, isTestnet: Bool) async throws -> [UTXO] {
-        if !isTestnet, let utxos = try? await electrumUTXOs(address) { return utxos }
+        if !isTestnet {
+            if usesOwnServer { return try await electrumUTXOs(address) }
+            if let utxos = try? await electrumUTXOs(address) { return utxos }
+        }
         let checked = try checkedAddress(address, isTestnet: isTestnet)
         let data = try await get("/address/\(checked)/utxo", isTestnet: isTestnet)
         let utxos = try JSONDecoder().decode([UTXO].self, from: data)
@@ -322,6 +332,7 @@ public final class BlockchainService {
            let raw = hex.hexDecoded, let tx = try? Transaction.parse(raw), tx.txid == txid.lowercased() {
             return tx
         }
+        if !isTestnet && usesOwnServer { throw BlockchainError.invalidResponse }
         let data = try await get("/tx/\(txid)/hex", isTestnet: isTestnet)
         guard let hex = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
               let raw = hex.hexDecoded else { throw BlockchainError.invalidResponse }
@@ -414,7 +425,8 @@ public final class BlockchainService {
             } catch let error as BlockchainError {
                 throw error
             } catch {
-                // Server unreachable: fall through to mempool.space.
+                // Server unreachable: fall through to mempool.space (not with your own node).
+                if usesOwnServer { throw error }
             }
         }
         guard let url = URL(string: "\(baseURL(isTestnet: isTestnet))/tx") else { throw BlockchainError.invalidResponse }

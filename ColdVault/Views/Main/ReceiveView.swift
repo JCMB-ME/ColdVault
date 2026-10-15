@@ -20,6 +20,8 @@ public struct ReceiveView: View {
     @State private var copied: Bool = false
     @State private var isEnablingRotation: Bool = false
     @State private var rotationError: String?
+    @State private var isVerifying = false
+    @State private var verifyError: String?
     /// The QR leaves the center and rises to the top before the details appear.
     @State private var qrRaised: Bool = false
     /// 0 = only the QR; 1…4 = details appearing one after another.
@@ -115,6 +117,9 @@ public struct ReceiveView: View {
                     }
 
                     if revealStep >= 4 {
+                        verificationRow
+                            .padding(.horizontal, 24)
+                            .transition(.opacity)
                         rotationFooter
                             .padding(.horizontal, 24)
                             .transition(.opacity)
@@ -210,6 +215,64 @@ public struct ReceiveView: View {
                         .multilineTextAlignment(.center)
                 }
             }
+        }
+    }
+
+    /// The address comes from public data stored without Face ID: it can be re-derived
+    /// from the recovery phrase to prove it is really this wallet's.
+    @ViewBuilder
+    private var verificationRow: some View {
+        if walletManager.isWatchOnly {
+            Label(t("Watch-only: check this address on your cold device's screen before sharing it.",
+                    "Solo observación: comprueba esta dirección en la pantalla de tu dispositivo frío antes de compartirla."),
+                  systemImage: "eye")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(Palette.secondary)
+                .multilineTextAlignment(.center)
+        } else if walletManager.receiveAddressesVerified {
+            Label(t("Verified with your recovery phrase", "Verificada con tu frase de recuperación"),
+                  systemImage: "checkmark.seal.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.green)
+                .transition(.scale.combined(with: .opacity))
+        } else {
+            VStack(spacing: 6) {
+                Button(action: verifyAddresses) {
+                    if isVerifying {
+                        ProgressView()
+                    } else {
+                        Label(t("Verify with Face ID", "Verificar con Face ID"), systemImage: "checkmark.shield")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Color(uiColor: .label))
+                            .padding(.horizontal, 16)
+                            .frame(height: 36)
+                            .background(Capsule().fill(SettingsStyle.groupFill))
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isVerifying)
+                if let error = verifyError {
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
+                }
+            }
+        }
+    }
+
+    private func verifyAddresses() {
+        isVerifying = true
+        verifyError = nil
+        Task {
+            do {
+                try await walletManager.verifyReceiveAddresses()
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } catch {
+                verifyError = error.localizedDescription
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            }
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) { isVerifying = false }
         }
     }
 

@@ -372,6 +372,8 @@ extension WalletManager {
                 transactions = WalletManager.sorted(list)
                 return
             }
+            // Your own node is down: keep what we have rather than asking public servers.
+            if BlockchainService.shared.usesOwnServer { return }
         }
 
         var byTxid = [String: EsploraTransaction]()

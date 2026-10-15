@@ -17,6 +17,7 @@ public enum PSBTError: LocalizedError {
     case malformed(String)
     case unsupportedVersion
     case missingUTXO(Int)
+    case missingPreviousTransaction(Int)
     case nothingToSign
     case notFinalized
 
@@ -27,6 +28,8 @@ public enum PSBTError: LocalizedError {
         case .malformed(let detail): return "PSBT mal formado: \(detail)"
         case .unsupportedVersion: return "Versión de PSBT no soportada (solo v0)."
         case .missingUTXO(let i): return "El PSBT no incluye la salida gastada por la entrada #\(i)."
+        case .missingPreviousTransaction(let i):
+            return "El PSBT no incluye la transacción anterior completa (non_witness_utxo) de la entrada #\(i). Sin ella no se puede comprobar su monto y una comisión oculta sería posible. Sparrow, Bitcoin Core y ColdVault la incluyen por defecto."
         case .nothingToSign: return "Ninguna entrada de este PSBT pertenece a esta billetera."
         case .notFinalized: return "El PSBT todavía no está completamente firmado."
         }
@@ -475,11 +478,29 @@ public enum PSBTSigner {
     }
 
     /// Signs and finalizes every input that belongs to `keyring`. Returns how many were signed.
+    ///
+    /// Amounts must be provable: legacy inputs do not sign their amount, and SegWit v0
+    /// inputs sign only their own (so with several inputs two signing rounds with lied
+    /// amounts can be combined into a hidden fee). Those inputs need the full previous
+    /// transaction (non_witness_utxo, checked against the txid). Taproot signs every amount.
     @discardableResult
-    public static func sign(_ psbt: inout PSBT, keyring: WalletKeyring, auxRand: Data? = nil) throws -> Int {
+    public static func sign(_ psbt: inout PSBT, keyring: WalletKeyring, auxRand: Data? = nil,
+                            requireFullPrevTx: Bool = true) throws -> Int {
         let count = psbt.inputMaps.count
         var prevouts = [TxOutput?]()
         for i in 0..<count { prevouts.append(try psbt.prevout(i)) }
+
+        if requireFullPrevTx {
+            for i in 0..<count where !psbt.isFinalized(i) {
+                guard let prevout = prevouts[i],
+                      psbt.value(psbt.inputMaps[i], type: PSBT.inNonWitnessUTXO) == nil else { continue }
+                let type = ScriptType.classify(prevout.scriptPubKey)
+                if type == .p2tr { continue }
+                let redeem = psbt.value(psbt.inputMaps[i], type: 0x04).map { ScriptType.classify($0) }
+                let segwitV0 = type == .p2wpkh || type == .p2wsh || redeem == .p2wpkh || redeem == .p2wsh
+                if !segwitV0 || count > 1 { throw PSBTError.missingPreviousTransaction(i) }
+            }
+        }
 
         var signed = 0
         for i in 0..<count where !psbt.isFinalized(i) {

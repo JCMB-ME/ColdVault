@@ -234,7 +234,14 @@ final class TransactionTests: XCTestCase {
         XCTAssertEqual(summary.outputs.first?.isChange, true)
         XCTAssertEqual(summary.outputs.first?.address, "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu")
 
-        let signed = try PSBTSigner.sign(&parsed, keyring: keyring, auxRand: Data(repeating: 0, count: 32))
+        // Only witness_utxo for a legacy and a SegWit v0 input among several: refused.
+        var unprovable = parsed
+        XCTAssertThrowsError(try PSBTSigner.sign(&unprovable, keyring: keyring, auxRand: Data(repeating: 0, count: 32)))
+
+        // (The reference vector spends made-up txids, so the full previous transactions
+        // cannot be included; the signature itself is what is checked here.)
+        let signed = try PSBTSigner.sign(&parsed, keyring: keyring, auxRand: Data(repeating: 0, count: 32),
+                                         requireFullPrevTx: false)
         XCTAssertEqual(signed, 3)
         XCTAssertTrue(parsed.isFullyFinalized)
         let tx = try parsed.extractTransaction()

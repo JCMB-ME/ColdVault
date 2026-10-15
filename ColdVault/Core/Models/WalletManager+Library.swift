@@ -330,7 +330,8 @@ extension WalletManager {
             }
             return secret
         }
-        let data = try await SecureKeyStore.shared.loadSecret(reason: reason, slot: slot)
+        var data = try await SecureKeyStore.shared.loadSecret(reason: reason, slot: slot)
+        defer { data.resetBytes(in: 0..<data.count) }
         guard let secret = WalletSecret.decode(data) else { throw SecureKeyStoreError.dataCorrupted }
         return secret
     }
