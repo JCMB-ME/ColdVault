@@ -101,13 +101,17 @@ public struct WalletKeyring {
     /// [P2WPKH, P2TR, P2PKH] for HD/compressed wallets, [P2PKH] for uncompressed keys.
     public let keys: [SigningKey]
     public let isTestnet: Bool
+    /// BIP-44 account number n in m/purpose'/coin'/n' (0 = first account).
+    public var account: UInt32 = 0
     /// Account-level private keys (m/purpose'/coin'/0'), same order as `standardAccounts`.
     let accountKeys: [ExtendedKey]
 
     static let standardAccounts: [(purpose: UInt32, type: ScriptType)] = [(84, .p2wpkh), (86, .p2tr), (44, .p2pkh)]
     static let hardened: UInt32 = 0x8000_0000
 
-    public static func fromMnemonic(_ mnemonic: String, passphrase: String = "", isTestnet: Bool) throws -> WalletKeyring {
+    public static func fromMnemonic(_ mnemonic: String, passphrase: String = "", isTestnet: Bool,
+                                    account: UInt32 = 0) throws -> WalletKeyring {
+        guard account < 0x8000_0000 else { throw WalletError.derivationFailed }
         guard BIP39.validateMnemonic(mnemonic) else { throw WalletError.invalidMnemonic }
         let seed = try BIP39.mnemonicToSeed(mnemonic: mnemonic, passphrase: passphrase)
         guard let master = BIP32.masterKey(from: seed) else { throw WalletError.derivationFailed }
@@ -115,18 +119,20 @@ public struct WalletKeyring {
         let coin: UInt32 = isTestnet ? 1 : 0
         var keys = [SigningKey]()
         var accountKeys = [ExtendedKey]()
-        for account in standardAccounts {
-            guard let accountKey = BIP32.derive(master: master, indices: [account.purpose | hardened, coin | hardened, hardened]),
+        for accountType in standardAccounts {
+            guard let accountKey = BIP32.derive(master: master, indices: [accountType.purpose | hardened, coin | hardened, account | hardened]),
                   let ext = BIP32.derive(master: accountKey, indices: [0, 0]),
                   let priv = ext.privateKey,
-                  let script = Script.forPublicKey(ext.publicKey, type: account.type) else {
+                  let script = Script.forPublicKey(ext.publicKey, type: accountType.type) else {
                 throw WalletError.derivationFailed
             }
             accountKeys.append(accountKey)
-            keys.append(SigningKey(privateKey: Data(priv), publicKey: ext.publicKey, scriptPubKey: script, type: account.type))
+            keys.append(SigningKey(privateKey: Data(priv), publicKey: ext.publicKey, scriptPubKey: script, type: accountType.type))
         }
-        return WalletKeyring(master: master, fingerprint: BIP32.fingerprintData(of: master.publicKey),
-                             keys: keys, isTestnet: isTestnet, accountKeys: accountKeys)
+        var keyring = WalletKeyring(master: master, fingerprint: BIP32.fingerprintData(of: master.publicKey),
+                                    keys: keys, isTestnet: isTestnet, accountKeys: accountKeys)
+        keyring.account = account
+        return keyring
     }
 
     public static func fromPrivateKey(_ privateKey: Data, compressed: Bool, isTestnet: Bool) throws -> WalletKeyring {
@@ -143,9 +149,9 @@ public struct WalletKeyring {
         return WalletKeyring(master: nil, fingerprint: nil, keys: keys, isTestnet: isTestnet, accountKeys: [])
     }
 
-    public static func from(secret: WalletSecret, isTestnet: Bool) throws -> WalletKeyring {
+    public static func from(secret: WalletSecret, isTestnet: Bool, account: UInt32 = 0) throws -> WalletKeyring {
         if let mnemonic = secret.mnemonic {
-            return try fromMnemonic(mnemonic, passphrase: secret.passphrase ?? "", isTestnet: isTestnet)
+            return try fromMnemonic(mnemonic, passphrase: secret.passphrase ?? "", isTestnet: isTestnet, account: account)
         }
         if let key = secret.privateKey,
            case .privateKey(let data, let compressed, _) = BitcoinAddress.parseImportString(key) {
@@ -199,7 +205,7 @@ public struct WalletKeyring {
             WalletAccount(type: account.type,
                           xpub: BIP32.serializePublic(BIP32.neutered(key), version: version),
                           fingerprint: fingerprint,
-                          path: [account.purpose | WalletKeyring.hardened, coin | WalletKeyring.hardened, WalletKeyring.hardened])
+                          path: [account.purpose | WalletKeyring.hardened, coin | WalletKeyring.hardened, self.account | WalletKeyring.hardened])
         }
     }
 
@@ -241,9 +247,9 @@ public struct WalletKeyring {
         for account in WalletKeyring.standardAccounts {
             guard let ext = BIP32.derive(master: master, indices: [account.purpose | WalletKeyring.hardened,
                                                                    coin | WalletKeyring.hardened,
-                                                                   WalletKeyring.hardened]) else { continue }
+                                                                   self.account | WalletKeyring.hardened]) else { continue }
             let xpub = BIP32.serializePublic(ext, version: version)
-            let path = "\(account.purpose)h/\(coin)h/0h"
+            let path = "\(account.purpose)h/\(coin)h/\(self.account)h"
             let function: String
             let label: String
             switch account.type {
@@ -259,9 +265,9 @@ public struct WalletKeyring {
         // Nunchuk, Specter…): the key expression "[fingerprint/path]xpub" they import.
         for (scriptIndex, label) in [(UInt32(2), "Multisig P2WSH (BIP-48)"), (UInt32(1), "Multisig P2SH-P2WSH (BIP-48)")] {
             guard let ext = BIP32.derive(master: master, indices: [48 | WalletKeyring.hardened, coin | WalletKeyring.hardened,
-                                                                   WalletKeyring.hardened, scriptIndex | WalletKeyring.hardened]) else { continue }
+                                                                   self.account | WalletKeyring.hardened, scriptIndex | WalletKeyring.hardened]) else { continue }
             let xpub = BIP32.serializePublic(ext, version: version)
-            let path = "48h/\(coin)h/0h/\(scriptIndex)h"
+            let path = "48h/\(coin)h/\(self.account)h/\(scriptIndex)h"
             result.append(AccountDescriptor(label: label, descriptor: "[\(fingerprint.hexEncodedString)/\(path)]\(xpub)",
                                             xpub: xpub, derivationPath: "m/\(path)"))
         }

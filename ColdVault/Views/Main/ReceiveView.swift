@@ -122,7 +122,7 @@ public struct ReceiveView: View {
                 }
                 .frame(maxWidth: .infinity)
                 // Centered in the sheet at first; at the top once raised.
-                .padding(.top, qrRaised ? 28 : max(28, (geo.size.height - ReceiveView.qrBlock) / 2))
+                .padding(.top, qrRaised ? 64 : max(64, (geo.size.height - ReceiveView.qrBlock) / 2))
                 .padding(.bottom, 24)
             }
             .scrollDisabled(revealStep == 0)
@@ -139,6 +139,13 @@ public struct ReceiveView: View {
                 .allowsHitTesting(false)
                 .transition(.opacity)
             }
+        }
+        .overlay(alignment: .top) {
+            Text(L10n.receiveBitcoin(lang))
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(Color(uiColor: .label))
+                .padding(.top, 22)
+                .allowsHitTesting(false)
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)

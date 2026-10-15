@@ -32,7 +32,8 @@ public struct DashboardView: View {
     @State private var isPillDragging: Bool = false
 
     // One canvas, two pages: 0 = balance, 1 = settings (native paging, follows the finger).
-    @State private var page: Int = 0
+    @State private var page: Int = 1                 // iOS 16 TabView: 0 wallets, 1 balance, 2 settings
+    @State private var pageID: Int? = 1              // iOS 17 paging scroll position
     @State private var settingsRoute: SettingsRoute?
 
     // Send to a contact from the home screen.
@@ -68,23 +69,31 @@ public struct DashboardView: View {
                 GeometryReader { geo in
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 0) {
+                            walletsPage
+                                .frame(width: geo.size.width, height: geo.size.height)
+                                .id(0)
                             balancePage
                                 .frame(width: geo.size.width, height: geo.size.height)
+                                .id(1)
                             settingsPage
                                 .frame(width: geo.size.width, height: geo.size.height)
+                                .id(2)
                         }
                         .scrollTargetLayout()
                     }
                     .scrollTargetBehavior(.paging)
+                    .scrollPosition(id: $pageID)
                     .scrollDisabled(isPillDragging)
                 }
             } else {
                 // iOS 16: UIKit paging.
                 TabView(selection: $page) {
-                    balancePage
+                    walletsPage
                         .tag(0)
-                    settingsPage
+                    balancePage
                         .tag(1)
+                    settingsPage
+                        .tag(2)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
             }
@@ -108,6 +117,16 @@ public struct DashboardView: View {
     }
 
     // MARK: - Balance page
+
+    private var walletsPage: some View {
+        WalletsView(onSelect: {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+                pageID = 1
+                page = 1
+            }
+        })
+        .environmentObject(walletManager)
+    }
 
     private var settingsPage: some View {
         SettingsView(route: $settingsRoute)
@@ -293,11 +312,23 @@ public struct DashboardView: View {
             if walletManager.isTestnet {
                 badge(icon: "testtube.2", text: "TESTNET4")
             }
+            if showsAccountName, let wallet = walletManager.activeWallet, let account = wallet.bundle.current {
+                badge(icon: "wallet.pass", text: "\(wallet.bundle.name) · \(account.name)")
+            }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, isWatchOnly || walletManager.isAirGapped || walletManager.isTestnet ? 14 : 0)
-        .padding(.bottom, isWatchOnly || walletManager.isAirGapped || walletManager.isTestnet ? 6 : 0)
+        .padding(.top, hasBadges ? 14 : 0)
+        .padding(.bottom, hasBadges ? 6 : 0)
         .allowsHitTesting(false)
+    }
+
+    private var hasBadges: Bool {
+        isWatchOnly || walletManager.isAirGapped || walletManager.isTestnet || showsAccountName
+    }
+
+    /// With several wallets or accounts, which one is on screen.
+    private var showsAccountName: Bool {
+        walletManager.library.count > 1 || (walletManager.activeWallet?.bundle.accounts.count ?? 0) > 1
     }
 
     private func badge(icon: String, text: String) -> some View {

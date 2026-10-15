@@ -50,8 +50,37 @@ public final class SecureKeyStore {
     private let service = "com.coldvault.wallet"
     /// Pre-split format: full record (including the secret) without access control.
     private let legacyAccount = "primary_wallet_vault"
-    private let metadataAccount = "wallet_metadata"
-    private let secretAccount = "wallet_secret"
+    private let libraryAccount = "wallet_library"
+
+    /// Which wallet the metadata / secret calls refer to. "primary" keeps the original
+    /// item names, so the first wallet ever created is never moved or rewritten.
+    public var slot: String = "primary"
+
+    private var metadataAccount: String { slot == "primary" ? "wallet_metadata" : "wallet_metadata_\(slot)" }
+    private var secretAccount: String { slot == "primary" ? "wallet_secret" : "wallet_secret_\(slot)" }
+
+    // MARK: - Wallet library (list of wallets; public data only)
+    public func loadLibrary() throws -> Data? {
+        return try readUnprotectedItem(account: libraryAccount)
+    }
+
+    public func saveLibrary(_ data: Data) throws {
+        _ = deleteItem(account: libraryAccount)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: libraryAccount,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else { throw SecureKeyStoreError.keychainSaveFailed(status) }
+    }
+
+    /// Deletes every item of every wallet (used when the last wallet is removed).
+    public func deleteLibrary() {
+        _ = deleteItem(account: libraryAccount)
+    }
 
     private init() {}
 
@@ -203,7 +232,9 @@ public final class SecureKeyStore {
     // MARK: - Delete Wallet Data
     @discardableResult
     public func delete() -> Bool {
-        let results = [metadataAccount, secretAccount, legacyAccount].map { deleteItem(account: $0) }
+        // Deletes the current wallet (slot) only.
+        let accounts = slot == "primary" ? [metadataAccount, secretAccount, legacyAccount] : [metadataAccount, secretAccount]
+        let results = accounts.map { deleteItem(account: $0) }
         return results.allSatisfy { $0 }
     }
 

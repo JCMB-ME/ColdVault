@@ -1,0 +1,260 @@
+//
+//  WalletManager+Library.swift
+//  ColdVault
+//
+//  Several wallets on one device, each with its accounts:
+//   • a wallet = one seed phrase (or private key / watch-only import), stored in its
+//     own Keychain "slot" (metadata item + Face ID-protected secret item);
+//   • an account = BIP-44 account n (m/84'/0'/n', m/86'/0'/n', m/44'/0'/n') of that
+//     seed, with its own addresses, balance and history, all recoverable from the
+//     same phrase in any BIP-44 wallet;
+//   • the home screen shows the selected account of the selected wallet.
+//  The first wallet keeps the original Keychain item names ("primary" slot), so
+//  existing installs keep working without moving any secret.
+//
+
+import Foundation
+
+extension WalletManager {
+
+    // MARK: - Names
+
+    func defaultAccountName(_ number: UInt32) -> String {
+        appLanguage == .english ? "Account \(number + 1)" : "Cuenta \(number + 1)"
+    }
+
+    func defaultWalletName(for type: WalletSecurityType) -> String {
+        let count = library.count + 1
+        switch type {
+        case .watchOnly: return appLanguage == .english ? "Watch-only \(count)" : "Observación \(count)"
+        default: return appLanguage == .english ? "Wallet \(count)" : "Billetera \(count)"
+        }
+    }
+
+    public var activeWallet: LibraryWallet? { library.first { $0.slot == activeSlot } }
+
+    /// Accounts can be added to seed-phrase wallets only.
+    public var canAddAccounts: Bool {
+        activeRecord?.type == .mnemonic12 || activeRecord?.type == .mnemonic24
+    }
+
+    // MARK: - Keychain I/O
+
+    func encodeBundle(_ bundle: WalletBundle) -> Data? {
+        // Never write a secret into the unprotected metadata item.
+        guard bundle.accounts.allSatisfy({ $0.record.type == .watchOnly || $0.record.secretPayload.isEmpty }) else { return nil }
+        return try? JSONEncoder().encode(bundle)
+    }
+
+    func writeMetadata(_ bundle: WalletBundle, slot: String) {
+        guard let data = encodeBundle(bundle) else { return }
+        SecureKeyStore.shared.slot = slot
+        try? SecureKeyStore.shared.updateMetadata(data)
+        SecureKeyStore.shared.slot = activeSlot
+    }
+
+    func saveLibrary() {
+        let index = WalletLibrary(slots: library.map { $0.slot }, selected: activeSlot)
+        if let data = try? JSONEncoder().encode(index) {
+            try? SecureKeyStore.shared.saveLibrary(data)
+        }
+    }
+
+    /// Reads a slot's metadata: the wallet bundle, or a single record from before accounts.
+    private func readBundle(slot: String) -> WalletBundle? {
+        SecureKeyStore.shared.slot = slot
+        defer { SecureKeyStore.shared.slot = activeSlot }
+        guard let data = try? SecureKeyStore.shared.loadMetadata() else { return nil }
+        if let bundle = try? JSONDecoder().decode(WalletBundle.self, from: data), !bundle.accounts.isEmpty {
+            return bundle
+        }
+        guard let record = try? JSONDecoder().decode(StoredWalletRecord.self, from: data) else { return nil }
+        return WalletBundle(name: defaultWalletName(for: record.type),
+                            accounts: [AccountSlot(number: 0, name: defaultAccountName(0), record: record)],
+                            selected: 0)
+    }
+
+    // MARK: - Load
+
+    public func loadStoredWallet() {
+        let store = SecureKeyStore.shared
+        var index: WalletLibrary?
+        if let data = try? store.loadLibrary() {
+            index = try? JSONDecoder().decode(WalletLibrary.self, from: data)
+        }
+        library = []
+        activeSlot = "primary"
+        store.slot = "primary"
+
+        if index == nil {
+            // First launch after the update (or an old install): the single wallet, if
+            // any, lives in the primary slot, possibly still in the legacy format.
+            if (try? store.loadMetadata()) != nil {
+                index = WalletLibrary(slots: ["primary"], selected: "primary")
+            } else if let legacyData = try? store.loadLegacyRecord(),
+                      let legacy = try? JSONDecoder().decode(StoredWalletRecord.self, from: legacyData) {
+                // Old format kept the secret in an item without access control. Move it
+                // behind .userPresence; drop the old item only once the new ones exist.
+                let secret = legacy.type == .watchOnly ? nil : WalletSecret.decode(Data(legacy.secretPayload.utf8))
+                if legacy.type == .watchOnly || secret != nil, (try? persist(legacy, secret: secret)) != nil {
+                    store.deleteLegacyRecord()
+                    index = WalletLibrary(slots: ["primary"], selected: "primary")
+                } else {
+                    // Could not migrate (e.g. no passcode): keep using it as is.
+                    library = [LibraryWallet(slot: "primary", bundle: WalletBundle(
+                        name: defaultWalletName(for: legacy.type),
+                        accounts: [AccountSlot(number: 0, name: defaultAccountName(0), record: legacy)], selected: 0))]
+                    activate(legacy)
+                    return
+                }
+            }
+        }
+
+        guard let wallets = index else {
+            hasWallet = false
+            activeRecord = nil
+            return
+        }
+        library = wallets.slots.compactMap { slot in
+            readBundle(slot: slot).map { LibraryWallet(slot: slot, bundle: $0) }
+        }
+        guard !library.isEmpty else {
+            hasWallet = false
+            activeRecord = nil
+            return
+        }
+        let selected = library.contains { $0.slot == wallets.selected } ? wallets.selected : library[0].slot
+        saveLibrary()
+        selectWallet(slot: selected, account: nil)
+    }
+
+    // MARK: - Select
+
+    /// Shows a wallet (and optionally one of its accounts) on the home screen.
+    public func selectWallet(slot: String, account: Int?) {
+        guard let index = library.firstIndex(where: { $0.slot == slot }) else { return }
+        var bundle = library[index].bundle
+        if let account = account, bundle.accounts.indices.contains(account) {
+            bundle.selected = account
+        }
+        if !bundle.accounts.indices.contains(bundle.selected) { bundle.selected = 0 }
+        guard let current = bundle.current else { return }
+        library[index].bundle = bundle
+        activeSlot = slot
+        SecureKeyStore.shared.slot = slot
+        writeMetadata(bundle, slot: slot)
+        saveLibrary()
+        activate(current.record)
+    }
+
+    // MARK: - Create (called by create / import)
+
+    /// Stores a new wallet in a new slot (its first account is account 0) and selects it.
+    @discardableResult
+    func persist(_ record: StoredWalletRecord, secret: WalletSecret?) throws -> StoredWalletRecord {
+        var redacted = record
+        if record.type != .watchOnly { redacted.secretPayload = "" }
+        let slot = library.isEmpty && (library.first { $0.slot == "primary" }) == nil ? "primary" : UUID().uuidString
+        let bundle = WalletBundle(name: defaultWalletName(for: record.type),
+                                  accounts: [AccountSlot(number: redacted.accountNumber ?? 0,
+                                                         name: defaultAccountName(redacted.accountNumber ?? 0),
+                                                         record: redacted)],
+                                  selected: 0)
+        guard let metadata = encodeBundle(bundle) else { throw WalletError.derivationFailed }
+        SecureKeyStore.shared.slot = slot
+        do {
+            try SecureKeyStore.shared.saveWallet(metadata: metadata, secret: try secret?.encoded())
+        } catch {
+            SecureKeyStore.shared.slot = activeSlot
+            throw error
+        }
+        library.removeAll { $0.slot == slot }
+        library.append(LibraryWallet(slot: slot, bundle: bundle))
+        activeSlot = slot
+        saveLibrary()
+        return redacted
+    }
+
+    // MARK: - Accounts
+
+    /// Adds account n+1 to the selected seed-phrase wallet (needs Face ID to derive its
+    /// keys) and selects it.
+    public func addAccount(name: String?) async throws {
+        guard let wallet = activeWallet, let record = activeRecord, canAddAccounts else {
+            throw WalletError.unsupportedForWatchOnly
+        }
+        try await ensureSelfTest()
+        let secret = try await loadSecret(reason: appLanguage == .english ? "Confirm to create a new account"
+                                                                          : "Confirma para crear una cuenta nueva")
+        let number = (wallet.bundle.accounts.map { $0.number }.max() ?? 0) + 1
+        let isTestnet = record.isTestnet
+        let keyring = try await Task.detached(priority: .userInitiated) {
+            try WalletKeyring.from(secret: secret, isTestnet: isTestnet, account: number)
+        }.value
+        guard let addresses = keyring.addresses else { throw WalletError.derivationFailed }
+        let accounts = keyring.walletAccounts()
+        var newRecord = StoredWalletRecord(type: record.type, secretPayload: "", primaryAddress: addresses.segwit,
+                                           taprootAddress: addresses.taproot, legacyAddress: addresses.legacy,
+                                           createdAt: Date(), isTestnet: isTestnet,
+                                           accounts: accounts.isEmpty ? nil : accounts,
+                                           addressIndexes: accounts.isEmpty ? nil : accounts.map { _ in AddressIndexes() })
+        newRecord.accountNumber = number
+        guard let index = library.firstIndex(where: { $0.slot == wallet.slot }) else { return }
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        library[index].bundle.accounts.append(AccountSlot(number: number,
+                                                          name: trimmed.isEmpty ? defaultAccountName(number) : trimmed,
+                                                          record: newRecord))
+        selectWallet(slot: wallet.slot, account: library[index].bundle.accounts.count - 1)
+    }
+
+    public func renameWallet(slot: String, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = library.firstIndex(where: { $0.slot == slot }) else { return }
+        library[index].bundle.name = trimmed
+        writeMetadata(library[index].bundle, slot: slot)
+    }
+
+    public func renameAccount(slot: String, account: Int, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = library.firstIndex(where: { $0.slot == slot }),
+              library[index].bundle.accounts.indices.contains(account) else { return }
+        library[index].bundle.accounts[account].name = trimmed
+        writeMetadata(library[index].bundle, slot: slot)
+    }
+
+    /// Last known balance of any account (from its on-device cache), for the wallet list.
+    public func cachedBalance(of record: StoredWalletRecord) -> UInt64? {
+        if record.primaryAddress == activeRecord?.primaryAddress && record.isTestnet == activeRecord?.isTestnet {
+            return balanceSats
+        }
+        return WalletManager.cachedBalance(primaryAddress: record.primaryAddress, isTestnet: record.isTestnet)
+    }
+
+    // MARK: - Delete
+
+    /// Deletes the selected wallet (all its accounts and its secret) from this iPhone.
+    public func deleteWallet() {
+        let slot = activeSlot
+        SecureKeyStore.shared.slot = slot
+        SecureKeyStore.shared.delete()
+        library.removeAll { $0.slot == slot }
+        balanceSats = 0
+        balanceError = nil
+        lastBalanceUpdate = nil
+        trackedByScript = [:]
+        fundedAddresses = []
+        transactions = []
+        clearCaches()
+        Task { await ElectrumClient.shared.disconnect() }
+
+        if let next = library.first {
+            selectWallet(slot: next.slot, account: nil)
+        } else {
+            SecureKeyStore.shared.deleteLibrary()
+            activeSlot = "primary"
+            SecureKeyStore.shared.slot = "primary"
+            activeRecord = nil
+            hasWallet = false
+        }
+    }
+}

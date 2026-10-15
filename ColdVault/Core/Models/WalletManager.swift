@@ -27,8 +27,12 @@ public final class WalletManager: ObservableObject {
     @Published public var lastBalanceUpdate: Date? { didSet { scheduleWidgetUpdate() } }
     @Published public var errorMessage: String?
 
+    // Several wallets (see WalletManager+Library.swift).
+    @Published public internal(set) var library: [LibraryWallet] = []
+    @Published public internal(set) var activeSlot: String = "primary"
+
     // Address rotation: what the last gap-limit scan found (in memory only).
-    private var trackedByScript: [Data: TrackedAddress] = [:]
+    var trackedByScript: [Data: TrackedAddress] = [:]
     var fundedAddresses: [TrackedAddress] = []
 
     // Cold Wallet Settings
@@ -233,12 +237,17 @@ public final class WalletManager: ObservableObject {
     }
 
     /// Persists public metadata (indexes, xpubs) without touching the secret.
-    private func saveMetadata(_ record: StoredWalletRecord) {
+    /// Persists public metadata (indexes, xpubs) of the selected account without touching the secret.
+    func saveMetadata(_ record: StoredWalletRecord) {
         activeRecord = record
-        // Never write a secret into the unprotected metadata item.
         guard record.type == .watchOnly || record.secretPayload.isEmpty,
-              let data = try? JSONEncoder().encode(record) else { return }
-        try? SecureKeyStore.shared.updateMetadata(data)
+              let index = library.firstIndex(where: { $0.slot == activeSlot }) else { return }
+        var bundle = library[index].bundle
+        if !bundle.accounts.indices.contains(bundle.selected) { bundle.selected = 0 }
+        guard bundle.accounts.indices.contains(bundle.selected) else { return }
+        bundle.accounts[bundle.selected].record = record
+        library[index].bundle = bundle
+        writeMetadata(bundle, slot: activeSlot)
     }
 
     /// Uncompressed WIF imports only have a legacy address (all three fields are equal).
@@ -255,56 +264,7 @@ public final class WalletManager: ObservableObject {
         return decoded.type.isSpendable
     }
 
-    // MARK: - Load Stored Wallet from Keychain
-    public func loadStoredWallet() {
-        let store = SecureKeyStore.shared
-        do {
-            if let metadata = try store.loadMetadata() {
-                let record = try JSONDecoder().decode(StoredWalletRecord.self, from: metadata)
-                self.activeRecord = record
-                self.hasWallet = true
-            } else if let legacyData = try store.loadLegacyRecord() {
-                // Old format kept the secret in an item without access control.
-                // Move it behind .userPresence; only drop the old item once the new
-                // ones are written, so a failed migration never loses the wallet.
-                let legacy = try JSONDecoder().decode(StoredWalletRecord.self, from: legacyData)
-                let secret = legacy.type == .watchOnly ? nil : WalletSecret.decode(Data(legacy.secretPayload.utf8))
-                // Never migrate a keyed wallet whose secret could not be read back.
-                if legacy.type == .watchOnly || secret != nil,
-                   let migrated = try? persist(legacy, secret: secret) {
-                    store.deleteLegacyRecord()
-                    self.activeRecord = migrated
-                } else {
-                    self.activeRecord = legacy
-                }
-                self.hasWallet = true
-            } else {
-                self.hasWallet = false
-                self.activeRecord = nil
-                return
-            }
-            loadCache()
-            Task {
-                await refreshAll()
-            }
-        } catch {
-            self.hasWallet = false
-            self.activeRecord = nil
-        }
-    }
-
-    // MARK: - Persist (metadata + protected secret)
-    /// Stores the public metadata and the secret in separate Keychain items and returns
-    /// the record kept in memory, whose `secretPayload` is empty for keyed wallets.
-    private func persist(_ record: StoredWalletRecord, secret: WalletSecret?) throws -> StoredWalletRecord {
-        var redacted = record
-        if record.type != .watchOnly { redacted.secretPayload = "" }
-        let metadata = try JSONEncoder().encode(redacted)
-        try SecureKeyStore.shared.saveWallet(metadata: metadata, secret: try secret?.encoded())
-        return redacted
-    }
-
-    private func activate(_ record: StoredWalletRecord) {
+    func activate(_ record: StoredWalletRecord) {
         self.activeRecord = record
         self.hasWallet = true
         self.balanceSats = 0
@@ -319,7 +279,7 @@ public final class WalletManager: ObservableObject {
         }
     }
 
-    private func ensureSelfTest() async throws {
+    func ensureSelfTest() async throws {
         let ok = await Task.detached(priority: .userInitiated) { CryptoSelfTest.passes() }.value
         guard ok else { throw WalletError.cryptoSelfTestFailed }
     }
@@ -535,7 +495,7 @@ public final class WalletManager: ObservableObject {
     }
 
     // MARK: - Secret access (Keychain-enforced Face ID / Touch ID / passcode)
-    private func loadSecret(reason: String) async throws -> WalletSecret {
+    func loadSecret(reason: String) async throws -> WalletSecret {
         guard let record = activeRecord else { throw SecureKeyStoreError.itemNotFound }
         guard record.type != .watchOnly else { throw WalletError.unsupportedForWatchOnly }
 
@@ -570,7 +530,7 @@ public final class WalletManager: ObservableObject {
         let secret = try await loadSecret(reason: reason)
         let isTestnet = record.isTestnet
         let keyring = try await Task.detached(priority: .userInitiated) {
-            try WalletKeyring.from(secret: secret, isTestnet: isTestnet)
+            try WalletKeyring.from(secret: secret, isTestnet: isTestnet, account: record.accountNumber ?? 0)
         }.value
         guard let addresses = keyring.addresses, addresses.segwit == record.primaryAddress else {
             throw WalletError.secretMismatch
@@ -610,25 +570,37 @@ public final class WalletManager: ObservableObject {
             secret.privateKey = WalletDerivation.wif(privateKey: data, isCompressed: compressed, isTestnet: isTestnet)
         }
         let newSecret = secret
-        let keyring = try await Task.detached(priority: .userInitiated) {
-            try WalletKeyring.from(secret: newSecret, isTestnet: isTestnet)
-        }.value
-        guard let addresses = keyring.addresses else { throw WalletError.derivationFailed }
-        let accounts = keyring.walletAccounts()
-
-        let updated = StoredWalletRecord(
-            type: record.type,
-            secretPayload: "",
-            primaryAddress: addresses.segwit,
-            taprootAddress: addresses.taproot,
-            legacyAddress: addresses.legacy,
-            createdAt: record.createdAt,
-            isTestnet: isTestnet,
-            accounts: accounts.isEmpty ? nil : accounts,
-            addressIndexes: accounts.isEmpty ? nil : accounts.map { _ in AddressIndexes() }
-        )
-        let stored = try persist(updated, secret: newSecret)
-        activate(stored)
+        guard let wallet = activeWallet else { throw WalletError.derivationFailed }
+        // Re-derive every account of this wallet for the other network.
+        var bundle = wallet.bundle
+        for (position, slot) in bundle.accounts.enumerated() {
+            let number = slot.number
+            let keyring = try await Task.detached(priority: .userInitiated) {
+                try WalletKeyring.from(secret: newSecret, isTestnet: isTestnet, account: number)
+            }.value
+            guard let addresses = keyring.addresses else { throw WalletError.derivationFailed }
+            let accounts = keyring.walletAccounts()
+            var updated = StoredWalletRecord(
+                type: record.type,
+                secretPayload: "",
+                primaryAddress: addresses.segwit,
+                taprootAddress: addresses.taproot,
+                legacyAddress: addresses.legacy,
+                createdAt: slot.record.createdAt,
+                isTestnet: isTestnet,
+                accounts: accounts.isEmpty ? nil : accounts,
+                addressIndexes: accounts.isEmpty ? nil : accounts.map { _ in AddressIndexes() }
+            )
+            updated.accountNumber = number
+            bundle.accounts[position].record = updated
+        }
+        guard let metadata = encodeBundle(bundle) else { throw WalletError.derivationFailed }
+        SecureKeyStore.shared.slot = wallet.slot
+        try SecureKeyStore.shared.saveWallet(metadata: metadata, secret: try newSecret.encoded())
+        if let index = library.firstIndex(where: { $0.slot == wallet.slot }) {
+            library[index].bundle = bundle
+        }
+        selectWallet(slot: wallet.slot, account: bundle.selected)
     }
 
     // MARK: - Spending
@@ -798,21 +770,6 @@ public final class WalletManager: ObservableObject {
             let tx = signed.isFullyFinalized ? try signed.extractTransaction() : nil
             return (signed, tx)
         }.value
-    }
-
-    // MARK: - Delete Wallet
-    public func deleteWallet() {
-        SecureKeyStore.shared.delete()
-        self.activeRecord = nil
-        self.hasWallet = false
-        self.balanceSats = 0
-        self.balanceError = nil
-        self.lastBalanceUpdate = nil
-        self.trackedByScript = [:]
-        self.fundedAddresses = []
-        self.transactions = []
-        clearCaches()
-        Task { await ElectrumClient.shared.disconnect() }
     }
 
     // MARK: - Formatted Balance Display

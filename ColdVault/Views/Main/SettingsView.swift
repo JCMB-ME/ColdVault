@@ -464,7 +464,7 @@ enum SettingsStyle {
     static var groupFill: Color { Color(uiColor: .secondarySystemBackground) }
 }
 
-private struct SettingsTitle: View {
+struct SettingsTitle: View {
     let text: String
     var topPadding: CGFloat = 12
 
@@ -477,7 +477,7 @@ private struct SettingsTitle: View {
     }
 }
 
-private struct SettingsSection<Content: View>: View {
+struct SettingsSection<Content: View>: View {
     let header: String
     let footer: String?
     @ViewBuilder let content: Content
@@ -501,7 +501,7 @@ private struct SettingsSection<Content: View>: View {
     }
 }
 
-private struct SettingsRow<Trailing: View>: View {
+struct SettingsRow<Trailing: View>: View {
     let title: String
     var titleColor: Color = Color(uiColor: .label)
     let trailing: Trailing
@@ -534,7 +534,7 @@ extension SettingsRow where Trailing == SettingsRowValue {
     }
 }
 
-private struct SettingsRowValue: View {
+struct SettingsRowValue: View {
     let value: String?
     let chevron: Bool
 
@@ -550,7 +550,7 @@ private struct SettingsRowValue: View {
     }
 }
 
-private struct Chevron: View {
+struct Chevron: View {
     var body: some View {
         Image(systemName: "chevron.right")
             .font(.system(size: 13, weight: .semibold))
@@ -558,7 +558,7 @@ private struct Chevron: View {
     }
 }
 
-private struct SettingsDivider: View {
+struct SettingsDivider: View {
     var body: some View {
         Divider().padding(.leading, 16)
     }

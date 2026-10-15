@@ -510,6 +510,16 @@ extension WalletManager {
         if cache.fiatCurrency == fiatCurrency { fiatPrice = cache.fiatPrice }
     }
 
+    /// Balance stored in an account's cache file (for the wallet list).
+    static func cachedBalance(primaryAddress: String, isTestnet: Bool) -> UInt64? {
+        guard let folder = cacheFolder else { return nil }
+        let key = BitcoinHash.sha256(Data("\(primaryAddress)|\(isTestnet)".utf8)).hexEncodedString
+        let url = folder.appendingPathComponent("wallet-\(key.prefix(16)).json")
+        guard let data = try? Data(contentsOf: url),
+              let cache = try? JSONDecoder().decode(WalletCacheFile.self, from: data) else { return nil }
+        return cache.balanceSats
+    }
+
     func saveCache() {
         guard let url = walletCacheURL, lastBalanceUpdate != nil else { return }
         let cache = WalletCacheFile(balanceSats: balanceSats, lastUpdate: lastBalanceUpdate,

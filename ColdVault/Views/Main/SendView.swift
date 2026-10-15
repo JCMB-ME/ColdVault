@@ -126,6 +126,7 @@ public struct SendView: View {
                 }
             }
             .navigationTitle(isAirGapFlow ? t("Sign Offline", "Firmar sin conexión") : L10n.sendBitcoin(lang))
+            .presentationDragIndicator(.visible)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -149,35 +150,67 @@ public struct SendView: View {
 
     // MARK: - Form
     private var sendForm: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 26) {
             if walletManager.isWatchOnly {
-                infoCard(icon: "eye.fill", color: Color(red: 0.97, green: 0.58, blue: 0.10),
-                         title: t("Watch-only wallet", "Billetera de solo observación"),
-                         text: t("ColdVault will create an unsigned transaction (PSBT) as a QR code. Sign it on your cold device and scan the result back here to broadcast it.",
-                                 "ColdVault creará una transacción sin firmar (PSBT) como código QR. Fírmala en tu dispositivo frío y escanea aquí el resultado para transmitirla."))
+                Text(t("Watch-only: ColdVault creates an unsigned transaction (PSBT) for your cold device to sign.",
+                       "Observación: ColdVault crea una transacción sin firmar (PSBT) para que la firme tu dispositivo frío."))
+                    .font(.system(size: 12))
+                    .foregroundColor(Palette.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
             }
+
+            // Amount: large and centered, like the balance.
+            VStack(spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    TextField("0", text: $amountString)
+                        .font(.system(size: 52, weight: .bold))
+                        .multilineTextAlignment(.center)
+                        .keyboardType(.numberPad)
+                        .fixedSize()
+                        .disabled(sendAll)
+                        .opacity(sendAll ? 0.35 : 1)
+                    Text("sats")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(Palette.secondary)
+                }
+                .frame(maxWidth: .infinity)
+
+                HStack(spacing: 10) {
+                    Text("\(L10n.balanceLabel(lang)): \(walletManager.formattedBalance) \(walletManager.displayUnit.rawValue)")
+                        .font(.system(size: 12))
+                        .foregroundColor(Palette.secondary)
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        sendAll.toggle()
+                        if sendAll { amountString = "" }
+                    } label: {
+                        Text(L10n.maxButton(lang))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(sendAll ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(sendAll ? Color(uiColor: .label) : SettingsStyle.groupFill))
+                    }
+                    .buttonStyle(.plain)
+                }
+                if sendAll {
+                    Text(t("Sends the entire balance minus the network fee.", "Envía todo el saldo menos la comisión de red."))
+                        .font(.system(size: 12))
+                        .foregroundColor(Palette.secondary)
+                }
+            }
+            .padding(.top, 10)
 
             // Recipient
             VStack(alignment: .leading, spacing: 8) {
-                sectionLabel(L10n.recipient(lang))
-                HStack {
+                HStack(spacing: 14) {
                     TextField(L10n.recipientPlaceholder(lang), text: $recipientAddress)
                         .font(.system(size: 15, design: .monospaced))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
-
-                    Button(action: pasteRecipient) {
-                        Image(systemName: "doc.on.clipboard")
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundColor(Color(uiColor: .label))
-                    }
-
-                    Button(action: { scanTarget = .recipient }) {
-                        Image(systemName: "qrcode.viewfinder")
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundColor(Color(uiColor: .label))
-                    }
-
+                    Button(action: pasteRecipient) { Image(systemName: "doc.on.clipboard") }
+                    Button(action: { scanTarget = .recipient }) { Image(systemName: "qrcode.viewfinder") }
                     if !walletManager.contacts.isEmpty {
                         Menu {
                             ForEach(walletManager.contacts) { contact in
@@ -185,151 +218,99 @@ public struct SendView: View {
                             }
                         } label: {
                             Image(systemName: "person.crop.circle")
-                                .symbolRenderingMode(.hierarchical)
-                                .foregroundColor(Color(uiColor: .label))
                         }
                     }
                 }
-                .padding(14)
-                .glassCard(cornerRadius: 14)
+                .foregroundColor(Color(uiColor: .label))
+                .padding(.horizontal, 16)
+                .frame(minHeight: 52)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
 
                 if let name = walletManager.contactName(for: recipientAddress) {
                     Label(name, systemImage: "person.fill")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(Palette.secondary)
-                        .padding(.horizontal, 4)
+                        .padding(.horizontal, 16)
                 }
-
                 if !recipientAddress.isEmpty && BitcoinAddress.decode(recipientAddress) == nil {
                     Text(t("Invalid address (checksum or format).", "Dirección inválida (checksum o formato)."))
                         .font(.system(size: 12))
                         .foregroundColor(.red)
-                        .padding(.horizontal, 4)
-                }
-            }
-            .padding(.horizontal, 20)
-
-            // Amount
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    sectionLabel(L10n.amount(lang))
-                    Spacer()
-                    Text("\(L10n.balanceLabel(lang)): \(walletManager.formattedBalance) \(walletManager.displayUnit.rawValue)")
-                        .font(.system(size: 12))
-                        .foregroundColor(Palette.secondary)
-                }
-                .padding(.horizontal, 4)
-
-                HStack {
-                    TextField("0", text: $amountString)
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .keyboardType(.numberPad)
-                        .disabled(sendAll)
-                        .opacity(sendAll ? 0.4 : 1)
-
-                    Text("sats")
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundColor(Palette.secondary)
-
-                    Button(action: {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        sendAll.toggle()
-                        if sendAll { amountString = "" }
-                    }) {
-                        Text(L10n.maxButton(lang))
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(sendAll ? .white : Color(uiColor: .label))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .modifier(GlassPillModifier(isEmphasized: sendAll))
-                    }
-                }
-                .padding(14)
-                .glassCard(cornerRadius: 14)
-
-                if sendAll {
-                    Text(t("Sends the entire balance minus the network fee.", "Envía todo el saldo menos la comisión de red."))
-                        .font(.system(size: 12))
-                        .foregroundColor(Palette.secondary)
-                        .padding(.horizontal, 4)
+                        .padding(.horizontal, 16)
                 }
             }
             .padding(.horizontal, 20)
 
             // Fee
-            VStack(alignment: .leading, spacing: 8) {
-                sectionLabel(L10n.networkFee(lang))
-                HStack(spacing: 8) {
+            VStack(spacing: 10) {
+                Text(L10n.networkFee(lang).uppercased())
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(Palette.secondary)
+                HStack(spacing: 4) {
                     feeButton(.economy, title: L10n.economy(lang))
                     feeButton(.normal, title: L10n.normal(lang))
                     feeButton(.fast, title: L10n.fast(lang))
                     feeButton(.custom, title: t("Custom", "Manual"))
                 }
+                .padding(4)
+                .background(Capsule().fill(SettingsStyle.groupFill))
+                Text("\(feeRate) sat/vB")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(Palette.secondary)
                 if feeChoice == .custom {
                     Stepper(value: $customFeeRate, in: 1...1000) {
                         Text("\(customFeeRate) sat/vB")
                             .font(.system(size: 14, weight: .semibold, design: .monospaced))
                     }
-                    .padding(12)
-                    .glassCard(cornerRadius: 12)
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 48)
+                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
                 }
                 if fees == nil && !feesUnavailable {
-                    HStack(spacing: 6) {
-                        ProgressView()
-                        Text(t("Loading network fees…", "Cargando comisiones de la red…"))
-                            .font(.system(size: 12))
-                            .foregroundColor(Palette.secondary)
-                    }
+                    ProgressView()
                 } else if feesUnavailable {
                     Text(t("Could not load current fees. Check the rate before sending.",
                            "No se pudieron cargar las comisiones actuales. Revisa la tasa antes de enviar."))
                         .font(.system(size: 12))
                         .foregroundColor(.orange)
+                        .multilineTextAlignment(.center)
                 }
             }
             .padding(.horizontal, 20)
 
             Button(action: review) {
-                if isProcessing {
-                    ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white))
-                } else {
-                    Text(t("Review transaction", "Revisar transacción"))
-                        .font(.system(size: 17, weight: .semibold))
+                Group {
+                    if isProcessing {
+                        ProgressView().tint(Color(uiColor: .systemBackground))
+                    } else {
+                        Text(t("Review", "Revisar"))
+                            .font(.system(size: 16, weight: .semibold))
+                    }
                 }
+                .foregroundColor(Color(uiColor: .systemBackground))
+                .frame(maxWidth: .infinity)
+                .frame(height: 50)
+                .background(Capsule().fill(Color(uiColor: .label)))
             }
-            .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 56)
-            .modifier(GlassPillModifier(isEmphasized: true))
-            .opacity(canReview ? 1.0 : 0.45)
+            .buttonStyle(.plain)
+            .opacity(canReview ? 1.0 : 0.35)
             .disabled(!canReview)
             .padding(.horizontal, 24)
         }
     }
 
     private func feeButton(_ choice: FeeChoice, title: String) -> some View {
-        let f = fees ?? RecommendedFees.fallback
-        let rate: String
-        switch choice {
-        case .economy: rate = "\(f.hourFee)"
-        case .normal:  rate = "\(f.halfHourFee)"
-        case .fast:    rate = "\(f.fastestFee)"
-        case .custom:  rate = "\(customFeeRate)"
-        }
-        let selected = feeChoice == choice
-        return Button(action: {
+        Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             feeChoice = choice
-        }) {
-            VStack(spacing: 3) {
-                Text(title).font(.system(size: 12, weight: .medium))
-                Text("\(rate) sat/vB").font(.system(size: 11, weight: .bold))
-            }
-            .foregroundColor(selected ? .white : Color(uiColor: .label))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 9)
-            .modifier(GlassPillModifier(isEmphasized: selected))
+        } label: {
+            Text(title)
+                .font(.system(size: 13, weight: feeChoice == choice ? .semibold : .regular))
+                .foregroundColor(feeChoice == choice ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                .frame(maxWidth: .infinity, minHeight: 34)
+                .background(Capsule().fill(feeChoice == choice ? Color(uiColor: .label) : Color.clear))
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Review (online / watch-only)
@@ -360,7 +341,7 @@ public struct SendView: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .glassCard(cornerRadius: 16)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
             .padding(.horizontal, 20)
 
             Button(action: { confirm(plan) }) {
@@ -425,7 +406,7 @@ public struct SendView: View {
             .disabled(isProcessing)
         }
         .padding(16)
-        .glassCard(cornerRadius: 16)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
         .padding(.horizontal, 20)
     }
 
@@ -454,7 +435,7 @@ public struct SendView: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity)
-        .glassCard(cornerRadius: 16)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.green.opacity(0.3), lineWidth: 1))
         .padding(.horizontal, 20)
     }
@@ -487,7 +468,7 @@ public struct SendView: View {
                 Button(t("Done", "Listo")) { presentationMode.wrappedValue.dismiss() }
             }
             .padding(16)
-            .glassCard(cornerRadius: 16)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
             .padding(.horizontal, 20)
         } else if let psbt = importedPSBT, let summary = summary {
             psbtReviewCard(psbt: psbt, summary: summary)
@@ -507,7 +488,7 @@ public struct SendView: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity)
-            .glassCard(cornerRadius: 16)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
             .padding(.horizontal, 20)
         } else {
             VStack(spacing: 16) {
@@ -577,7 +558,7 @@ public struct SendView: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .glassCard(cornerRadius: 16)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
             .padding(.horizontal, 20)
 
             if summary.signableInputs > 0 {
@@ -622,7 +603,7 @@ public struct SendView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard(cornerRadius: 16)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
         .padding(.horizontal, 20)
     }
 

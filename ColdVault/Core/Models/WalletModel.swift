@@ -14,7 +14,7 @@ public enum WalletSecurityType: String, Codable {
     case watchOnly  = "Solo Observación (Watch-Only)"
 }
 
-public struct StoredWalletRecord: Codable {
+public struct StoredWalletRecord: Codable, Equatable {
     public let type: WalletSecurityType
     public var secretPayload: String // Empty for keyed wallets; address or descriptors if watch-only
     public let primaryAddress: String
@@ -29,6 +29,8 @@ public struct StoredWalletRecord: Codable {
     public var addressIndexes: [AddressIndexes]?
     /// Last BIP-44 gap-limit scan; quick scans run in between (see AddressScanner).
     public var lastFullAddressScan: Date?
+    /// BIP-44 account number of this record (nil = 0, records made before accounts).
+    public var accountNumber: UInt32?
 
     public init(
         type: WalletSecurityType,
@@ -51,6 +53,37 @@ public struct StoredWalletRecord: Codable {
         self.accounts = accounts
         self.addressIndexes = addressIndexes
     }
+}
+
+/// One wallet (one seed phrase, private key or watch-only import) and its accounts.
+public struct WalletBundle: Codable, Equatable {
+    public var name: String
+    public var accounts: [AccountSlot]
+    public var selected: Int
+
+    public var current: AccountSlot? {
+        accounts.indices.contains(selected) ? accounts[selected] : accounts.first
+    }
+}
+
+/// One BIP-44 account (m/purpose'/coin'/n') of a wallet, with its own addresses.
+public struct AccountSlot: Codable, Equatable, Identifiable {
+    public var id: UInt32 { number }
+    public var number: UInt32
+    public var name: String
+    public var record: StoredWalletRecord
+}
+
+/// The list of wallets on this device (public data: slot ids only) and the selection.
+public struct WalletLibrary: Codable, Equatable {
+    public var slots: [String]
+    public var selected: String
+}
+
+public struct LibraryWallet: Identifiable, Equatable {
+    public var id: String { slot }
+    public let slot: String
+    public var bundle: WalletBundle
 }
 
 public enum DisplayUnit: String, CaseIterable, Identifiable {
