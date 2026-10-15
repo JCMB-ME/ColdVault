@@ -132,12 +132,8 @@ extension WalletManager {
     public func format(sats: UInt64) -> String {
         // Thousands and decimal separators of the iPhone's region, like the fiat value
         // (e.g. 79,957.5 BTC in the US, 79.957,5 BTC in Spain).
-        let locale = Locale.current
-        let decimalSeparator = locale.decimalSeparator ?? "."
-        let grouping = NumberFormatter()
-        grouping.numberStyle = .decimal
-        grouping.locale = locale
-        grouping.maximumFractionDigits = 0
+        let decimalSeparator = Locale.current.decimalSeparator ?? "."
+        let grouping = WalletManager.groupingFormatter
         func grouped(_ value: UInt64) -> String {
             grouping.string(from: NSNumber(value: value)) ?? "\(value)"
         }
@@ -169,11 +165,30 @@ extension WalletManager {
     public var formattedFiatBalance: String? {
         guard homeShowFiat, !isTestnet, let price = fiatPrice else { return nil }
         let value = Double(balanceSats) / 100_000_000 * price
+        return WalletManager.currencyFormatter(fiatCurrency, fractionDigits: nil).string(from: NSNumber(value: value))
+    }
+
+    // Formatters are expensive to create: one per configuration, reused on every render.
+    static let groupingFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = Locale.current
+        formatter.maximumFractionDigits = 0
+        return formatter
+    }()
+
+    private static var currencyFormatters: [String: NumberFormatter] = [:]
+
+    static func currencyFormatter(_ code: String, fractionDigits: Int?) -> NumberFormatter {
+        let key = "\(code)-\(fractionDigits ?? -1)"
+        if let cached = currencyFormatters[key] { return cached }
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
-        formatter.currencyCode = fiatCurrency
+        formatter.currencyCode = code
         formatter.locale = Locale.current
-        return formatter.string(from: NSNumber(value: value))
+        if let digits = fractionDigits { formatter.maximumFractionDigits = digits }
+        currencyFormatters[key] = formatter
+        return formatter
     }
 }
 
@@ -235,6 +250,18 @@ extension WalletManager {
     /// 6M → 5 days, 1Y → 1 week, All → 1 month. Built from the price history.
     public func priceCandles(_ period: PricePeriod) -> [PriceCandle] {
         guard !priceHistory.isEmpty else { return [] }
+        // Built once per data change (the chart re-renders on every published change).
+        let key = "\(period.rawValue)-\(priceHistory.count)-\(priceHistory.last?.date.timeIntervalSince1970 ?? 0)-\(usdPrice ?? 0)-\(fiatPrice ?? 0)"
+        if let cached = WalletManager.candleCache[key] { return cached }
+        let candles = buildCandles(period)
+        if WalletManager.candleCache.count > 12 { WalletManager.candleCache.removeAll() }
+        WalletManager.candleCache[key] = candles
+        return candles
+    }
+
+    private static var candleCache: [String: [PriceCandle]] = [:]
+
+    private func buildCandles(_ period: PricePeriod) -> [PriceCandle] {
         let factor = (fiatPrice != nil && usdPrice != nil && usdPrice! > 0) ? fiatPrice! / usdPrice! : 1
         let bucket: TimeInterval
         switch period {
@@ -518,16 +545,22 @@ extension WalletManager {
         guard let folder = cacheFolder else { return nil }
         let key = BitcoinHash.sha256(Data("\(primaryAddress)|\(isTestnet)".utf8)).hexEncodedString
         let url = folder.appendingPathComponent("wallet-\(key.prefix(16)).json")
+        // Read from disk once; the Wallets page asks on every render.
+        if let known = balanceMemo[url.lastPathComponent] { return known }
         guard let data = try? Data(contentsOf: url),
               let cache = try? JSONDecoder().decode(WalletCacheFile.self, from: data) else { return nil }
+        balanceMemo[url.lastPathComponent] = cache.balanceSats
         return cache.balanceSats
     }
+
+    private static var balanceMemo: [String: UInt64] = [:]
 
     func saveCache() {
         guard let url = walletCacheURL, lastBalanceUpdate != nil else { return }
         let cache = WalletCacheFile(balanceSats: balanceSats, lastUpdate: lastBalanceUpdate,
                                     transactions: Array(transactions.prefix(500)),
                                     fiatPrice: fiatPrice, usdPrice: usdPrice, fiatCurrency: fiatCurrency)
+        WalletManager.balanceMemo[url.lastPathComponent] = balanceSats
         if let data = try? JSONEncoder().encode(cache) {
             try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         }
@@ -535,6 +568,7 @@ extension WalletManager {
 
     /// Removes every cached balance / history (e.g. when the wallet is deleted).
     func clearCaches() {
+        WalletManager.balanceMemo.removeAll()
         guard let folder = WalletManager.cacheFolder,
               let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return }
         for file in files where file.lastPathComponent.hasPrefix("wallet-") {

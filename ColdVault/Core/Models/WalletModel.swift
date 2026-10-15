@@ -60,6 +60,8 @@ public struct WalletBundle: Codable, Equatable {
     public var name: String
     public var accounts: [AccountSlot]
     public var selected: Int
+    /// Built-in icon (SF Symbol name) chosen for the wallet; nil = emoji / initial.
+    public var symbol: String?
 
     public var current: AccountSlot? {
         accounts.indices.contains(selected) ? accounts[selected] : accounts.first

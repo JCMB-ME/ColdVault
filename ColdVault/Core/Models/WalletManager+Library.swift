@@ -124,6 +124,7 @@ extension WalletManager {
             return
         }
         let selected = library.contains { $0.slot == wallets.selected } ? wallets.selected : library[0].slot
+        loadWalletImages()
         saveLibrary()
         selectWallet(slot: selected, account: nil)
     }
@@ -238,6 +239,7 @@ extension WalletManager {
         SecureKeyStore.shared.slot = slot
         SecureKeyStore.shared.delete()
         library.removeAll { $0.slot == slot }
+        setWalletImage(slot: slot, data: nil)
         balanceSats = 0
         balanceError = nil
         lastBalanceUpdate = nil
@@ -256,5 +258,113 @@ extension WalletManager {
             activeRecord = nil
             hasWallet = false
         }
+    }
+
+    // MARK: - Order
+
+    /// Moves a wallet to the position of another one (drag and drop on the Wallets page).
+    public func moveWallet(_ slot: String, to target: String) {
+        guard slot != target,
+              let from = library.firstIndex(where: { $0.slot == slot }),
+              let to = library.firstIndex(where: { $0.slot == target }) else { return }
+        let wallet = library.remove(at: from)
+        library.insert(wallet, at: to)
+        saveLibrary()
+    }
+
+    // MARK: - Picture / icon
+
+    static func walletImageURL(_ slot: String) -> URL? {
+        guard let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("wallet-images", isDirectory: true) else { return nil }
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("\(slot).jpg")
+    }
+
+    func loadWalletImages() {
+        var images = [String: Data]()
+        for wallet in library {
+            if let url = WalletManager.walletImageURL(wallet.slot), let data = try? Data(contentsOf: url) {
+                images[wallet.slot] = data
+            }
+        }
+        walletImages = images
+    }
+
+    /// Sets (or with nil removes) the wallet's own picture. A picture replaces the icon.
+    public func setWalletImage(slot: String, data: Data?) {
+        guard let url = WalletManager.walletImageURL(slot) else { return }
+        if let data = data {
+            guard (try? data.write(to: url, options: [.atomic, .completeFileProtection])) != nil else { return }
+            walletImages[slot] = data
+            setWalletSymbol(slot: slot, symbol: nil, keepImage: true)
+        } else {
+            try? FileManager.default.removeItem(at: url)
+            walletImages[slot] = nil
+        }
+    }
+
+    /// Chooses a built-in icon (nil = emoji / initial of the name); removes the picture.
+    public func setWalletSymbol(slot: String, symbol: String?, keepImage: Bool = false) {
+        guard let index = library.firstIndex(where: { $0.slot == slot }) else { return }
+        if !keepImage, walletImages[slot] != nil { setWalletImage(slot: slot, data: nil) }
+        guard library[index].bundle.symbol != symbol else { return }
+        library[index].bundle.symbol = symbol
+        writeMetadata(library[index].bundle, slot: slot)
+    }
+
+    // MARK: - Secrets of any wallet (Backup lists every wallet)
+
+    /// The secret of any wallet on this iPhone (Face ID / passcode, enforced by the Keychain).
+    func loadSecret(slot: String, reason: String) async throws -> WalletSecret {
+        guard let record = library.first(where: { $0.slot == slot })?.bundle.accounts.first?.record else {
+            throw SecureKeyStoreError.itemNotFound
+        }
+        guard record.type != .watchOnly else { throw WalletError.unsupportedForWatchOnly }
+        // Wallet still in the legacy format (migration could not run, e.g. no passcode).
+        if !record.secretPayload.isEmpty {
+            _ = try await SecureKeyStore.shared.authenticateWithBiometrics(reason: reason)
+            guard let secret = WalletSecret.decode(Data(record.secretPayload.utf8)) else {
+                throw SecureKeyStoreError.dataCorrupted
+            }
+            return secret
+        }
+        let data = try await SecureKeyStore.shared.loadSecret(reason: reason, slot: slot)
+        guard let secret = WalletSecret.decode(data) else { throw SecureKeyStoreError.dataCorrupted }
+        return secret
+    }
+
+    /// Recovery phrase / private key of a wallet; for a watch-only wallet, the public
+    /// data it was imported from (address, xpub or descriptors), which restores it.
+    public func revealSecret(slot: String) async throws -> String {
+        guard let record = library.first(where: { $0.slot == slot })?.bundle.accounts.first?.record else { return "" }
+        if record.type == .watchOnly { return record.secretPayload }
+        return try await loadSecret(slot: slot, reason: appLanguage == .english
+                                    ? "Confirm to show your recovery phrase or private key"
+                                    : "Confirma tu identidad para ver tu frase semilla o clave privada").displayText
+    }
+
+    /// Account descriptors (xpub) of the selected account of any seed-phrase wallet.
+    public func exportDescriptors(slot: String) async throws -> [WalletKeyring.AccountDescriptor] {
+        guard let record = library.first(where: { $0.slot == slot })?.bundle.current?.record else {
+            throw SecureKeyStoreError.itemNotFound
+        }
+        try await ensureSelfTest()
+        let secret = try await loadSecret(slot: slot, reason: appLanguage == .english
+                                          ? "Confirm to export the account public keys (xpub)"
+                                          : "Confirma para exportar las claves públicas de la cuenta (xpub)")
+        let isTestnet = record.isTestnet
+        let number = record.accountNumber ?? 0
+        let keyring = try await Task.detached(priority: .userInitiated) {
+            try WalletKeyring.from(secret: secret, isTestnet: isTestnet, account: number)
+        }.value
+        guard keyring.addresses?.segwit == record.primaryAddress else { throw WalletError.secretMismatch }
+        let descriptors = keyring.accountDescriptors()
+        guard !descriptors.isEmpty else {
+            throw NSError(domain: "ColdVault", code: 400, userInfo: [NSLocalizedDescriptionKey: appLanguage == .english
+                ? "Wallets imported from a private key have no xpub; use the address for watch-only."
+                : "Las billeteras importadas desde una clave privada no tienen xpub; usa la dirección en modo observación."])
+        }
+        return descriptors
     }
 }

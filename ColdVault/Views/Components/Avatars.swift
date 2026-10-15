@@ -18,7 +18,7 @@ struct ContactAvatar: View {
 
     var body: some View {
         Group {
-            if let data = contact.photo, let image = UIImage(data: data) {
+            if let data = contact.photo, let image = DecodedImages.image(data) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
@@ -52,14 +52,35 @@ enum ContactPhoto {
     }
 }
 
+/// Decoded pictures, so a JPEG is not decoded again on every render.
+enum DecodedImages {
+    private static let cache = NSCache<NSData, UIImage>()
+
+    static func image(_ data: Data) -> UIImage? {
+        let key = data as NSData
+        if let cached = cache.object(forKey: key) { return cached }
+        guard let image = UIImage(data: data) else { return nil }
+        cache.setObject(image, forKey: key)
+        return image
+    }
+}
+
 // MARK: - Wallet avatar
 
-/// The wallet's emoji (if its name starts with one) or its first letter, in a circle.
+/// The wallet's picture, its built-in icon, or the emoji / first letter of its name.
 struct WalletAvatar: View {
     let name: String
     let size: CGFloat
-    /// Selected wallet: solid circle in the label colour.
+    /// Selected wallet: solid circle in the label colour (a ring around a picture).
     var highlighted: Bool = false
+    var symbol: String? = nil
+    var imageData: Data? = nil
+
+    /// Built-in icons offered for wallets.
+    static let symbols = ["bitcoinsign.circle", "lock.shield", "building.columns", "house", "briefcase",
+                          "banknote", "creditcard", "gift", "heart", "star",
+                          "leaf", "flame", "bolt", "snowflake", "airplane",
+                          "car", "graduationcap", "person", "person.2", "pawprint"]
 
     private var first: Character? { name.trimmingCharacters(in: .whitespacesAndNewlines).first }
 
@@ -69,14 +90,39 @@ struct WalletAvatar: View {
     }
 
     var body: some View {
-        let symbol = first.map { String($0).uppercased() } ?? "?"
-        Text(symbol)
-            .font(.system(size: isEmoji ? size * 0.5 : size * 0.4, weight: .bold, design: .rounded))
-            .foregroundColor(highlighted ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
-            .frame(width: size, height: size)
-            .background(Circle().fill(highlighted && !isEmoji ? Color(uiColor: .label)
-                                                              : Color(uiColor: .systemBackground).opacity(0.9)))
-            .overlay(Circle().stroke(Color(uiColor: .label), lineWidth: highlighted && isEmoji ? 2 : 0))
+        if let data = imageData, let image = DecodedImages.image(data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+                .padding(highlighted ? 3 : 0)
+                .overlay(Circle().stroke(Color(uiColor: .label), lineWidth: highlighted ? 2 : 0))
+                .frame(width: size, height: size)
+        } else if let symbol = symbol {
+            Image(systemName: symbol)
+                .font(.system(size: size * 0.42, weight: .semibold))
+                .foregroundColor(highlighted ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                .frame(width: size, height: size)
+                .background(Circle().fill(highlighted ? Color(uiColor: .label) : Color(uiColor: .systemBackground).opacity(0.9)))
+        } else {
+            let text = first.map { String($0).uppercased() } ?? "?"
+            Text(text)
+                .font(.system(size: isEmoji ? size * 0.5 : size * 0.4, weight: .bold, design: .rounded))
+                .foregroundColor(highlighted ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                .frame(width: size, height: size)
+                .background(Circle().fill(highlighted && !isEmoji ? Color(uiColor: .label)
+                                                                  : Color(uiColor: .systemBackground).opacity(0.9)))
+                .overlay(Circle().stroke(Color(uiColor: .label), lineWidth: highlighted && isEmoji ? 2 : 0))
+        }
+    }
+}
+
+extension WalletAvatar {
+    /// Avatar of a wallet of the library (name, icon and picture).
+    init(wallet: LibraryWallet, images: [String: Data], size: CGFloat, highlighted: Bool = false) {
+        self.init(name: wallet.bundle.name, size: size, highlighted: highlighted,
+                  symbol: wallet.bundle.symbol, imageData: images[wallet.slot])
     }
 }
 
@@ -87,6 +133,7 @@ struct WalletAvatar: View {
 struct SeedWordsGrid: View {
     let words: [String]
     var animated: Bool = true
+    var cellFill: Color = SettingsStyle.groupFill
 
     @State private var shown = 0
 
@@ -99,7 +146,7 @@ struct SeedWordsGrid: View {
     var body: some View {
         LazyVGrid(columns: columns, spacing: 8) {
             ForEach(Array(words.enumerated()), id: \.offset) { index, word in
-                SeedWordCell(number: index + 1, word: word)
+                SeedWordCell(number: index + 1, word: word, fill: cellFill)
                     .opacity(index < shown ? 1 : 0)
                     .blur(radius: index < shown ? 0 : 5)
                     .scaleEffect(index < shown ? 1 : 0.86)
@@ -131,6 +178,7 @@ struct SeedWordCell: View {
     let word: String
     /// Placeholder cell (phrase not revealed yet).
     var hidden: Bool = false
+    var fill: Color = SettingsStyle.groupFill
 
     var body: some View {
         HStack(spacing: 6) {
@@ -153,7 +201,7 @@ struct SeedWordCell: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 42)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(SettingsStyle.groupFill))
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(fill))
     }
 }
 

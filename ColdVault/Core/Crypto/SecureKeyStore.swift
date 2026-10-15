@@ -57,7 +57,10 @@ public final class SecureKeyStore {
     public var slot: String = "primary"
 
     private var metadataAccount: String { slot == "primary" ? "wallet_metadata" : "wallet_metadata_\(slot)" }
-    private var secretAccount: String { slot == "primary" ? "wallet_secret" : "wallet_secret_\(slot)" }
+    private var secretAccount: String { SecureKeyStore.secretAccount(for: slot) }
+    private static func secretAccount(for slot: String) -> String {
+        slot == "primary" ? "wallet_secret" : "wallet_secret_\(slot)"
+    }
 
     // MARK: - Wallet library (list of wallets; public data only)
     public func loadLibrary() throws -> Data? {
@@ -181,9 +184,10 @@ public final class SecureKeyStore {
     }
 
     // MARK: - Load Secret (system-enforced Face ID / Touch ID / passcode)
-    public func loadSecret(reason: String) async throws -> Data {
+    /// The secret of the current slot, or of `slot` (any wallet, e.g. for Backup).
+    public func loadSecret(reason: String, slot: String? = nil) async throws -> Data {
         let service = self.service
-        let account = self.secretAccount
+        let account = slot.map { SecureKeyStore.secretAccount(for: $0) } ?? self.secretAccount
         // SecItemCopyMatching blocks while the system prompt is on screen, so keep it
         // off the main thread.
         return try await Task.detached(priority: .userInitiated) { () throws -> Data in

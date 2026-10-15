@@ -30,6 +30,8 @@ public struct SendView: View {
     // Form
     @State private var recipientAddress: String = ""
     @State private var amountString: String = ""
+    /// Unit the amount is typed in (starts as the home screen's unit; tap it to switch).
+    @State private var amountUnit: DisplayUnit?
     @State private var sendAll: Bool = false
     @State private var fees: RecommendedFees?
     @State private var feesUnavailable: Bool = false
@@ -75,11 +77,65 @@ public struct SendView: View {
         }
     }
 
+    private var unit: DisplayUnit { amountUnit ?? walletManager.displayUnit }
+
     private var amountSats: UInt64? {
-        let digits = amountString.trimmingCharacters(in: .whitespaces)
-        guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }),
-              let value = UInt64(digits), value > 0, value <= 2_100_000_000_000_000 else { return nil }
-        return value
+        let value = unit == .btc ? SendView.parseBTC(amountString) : SendView.parseSats(amountString)
+        guard let sats = value, sats > 0, sats <= 2_100_000_000_000_000 else { return nil }
+        return sats
+    }
+
+    static func parseSats(_ text: String) -> UInt64? {
+        let digits = text.trimmingCharacters(in: .whitespaces)
+        guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
+        return UInt64(digits)
+    }
+
+    /// "0.057", "0,057", ".5", "57" BTC → sats, exactly (no floating point), ≤ 8 decimals.
+    static func parseBTC(_ text: String) -> UInt64? {
+        let cleaned = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+        let parts = cleaned.split(separator: ".", omittingEmptySubsequences: false)
+        guard !cleaned.isEmpty, parts.count <= 2,
+              parts.allSatisfy({ $0.allSatisfy { $0.isASCII && $0.isNumber } }) else { return nil }
+        let wholeText = parts[0].isEmpty ? "0" : String(parts[0])
+        let fractionText = parts.count == 2 ? String(parts[1]) : ""
+        guard fractionText.count <= 8, wholeText.count <= 8, let whole = UInt64(wholeText) else { return nil }
+        let fraction = UInt64(fractionText + String(repeating: "0", count: 8 - fractionText.count)) ?? 0
+        return whole * 100_000_000 + fraction
+    }
+
+    /// Exact BTC text for an amount ("0.057"), with the region's decimal separator.
+    static func btcText(_ sats: UInt64) -> String {
+        let whole = sats / 100_000_000
+        var fraction = String(sats % 100_000_000)
+        fraction = String(repeating: "0", count: 8 - fraction.count) + fraction
+        while fraction.hasSuffix("0") { fraction.removeLast() }
+        let separator = Locale.current.decimalSeparator ?? "."
+        let grouped = WalletManager.groupingFormatter.string(from: NSNumber(value: whole)) ?? "\(whole)"
+        return fraction.isEmpty ? grouped : grouped + separator + fraction
+    }
+
+    static func satsText(_ sats: UInt64) -> String {
+        WalletManager.groupingFormatter.string(from: NSNumber(value: sats)) ?? "\(sats)"
+    }
+
+    /// An amount in the unit being used, for the review.
+    private func amountText(_ sats: UInt64) -> String {
+        unit == .btc ? "\(SendView.btcText(sats)) BTC" : "\(SendView.satsText(sats)) sats"
+    }
+
+    /// Switches BTC ⇄ sats, converting what was typed.
+    private func toggleAmountUnit() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let current = amountSats
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
+            amountUnit = unit == .btc ? .sats : .btc
+            if let sats = current {
+                amountString = unit == .btc
+                    ? SendView.btcText(sats).replacingOccurrences(of: Locale.current.groupingSeparator ?? ",", with: "")
+                    : "\(sats)"
+            }
+        }
     }
 
     private var canReview: Bool {
@@ -166,15 +222,38 @@ public struct SendView: View {
                     TextField("0", text: $amountString)
                         .font(.system(size: 52, weight: .bold))
                         .multilineTextAlignment(.center)
-                        .keyboardType(.numberPad)
+                        .keyboardType(unit == .btc ? .decimalPad : .numberPad)
                         .fixedSize()
                         .disabled(sendAll)
                         .opacity(sendAll ? 0.35 : 1)
-                    Text("sats")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundColor(Palette.secondary)
+                        .modifier(RollingDigits())
+                    // Tap the unit to type the amount in BTC or in sats.
+                    Button(action: toggleAmountUnit) {
+                        HStack(spacing: 3) {
+                            Text(unit.rawValue)
+                                .font(.system(size: 18, weight: .semibold))
+                                .id(unit)
+                                .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                                        removal: .move(edge: .top).combined(with: .opacity)))
+                            Image(systemName: "arrow.up.arrow.down")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .foregroundColor(Color(uiColor: .label))
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background(Capsule().fill(SettingsStyle.groupFill))
+                        .clipped()
+                    }
+                    .buttonStyle(.plain)
                 }
                 .frame(maxWidth: .infinity)
+
+                if let sats = amountSats, !sendAll {
+                    Text("= " + (unit == .btc ? "\(SendView.satsText(sats)) sats" : "\(SendView.btcText(sats)) BTC"))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Palette.secondary)
+                        .transition(.opacity)
+                }
 
                 HStack(spacing: 10) {
                     Text("\(L10n.balanceLabel(lang)): \(walletManager.formattedBalance) \(walletManager.displayUnit.rawValue)")
@@ -321,12 +400,12 @@ public struct SendView: View {
                 Text(t("Review", "Revisión"))
                     .font(.system(size: 18, weight: .bold))
                 reviewRow(t("To", "Destino"), recipientAddress.trimmingCharacters(in: .whitespacesAndNewlines), mono: true)
-                reviewRow(t("Amount", "Monto"), "\(plan.amount) sats")
-                reviewRow(t("Network fee", "Comisión"), "\(plan.fee) sats · \(plan.feeRate) sat/vB · ~\(plan.estimatedVSize) vB")
+                reviewRow(t("Amount", "Monto"), amountText(plan.amount))
+                reviewRow(t("Network fee", "Comisión"), "\(SendView.satsText(plan.fee)) sats · \(plan.feeRate) sat/vB · ~\(plan.estimatedVSize) vB")
                 if plan.change > 0 {
-                    reviewRow(t("Change (back to you)", "Cambio (vuelve a ti)"), "\(plan.change) sats")
+                    reviewRow(t("Change (back to you)", "Cambio (vuelve a ti)"), amountText(plan.change))
                 }
-                reviewRow(t("Total debited", "Total descontado"), "\(plan.totalSpent) sats")
+                reviewRow(t("Total debited", "Total descontado"), amountText(plan.totalSpent))
                 reviewRow(t("Inputs", "Entradas"), "\(plan.coins.count)")
                 Text(t("Replaceable (RBF) — you can bump the fee later from another wallet.",
                        "Reemplazable (RBF): puedes subir la comisión después desde otra billetera."))
@@ -645,7 +724,9 @@ public struct SendView: View {
         if let request = BitcoinAddress.parsePaymentURI(text) {
             recipientAddress = request.address
             if let amount = request.amountSats {
-                amountString = "\(amount)"
+                amountString = unit == .btc
+                    ? SendView.btcText(amount).replacingOccurrences(of: Locale.current.groupingSeparator ?? ",", with: "")
+                    : "\(amount)"
                 sendAll = false
             }
         } else {

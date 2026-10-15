@@ -30,6 +30,8 @@ public final class WalletManager: ObservableObject {
     // Several wallets (see WalletManager+Library.swift).
     @Published public internal(set) var library: [LibraryWallet] = []
     @Published public internal(set) var activeSlot: String = "primary"
+    /// Custom wallet pictures (small JPEG) by slot.
+    @Published public internal(set) var walletImages: [String: Data] = [:]
 
     // Address rotation: what the last gap-limit scan found (in memory only).
     var trackedByScript: [Data: TrackedAddress] = [:]

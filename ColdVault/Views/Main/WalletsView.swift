@@ -5,10 +5,13 @@
 //  The page to the left of the balance: every wallet on this iPhone as a card (avatar
 //  with its emoji or initial, type, accounts with their balances, the selected one
 //  marked). Tap an account to show it on the home screen; add accounts to a
-//  seed-phrase wallet, add wallets (create or import), rename or delete them.
+//  seed-phrase wallet, add wallets (create or import), rename or delete them, give
+//  them a picture or icon, and reorder them by pressing and dragging.
 //
 
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
 
 struct WalletsView: View {
     @EnvironmentObject var walletManager: WalletManager
@@ -23,6 +26,14 @@ struct WalletsView: View {
     @State private var deleteSlot: String?
     @State private var addingAccountTo: String?
     @State private var errorMessage: String?
+    @State private var iconSlot: IconTarget?
+    /// The wallet being dragged to a new position.
+    @State private var draggingSlot: String?
+
+    private struct IconTarget: Identifiable {
+        var id: String { slot }
+        let slot: String
+    }
 
     private struct RenameTarget: Identifiable {
         let id = UUID()
@@ -61,6 +72,25 @@ struct WalletsView: View {
                     walletCard(wallet)
                         .transition(.asymmetric(insertion: .scale(scale: 0.94).combined(with: .opacity),
                                                 removal: .opacity))
+                        // Press and hold, then drag to reorder.
+                        .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .onDrag {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            draggingSlot = wallet.slot
+                            return NSItemProvider(object: wallet.slot as NSString)
+                        }
+                        .onDrop(of: [UTType.text], delegate: WalletDropDelegate(target: wallet.slot,
+                                                                                 dragging: $draggingSlot,
+                                                                                 walletManager: walletManager))
+                }
+
+                if walletManager.library.count > 1 {
+                    Text(t("Press and hold a wallet, then drag it to change the order.",
+                           "Mantén presionada una billetera y arrástrala para cambiar el orden."))
+                        .font(.system(size: 12))
+                        .foregroundColor(Palette.secondary)
+                        .frame(maxWidth: .infinity)
+                        .multilineTextAlignment(.center)
                 }
 
                 Button { showAddWallet = true } label: {
@@ -80,6 +110,15 @@ struct WalletsView: View {
             .padding(.bottom, 40)
             .buttonStyle(.plain)
             .animation(.spring(response: 0.45, dampingFraction: 0.85), value: walletManager.library.map { $0.bundle.accounts.count })
+            .animation(.spring(response: 0.4, dampingFraction: 0.82), value: walletManager.library.map { $0.slot })
+        }
+        // A drop anywhere else ends the drag.
+        .onDrop(of: [UTType.text], isTargeted: nil) { _ in
+            draggingSlot = nil
+            return false
+        }
+        .sheet(item: $iconSlot) { target in
+            WalletIconPicker(slot: target.slot).environmentObject(walletManager)
         }
         .confirmationDialog(t("Add a wallet", "Añadir una billetera"), isPresented: $showAddWallet, titleVisibility: .visible) {
             Button(L10n.createNewWallet(lang)) { showCreate = true }
@@ -159,7 +198,9 @@ struct WalletsView: View {
         return VStack(spacing: 0) {
             // Header: avatar, name and type, options.
             HStack(spacing: 12) {
-                WalletAvatar(name: wallet.bundle.name, size: 46, highlighted: isActive)
+                Button { iconSlot = IconTarget(slot: wallet.slot) } label: {
+                    WalletAvatar(wallet: wallet, images: walletManager.walletImages, size: 46, highlighted: isActive)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(wallet.bundle.name)
                         .font(.system(size: 17, weight: .semibold))
@@ -176,6 +217,24 @@ struct WalletsView: View {
                         renameText = wallet.bundle.name
                         renameTarget = RenameTarget(slot: wallet.slot, account: nil)
                     } label: { Label(t("Rename wallet", "Renombrar billetera"), systemImage: "pencil") }
+                    Button { iconSlot = IconTarget(slot: wallet.slot) } label: {
+                        Label(t("Picture or icon", "Imagen o icono"), systemImage: "photo")
+                    }
+                    if wallet.bundle.accounts.count > 1 {
+                        Menu {
+                            ForEach(Array(wallet.bundle.accounts.enumerated()), id: \.element.id) { index, account in
+                                Button(account.name) {
+                                    renameText = account.name
+                                    renameTarget = RenameTarget(slot: wallet.slot, account: index)
+                                }
+                            }
+                        } label: { Label(t("Rename account", "Renombrar cuenta"), systemImage: "character.cursor.ibeam") }
+                    } else if let account = wallet.bundle.accounts.first {
+                        Button {
+                            renameText = account.name
+                            renameTarget = RenameTarget(slot: wallet.slot, account: 0)
+                        } label: { Label(t("Rename account", "Renombrar cuenta"), systemImage: "character.cursor.ibeam") }
+                    }
                     if isSeedWallet(wallet) {
                         Button { addAccount(to: wallet.slot) } label: {
                             Label(t("New account", "Nueva cuenta"), systemImage: "plus")
@@ -280,12 +339,6 @@ struct WalletsView: View {
             )
             .contentShape(Rectangle())
         }
-        .contextMenu {
-            Button {
-                renameText = account.name
-                renameTarget = RenameTarget(slot: wallet.slot, account: index)
-            } label: { Label(t("Rename account", "Renombrar cuenta"), systemImage: "pencil") }
-        }
     }
 
     private func addAccount(to slot: String) {
@@ -303,5 +356,160 @@ struct WalletsView: View {
             }
             addingAccountTo = nil
         }
+    }
+}
+
+/// Live reordering: while a wallet is dragged over another, they swap places.
+private struct WalletDropDelegate: DropDelegate {
+    let target: String
+    @Binding var dragging: String?
+    let walletManager: WalletManager
+
+    func dropEntered(info: DropInfo) {
+        guard let dragging = dragging, dragging != target else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
+            walletManager.moveWallet(dragging, to: target)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { dragging = nil }
+        return true
+    }
+}
+
+// MARK: - Wallet picture / icon
+
+/// Picture from the photo library, or one of the built-in icons, for a wallet.
+struct WalletIconPicker: View {
+    @EnvironmentObject var walletManager: WalletManager
+    @Environment(\.presentationMode) var presentationMode
+    let slot: String
+
+    @State private var photoItem: PhotosPickerItem?
+
+    private var lang: AppLanguage { walletManager.appLanguage }
+    private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+
+    private var wallet: LibraryWallet? { walletManager.library.first { $0.slot == slot } }
+
+    var body: some View {
+        ZStack {
+            GlassAmbientBackground()
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 22) {
+                    if let wallet = wallet {
+                        WalletAvatar(wallet: wallet, images: walletManager.walletImages, size: 108)
+                            .id("\(wallet.bundle.symbol ?? "")-\(walletManager.walletImages[slot]?.count ?? 0)")
+                            .transition(.scale(scale: 0.8).combined(with: .opacity))
+                        Text(wallet.bundle.name)
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundColor(Color(uiColor: .label))
+                    }
+
+                    HStack(spacing: 10) {
+                        PhotosPicker(selection: $photoItem, matching: .images) {
+                            Label(t("Choose photo", "Elegir foto"), systemImage: "photo.on.rectangle")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(Color(uiColor: .systemBackground))
+                                .padding(.horizontal, 18)
+                                .frame(height: 40)
+                                .background(Capsule().fill(Color(uiColor: .label)))
+                        }
+                        .buttonStyle(.plain)
+                        if walletManager.walletImages[slot] != nil {
+                            Button {
+                                withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
+                                    walletManager.setWalletImage(slot: slot, data: nil)
+                                }
+                                photoItem = nil
+                            } label: {
+                                Text(t("Remove", "Quitar"))
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(Color(uiColor: .label))
+                                    .padding(.horizontal, 18)
+                                    .frame(height: 40)
+                                    .background(Capsule().fill(SettingsStyle.groupFill))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(t("ICONS", "ICONOS"))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(Palette.secondary)
+                            .padding(.leading, 16)
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 5), spacing: 12) {
+                            iconCell(symbol: nil)
+                            ForEach(WalletAvatar.symbols, id: \.self) { symbol in
+                                iconCell(symbol: symbol)
+                            }
+                        }
+                        .padding(14)
+                        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .padding(.top, 64)
+                .padding(.bottom, 32)
+            }
+        }
+        .overlay(alignment: .top) {
+            ZStack {
+                Text(t("Picture", "Imagen"))
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                HStack {
+                    Spacer()
+                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
+                        .frame(width: 44, height: 44)
+                }
+                .padding(.trailing, 10)
+            }
+            .padding(.top, 18)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .onChange(of: photoItem) { item in
+            guard let item = item else { return }
+            Task {
+                guard let data = try? await item.loadTransferable(type: Data.self),
+                      let photo = ContactPhoto.prepare(data) else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
+                    walletManager.setWalletImage(slot: slot, data: photo)
+                }
+            }
+        }
+    }
+
+    /// One icon choice; nil = the emoji or first letter of the name.
+    private func iconCell(symbol: String?) -> some View {
+        let selected = walletManager.walletImages[slot] == nil && wallet?.bundle.symbol == symbol
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+                walletManager.setWalletSymbol(slot: slot, symbol: symbol)
+            }
+        } label: {
+            Group {
+                if let symbol = symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 19, weight: .semibold))
+                } else {
+                    Text(wallet.map { String($0.bundle.name.trimmingCharacters(in: .whitespaces).first ?? "A").uppercased() } ?? "A")
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                }
+            }
+            .foregroundColor(selected ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+            .frame(width: 50, height: 50)
+            .background(Circle().fill(selected ? Color(uiColor: .label) : Color(uiColor: .systemBackground).opacity(0.9)))
+            .scaleEffect(selected ? 1.06 : 1)
+        }
+        .buttonStyle(.plain)
     }
 }

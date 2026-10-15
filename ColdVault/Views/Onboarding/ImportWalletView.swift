@@ -2,11 +2,11 @@
 //  ImportWalletView.swift
 //  ColdVault
 //
-//  Universal importer supporting:
-//  - BIP-39 Mnemonic Seed (12 or 24 words) -> Full Control
-//  - Private Key (WIF or Hex) -> Full Control
-//  - Bitcoin Public Address -> Watch-Only Wallet (Solo Observación)
-//  Includes live input classification, QR camera scanning, and L10n bilingual support.
+//  Universal importer, on a native sheet with the same look as Receive / Create:
+//  - BIP-39 recovery phrase (12–24 words) → full control (optional passphrase)
+//  - Private key (WIF or hex) → full control
+//  - Address, xpub/zpub or output descriptors (also animated UR QR) → watch-only
+//  What was pasted or scanned is recognised live; an optional name can be given.
 //
 
 import SwiftUI
@@ -14,369 +14,368 @@ import SwiftUI
 public struct ImportWalletView: View {
     @EnvironmentObject var walletManager: WalletManager
     @Environment(\.presentationMode) var presentationMode
-    
+
     @State private var inputText: String = ""
     @State private var passphrase: String = ""
     @State private var usePassphrase: Bool = false
+    @State private var walletName: String = ""
     @State private var pastedFromClipboard: Bool = false
     @State private var showScanner: Bool = false
     @State private var isImporting: Bool = false
     @State private var errorMessage: String?
-    
-    public init() {}
-    
-    private var lang: AppLanguage {
-        walletManager.appLanguage
-    }
-    
-    // Live detection computed property
-    private var detectedPayload: WalletImportPayload {
-        BitcoinAddress.parseImportString(inputText)
-    }
+    /// What the input is, worked out once per edit (not on every render).
+    @State private var detection = Detection.empty
 
-    /// Output descriptors / zpub for an HD watch-only wallet (nil: not that kind of input).
-    private var detectedDescriptors: Result<WatchOnlyImport, Error>? {
-        do {
-            guard let parsed = try WatchOnlyDescriptorParser.parse(inputText) else { return nil }
-            return .success(parsed)
-        } catch {
-            return .failure(error)
+    public init() {}
+
+    private var lang: AppLanguage { walletManager.appLanguage }
+    private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+
+    private struct Detection {
+        var payload: WalletImportPayload?
+        /// Output descriptors / zpub for an HD watch-only wallet (nil: not that kind of input).
+        var descriptors: Result<WatchOnlyImport, Error>?
+
+        static let empty = Detection(payload: nil, descriptors: nil)
+
+        static func of(_ text: String) -> Detection {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return .empty }
+            let descriptors: Result<WatchOnlyImport, Error>?
+            do {
+                if let parsed = try WatchOnlyDescriptorParser.parse(text) {
+                    descriptors = .success(parsed)
+                } else {
+                    descriptors = nil
+                }
+            } catch {
+                descriptors = .failure(error)
+            }
+            return Detection(payload: descriptors == nil ? BitcoinAddress.parseImportString(text) : nil,
+                             descriptors: descriptors)
         }
     }
-    
+
+    private var isMnemonic: Bool {
+        if case .mnemonic = detection.payload { return true }
+        return false
+    }
+
     public var body: some View {
-        NavigationStack {
-            ZStack {
-                GlassAmbientBackground()
-                
-                ScrollView {
-                    VStack(spacing: 20) {
-                        
-                        // Header
-                        VStack(spacing: 6) {
-                            Text(L10n.importWalletTitle(lang))
-                                .font(.system(size: 26, weight: .bold, design: .rounded))
-                                .foregroundColor(Color(uiColor: .label))
-                            
-                            Text(L10n.importWalletSubtitle(lang))
-                                .font(.system(size: 14))
-                                .foregroundColor(Palette.secondary)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 24)
-                        }
-                        .padding(.top, 16)
-                        
-                        // Glass Text Input Area
-                        VStack(alignment: .trailing, spacing: 8) {
-                            TextEditor(text: $inputText)
-                                .font(.system(size: 15, design: .monospaced))
-                                // Keep the keyboard from learning / suggesting seed words.
-                                .autocorrectionDisabled(true)
-                                .textInputAutocapitalization(.never)
-                                .keyboardType(.asciiCapable)
-                                .frame(height: 140)
-                                .scrollContentBackground(.hidden)
-                                .padding(12)
-                                .overlay(alignment: .topLeading) {
-                                    if inputText.isEmpty {
-                                        Text(L10n.importPlaceholder(lang))
-                                            .font(.system(size: 14))
-                                            .foregroundColor(Color(uiColor: .placeholderText))
-                                            .padding(16)
-                                            .allowsHitTesting(false)
-                                    }
-                                }
-                            
-                            // Paste & QR Scan quick actions with glass pills
-                            HStack(spacing: 12) {
-                                Button(action: {
-                                    let generator = UIImpactFeedbackGenerator(style: .light)
-                                    generator.impactOccurred()
-                                    if let string = UIPasteboard.general.string {
-                                        inputText = string.trimmingCharacters(in: .whitespacesAndNewlines)
-                                        pastedFromClipboard = true
-                                    }
-                                }) {
-                                    Label(L10n.paste(lang), systemImage: "doc.on.clipboard")
-                                        .symbolRenderingMode(.hierarchical)
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundColor(Color(uiColor: .label))
-                                        .padding(.vertical, 8)
-                                        .padding(.horizontal, 14)
-                                        .modifier(GlassPillModifier(isEmphasized: false))
-                                }
-                                
-                                Button(action: {
-                                    let generator = UIImpactFeedbackGenerator(style: .light)
-                                    generator.impactOccurred()
-                                    showScanner = true
-                                }) {
-                                    Label(L10n.scanQR(lang), systemImage: "qrcode.viewfinder")
-                                        .symbolRenderingMode(.hierarchical)
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundColor(Color(uiColor: .label))
-                                        .padding(.vertical, 8)
-                                        .padding(.horizontal, 14)
-                                        .modifier(GlassPillModifier(isEmphasized: false))
-                                }
-                            }
-                            .padding(.bottom, 8)
-                            .padding(.trailing, 8)
-                        }
-                        .glassCard(cornerRadius: 18)
+        ZStack {
+            GlassAmbientBackground()
+
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 22) {
+                    VStack(spacing: 8) {
+                        Text(t("Bring your wallet", "Trae tu billetera"))
+                            .font(.system(size: 26, weight: .bold))
+                            .foregroundColor(Color(uiColor: .label))
+                        Text(t("Paste or scan your recovery phrase, private key, or a public address / xpub to watch it.",
+                               "Pega o escanea tu frase de recuperación, tu clave privada, o una dirección / xpub pública para observarla."))
+                            .font(.system(size: 14))
+                            .foregroundColor(Palette.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(.horizontal, 28)
+
+                    inputCard
                         .padding(.horizontal, 20)
-                        
-                        // Live Detection Feedback Card
-                        if let descriptors = detectedDescriptors {
-                            descriptorBanner(descriptors)
-                                .padding(.horizontal, 20)
-                        } else if !inputText.isEmpty {
-                            detectionBannerView
-                                .padding(.horizontal, 20)
+
+                    detectionCard
+                        .padding(.horizontal, 20)
+                        .animation(.spring(response: 0.45, dampingFraction: 0.82), value: detectionKey)
+
+                    VStack(alignment: .leading, spacing: 22) {
+                        if canImport {
+                            SettingsSection(header: t("Name", "Nombre"),
+                                            footer: t("Optional. An emoji works too.", "Opcional. También puedes usar un emoji.")) {
+                                TextField(t("E.g. Savings", "Ej. Ahorros"), text: $walletName)
+                                    .font(.system(size: 16))
+                                    .padding(.horizontal, 16)
+                                    .frame(minHeight: 52)
+                            }
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
 
-                        // Optional BIP-39 passphrase ("25th word") for seed imports
-                        if case .mnemonic = detectedPayload {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Toggle(isOn: $usePassphrase) {
-                                    Text(lang == .english ? "Uses a BIP-39 passphrase" : "Usa passphrase BIP-39")
-                                        .font(.system(size: 14, weight: .semibold))
+                        if isMnemonic {
+                            SettingsSection(header: t("Advanced", "Avanzado"),
+                                            footer: usePassphrase
+                                                ? t("A different passphrase opens a different wallet. Type it exactly as you set it.",
+                                                    "Una passphrase distinta abre otra billetera. Escríbela exactamente como la configuraste.")
+                                                : nil) {
+                                SettingsRow(title: t("BIP-39 passphrase", "Passphrase BIP-39")) {
+                                    Toggle("", isOn: $usePassphrase.animation(.spring(response: 0.4, dampingFraction: 0.85)))
+                                        .labelsHidden()
                                 }
                                 if usePassphrase {
-                                    SecureField(lang == .english ? "Passphrase (case-sensitive)" : "Passphrase (distingue mayúsculas)",
-                                                text: $passphrase)
+                                    SettingsDivider()
+                                    SecureField(t("Passphrase (case-sensitive)", "Passphrase (distingue mayúsculas)"), text: $passphrase)
                                         .textInputAutocapitalization(.never)
                                         .autocorrectionDisabled(true)
-                                        .padding(10)
-                                        .glassCard(cornerRadius: 10)
-                                    Text(lang == .english
-                                         ? "A different passphrase opens a different wallet. Type it exactly as you set it."
-                                         : "Una passphrase distinta abre otra billetera. Escríbela exactamente como la configuraste.")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(Palette.secondary)
+                                        .padding(.horizontal, 16)
+                                        .frame(minHeight: 52)
                                 }
                             }
-                            .padding(14)
-                            .glassCard(cornerRadius: 14)
-                            .padding(.horizontal, 20)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
-                        
-                        // Info card explaining Watch-Only mode with Glass styling
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "eye.fill")
-                                    .symbolRenderingMode(.hierarchical)
-                                    .foregroundColor(.blue)
-                                Text(lang == .english ? "Watch-Only Mode" : "Modo de Solo Observación")
-                                    .font(.system(size: 14, weight: .bold))
-                                    .foregroundColor(Color(uiColor: .label))
+
+                        if detection.payload == nil && detection.descriptors == nil {
+                            VStack(alignment: .leading, spacing: 12) {
+                                TipRow(icon: "text.word.spacing",
+                                       text: t("Recovery phrase of 12 or 24 words: full control.",
+                                               "Frase de recuperación de 12 o 24 palabras: control total."))
+                                TipRow(icon: "key",
+                                       text: t("Private key (WIF): full control of one address.",
+                                               "Clave privada (WIF): control total de una dirección."))
+                                TipRow(icon: "eye",
+                                       text: t("Address, xpub / zpub or descriptors (Sparrow, Keystone, Passport…): watch-only, prepares PSBTs for your cold device.",
+                                               "Dirección, xpub / zpub o descriptores (Sparrow, Keystone, Passport…): solo observación, prepara PSBTs para tu dispositivo frío."))
                             }
-                            
-                            Text(lang == .english
-                                 ? "If you paste a public Bitcoin address (e.g. 1A1zP1eP..., bc1q...), the wallet will be added in watch-only mode to check balances without risking private keys. Paste the descriptors exported by your cold wallet (wpkh(...), tr(...)) or a zpub to follow every address and create PSBTs for it."
-                                 : "Si pegas una dirección pública de Bitcoin (ej. 1A1zP1eP..., bc1q...), la billetera se agregará en modo observación para consultar balances sin exponer ninguna clave privada. Pega los descriptores exportados por tu billetera fría (wpkh(...), tr(...)) o una zpub para seguir todas sus direcciones y crear PSBTs para ella.")
-                                .font(.system(size: 13))
-                                .foregroundColor(Palette.secondary)
-                                .lineSpacing(2)
+                            .padding(.horizontal, 4)
+                            .transition(.opacity)
                         }
-                        .padding(16)
-                        .glassCard(cornerRadius: 16)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16)
-                                .stroke(Color.blue.opacity(0.3), lineWidth: 1)
-                        )
-                        .padding(.horizontal, 20)
-                        
-                        if let error = errorMessage {
-                            Text(error)
-                                .font(.system(size: 13))
-                                .foregroundColor(.red)
-                                .padding(.horizontal, 20)
-                        }
-                        
-                        Spacer(minLength: 20)
-                        
-                        // Import Action Button with Glass Pill
-                        Button(action: {
-                            let generator = UIImpactFeedbackGenerator(style: .medium)
-                            generator.impactOccurred()
-                            performImport()
-                        }) {
-                            if isImporting {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            } else {
-                                Text(L10n.importActionButton(lang))
-                                    .font(.system(size: 17, weight: .semibold))
-                            }
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 56)
-                        .modifier(GlassPillModifier(isEmphasized: true))
-                        .opacity(canImport && !isImporting ? 1.0 : 0.45)
-                        .disabled(!canImport || isImporting)
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 24)
                     }
+                    .padding(.horizontal, 20)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.85), value: detectionKey)
+
+                    if let error = errorMessage {
+                        Text(error)
+                            .font(.system(size: 13))
+                            .foregroundColor(.red)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                    }
+
+                    PrimaryCapsuleButton(title: L10n.importActionButton(lang), isLoading: isImporting,
+                                         enabled: canImport) {
+                        performImport()
+                    }
+                    .padding(.horizontal, 24)
                 }
+                .padding(.top, 64)
+                .padding(.bottom, 32)
             }
-            .navigationTitle(L10n.importWalletTitle(lang))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+            .scrollDismissesKeyboard(.interactively)
+        }
+        .overlay(alignment: .top) {
+            ZStack {
+                Text(L10n.importWalletTitle(lang))
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                HStack {
+                    Spacer()
                     SheetCloseButton { presentationMode.wrappedValue.dismiss() }
+                        .frame(width: 44, height: 44)
                 }
+                .padding(.trailing, 10)
             }
-            .sheet(isPresented: $showScanner) {
-                // Animated wallet exports (ur:crypto-account / crypto-output / crypto-hdkey)
-                // become descriptor text; anything else is shown as scanned.
-                QRScannerView(decodeUR: { try URAccountImport.descriptorText(from: $0) }) { scannedCode in
-                    self.inputText = scannedCode.trimmingCharacters(in: .whitespacesAndNewlines)
-                    self.pastedFromClipboard = false
-                }
-            }
-            .onDisappear {
-                inputText = ""
-                passphrase = ""
+            .padding(.top, 18)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(isImporting)
+        .onChange(of: inputText) { text in
+            errorMessage = nil
+            detection = Detection.of(text)
+        }
+        .sheet(isPresented: $showScanner) {
+            // Animated wallet exports (ur:crypto-account / crypto-output / crypto-hdkey)
+            // become descriptor text; anything else is shown as scanned.
+            QRScannerView(decodeUR: { try URAccountImport.descriptorText(from: $0) }) { scannedCode in
+                self.inputText = scannedCode.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.pastedFromClipboard = false
             }
         }
+        .onDisappear {
+            inputText = ""
+            passphrase = ""
+        }
     }
-    
+
+    // MARK: - Input
+
+    private var inputCard: some View {
+        VStack(spacing: 0) {
+            TextEditor(text: $inputText)
+                .font(.system(size: 15, design: .monospaced))
+                // Keep the keyboard from learning / suggesting seed words.
+                .autocorrectionDisabled(true)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.asciiCapable)
+                .frame(height: 130)
+                .scrollContentBackground(.hidden)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .overlay(alignment: .topLeading) {
+                    if inputText.isEmpty {
+                        Text(t("word1 word2 word3 …  or  bc1… / zpub… / wpkh(…)",
+                               "palabra1 palabra2 palabra3 …  o  bc1… / zpub… / wpkh(…)"))
+                            .font(.system(size: 14, design: .monospaced))
+                            .foregroundColor(Color(uiColor: .placeholderText))
+                            .padding(.horizontal, 17)
+                            .padding(.top, 18)
+                            .allowsHitTesting(false)
+                    }
+                }
+
+            HStack(spacing: 8) {
+                smallAction(L10n.paste(lang), icon: "doc.on.clipboard") {
+                    if let string = UIPasteboard.general.string {
+                        inputText = string.trimmingCharacters(in: .whitespacesAndNewlines)
+                        pastedFromClipboard = true
+                    }
+                }
+                smallAction(L10n.scanQR(lang), icon: "qrcode.viewfinder") {
+                    showScanner = true
+                }
+                Spacer()
+                if !inputText.isEmpty {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        inputText = ""
+                        pastedFromClipboard = false
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(Palette.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+        }
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+    }
+
+    private func smallAction(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Color(uiColor: .label))
+                .padding(.horizontal, 14)
+                .frame(height: 34)
+                .background(Capsule().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - What was recognised
+
+    /// Changes whenever the kind of input changes (drives the card animation).
+    private var detectionKey: String {
+        if let descriptors = detection.descriptors {
+            if case .success = descriptors { return "descriptors" }
+            return "descriptors-error"
+        }
+        switch detection.payload {
+        case .mnemonic(_, let count): return "mnemonic\(count)"
+        case .privateKey: return "key"
+        case .watchOnly: return "watch"
+        case .invalid: return "invalid"
+        case nil: return "empty"
+        }
+    }
+
+    @ViewBuilder
+    private var detectionCard: some View {
+        Group {
+            if let descriptors = detection.descriptors {
+                switch descriptors {
+                case .success(let parsed):
+                    resultRow(icon: "eye", ok: true,
+                              title: t("HD watch-only wallet", "Billetera HD de solo observación"),
+                              detail: parsed.accounts.map { $0.label }.joined(separator: " · ") + (parsed.isTestnet ? " · Testnet" : ""))
+                case .failure(let error):
+                    resultRow(icon: "exclamationmark", ok: false, title: t("Not valid", "No es válido"),
+                              detail: error.localizedDescription)
+                }
+            } else if let payload = detection.payload {
+                switch payload {
+                case .mnemonic(_, let wordCount):
+                    resultRow(icon: "text.word.spacing", ok: true,
+                              title: t("Recovery phrase · \(wordCount) words", "Frase de recuperación · \(wordCount) palabras"),
+                              detail: t("Full control: you can send and sign.", "Control total: puedes enviar y firmar."))
+                case .privateKey(_, let isCompressed, _):
+                    resultRow(icon: "key", ok: true,
+                              title: t("Private key", "Clave privada") + (isCompressed ? "" : t(" (uncompressed)", " (sin comprimir)")),
+                              detail: t("Full control of this key's address.", "Control total de la dirección de esta clave."))
+                case .watchOnly(_, let format, let isTestnet):
+                    resultRow(icon: "eye", ok: true,
+                              title: t("Watch-only address", "Dirección de solo observación"),
+                              detail: "\(format.rawValue)\(isTestnet ? " · Testnet" : "") · " + t("balance only, no keys", "solo saldo, sin claves"))
+                case .invalid(let reason):
+                    resultRow(icon: "exclamationmark", ok: false, title: t("Not recognised", "No reconocido"), detail: reason)
+                }
+            }
+        }
+        .id(detectionKey)
+        .transition(.asymmetric(insertion: .scale(scale: 0.95).combined(with: .opacity), removal: .opacity))
+    }
+
+    /// Icon in a circle, title and detail, with a check (valid) or warning mark.
+    private func resultRow(icon: String, ok: Bool, title: String, detail: String) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(Color(uiColor: .label))
+                .frame(width: 42, height: 42)
+                .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundColor(Palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: ok ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                .font(.system(size: 20))
+                .foregroundColor(ok ? .green : .orange)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+    }
+
+    // MARK: - Import
+
     private var canImport: Bool {
-        if let descriptors = detectedDescriptors {
+        if let descriptors = detection.descriptors {
             if case .success = descriptors { return true }
             return false
         }
-        switch detectedPayload {
-        case .mnemonic, .privateKey, .watchOnly:
-            return true
-        case .invalid:
-            return false
-        }
-    }
-    
-    @ViewBuilder
-    private func descriptorBanner(_ result: Result<WatchOnlyImport, Error>) -> some View {
-        switch result {
-        case .success(let parsed):
-            HStack(spacing: 8) {
-                Image(systemName: "eye.circle.fill")
-                    .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(lang == .english ? "HD watch-only wallet" : "Billetera HD de solo observación")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
-                    Text(parsed.accounts.map { $0.label }.joined(separator: " · ") + (parsed.isTestnet ? " · Testnet" : ""))
-                        .font(.system(size: 12))
-                        .foregroundColor(Palette.secondary)
-                }
-                Spacer()
-            }
-            .padding(12)
-            .background(Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.12))
-            .cornerRadius(12)
-        case .failure(let error):
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .foregroundColor(.orange)
-                Text(error.localizedDescription)
-                    .font(.system(size: 13))
-                    .foregroundColor(.orange)
-                Spacer()
-            }
-            .padding(12)
-            .background(Color.orange.opacity(0.1))
-            .cornerRadius(12)
+        switch detection.payload {
+        case .mnemonic, .privateKey, .watchOnly: return true
+        case .invalid, nil: return false
         }
     }
 
-    @ViewBuilder
-    private var detectionBannerView: some View {
-        switch detectedPayload {
-        case .mnemonic(_, let wordCount):
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(L10n.seedDetectedTitle(lang)) (\(wordCount) \(lang == .english ? "words" : "palabras"))")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.green)
-                    Text(L10n.seedDetectedDesc(lang))
-                        .font(.system(size: 12))
-                        .foregroundColor(Palette.secondary)
-                }
-                Spacer()
-            }
-            .padding(12)
-            .background(Color.green.opacity(0.1))
-            .cornerRadius(12)
-            
-        case .privateKey(_, let isCompressed, _):
-            HStack(spacing: 8) {
-                Image(systemName: "key.fill")
-                    .foregroundColor(.green)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(L10n.keyDetectedTitle(lang)) (\(isCompressed ? "Compressed" : "Uncompressed"))")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.green)
-                    Text(L10n.keyDetectedDesc(lang))
-                        .font(.system(size: 12))
-                        .foregroundColor(Palette.secondary)
-                }
-                Spacer()
-            }
-            .padding(12)
-            .background(Color.green.opacity(0.1))
-            .cornerRadius(12)
-            
-        case .watchOnly(_, let format, let isTestnet):
-            HStack(spacing: 8) {
-                Image(systemName: "eye.circle.fill")
-                    .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(L10n.watchOnlyDetectedTitle(lang))
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
-                    Text("\(L10n.watchOnlyDetectedDesc(lang)) (\(format.rawValue)\(isTestnet ? " · Testnet" : ""))")
-                        .font(.system(size: 12))
-                        .foregroundColor(Palette.secondary)
-                }
-                Spacer()
-            }
-            .padding(12)
-            .background(Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.12))
-            .cornerRadius(12)
-            
-        case .invalid(let reason):
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .foregroundColor(.orange)
-                Text(reason)
-                    .font(.system(size: 13))
-                    .foregroundColor(.orange)
-                Spacer()
-            }
-            .padding(12)
-            .background(Color.orange.opacity(0.1))
-            .cornerRadius(12)
-        }
-    }
-    
     private func performImport() {
         isImporting = true
         errorMessage = nil
         let input = inputText
         let isSecret: Bool
-        switch detectedPayload {
+        switch detection.payload {
         case .mnemonic, .privateKey: isSecret = true
         default: isSecret = false
         }
-        let phrase = usePassphrase ? passphrase : ""
+        let phrase = usePassphrase && isMnemonic ? passphrase : ""
+        let name = walletName.trimmingCharacters(in: .whitespacesAndNewlines)
 
         Task {
             do {
                 try await walletManager.importWallet(input: input, passphrase: phrase)
+                if !name.isEmpty {
+                    walletManager.renameWallet(slot: walletManager.activeSlot, to: name)
+                }
                 // A seed or key left on the clipboard is readable by other apps and
                 // synced by Universal Clipboard: wipe it if it came from there.
                 if isSecret && pastedFromClipboard,
@@ -390,6 +389,7 @@ public struct ImportWalletView: View {
             } catch {
                 errorMessage = error.localizedDescription
                 isImporting = false
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
             }
         }
     }

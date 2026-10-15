@@ -22,6 +22,9 @@ public enum DashboardAction {
 public struct DashboardView: View {
     @EnvironmentObject var walletManager: WalletManager
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
+    /// The app went to the background: show the balance when it comes back.
+    @State private var wasInBackground = false
 
     @State private var currentAction: DashboardAction = .receive
     @State private var showReceiveSheet: Bool = false
@@ -90,6 +93,8 @@ public struct DashboardView: View {
                     }
                     .scrollTargetBehavior(.paging)
                     .scrollPosition(id: $pageID)
+                    // Opens on the middle page (the balance), never on Wallets.
+                    .defaultScrollAnchor(.center)
                     .scrollDisabled(isPillDragging)
                 }
             } else {
@@ -103,6 +108,15 @@ public struct DashboardView: View {
                         .tag(2)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+            }
+        }
+        .onAppear { showBalancePage() }
+        .onChange(of: scenePhase) { phase in
+            if phase == .background {
+                wasInBackground = true
+            } else if phase == .active && wasInBackground {
+                wasInBackground = false
+                showBalancePage()
             }
         }
         .sheet(isPresented: $showReceiveSheet) {
@@ -120,6 +134,16 @@ public struct DashboardView: View {
         .sheet(isPresented: $showHistory) {
             TransactionHistoryView()
                 .environmentObject(walletManager)
+        }
+    }
+
+    /// The balance is always the first screen when the app opens.
+    private func showBalancePage() {
+        var instant = SwiftUI.Transaction()
+        instant.disablesAnimations = true
+        withTransaction(instant) {
+            pageID = 1
+            page = 1
         }
     }
 
@@ -652,11 +676,18 @@ struct TransactionCard: View {
         guard transaction.confirmed else { return t("Pending", "Pendiente") }
         guard let date = transaction.date else { return "" }
         if Date().timeIntervalSince(date) < 60 { return t("Just now", "Justo ahora") }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        formatter.locale = Locale(identifier: lang == .english ? "en" : "es")
+        let formatter = lang == .english ? TransactionCard.englishTime : TransactionCard.spanishTime
         return formatter.localizedString(for: date, relativeTo: Date())
     }
+
+    private static func timeFormatter(_ identifier: String) -> RelativeDateTimeFormatter {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        formatter.locale = Locale(identifier: identifier)
+        return formatter
+    }
+    private static let englishTime = timeFormatter("en")
+    private static let spanishTime = timeFormatter("es")
 
     var body: some View {
         let url = URL(string: "https://mempool.space/\(walletManager.isTestnet ? "testnet4/" : "")tx/\(transaction.txid)")
@@ -737,11 +768,8 @@ struct MinimalPriceChart: View {
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
     private func money(_ value: Double) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = walletManager.fiatCurrency
-        formatter.maximumFractionDigits = 0
-        return formatter.string(from: NSNumber(value: value)) ?? "\(Int(value))"
+        WalletManager.currencyFormatter(walletManager.fiatCurrency, fractionDigits: 0)
+            .string(from: NSNumber(value: value)) ?? "\(Int(value))"
     }
 
     var body: some View {

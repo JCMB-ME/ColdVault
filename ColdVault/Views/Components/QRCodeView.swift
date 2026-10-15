@@ -50,7 +50,21 @@ public struct QRCodeView: View {
 
     private static let context = CIContext()
 
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 64
+        return cache
+    }()
+
+    /// Cached: the image is otherwise rebuilt on every render of the view.
     static func generate(from string: String) -> UIImage? {
+        if let cached = cache.object(forKey: string as NSString) { return cached }
+        guard let image = render(string) else { return nil }
+        cache.setObject(image, forKey: string as NSString)
+        return image
+    }
+
+    private static func render(_ string: String) -> UIImage? {
         let data = Data(string.utf8)
         guard !data.isEmpty else { return nil }
         let filter = CIFilter.qrCodeGenerator()

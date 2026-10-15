@@ -300,13 +300,25 @@ struct PixelRevealQRCode: View {
         return min(0.82, distance * 0.55 + Double(hash) / 1023 * 0.27)
     }
 
-    /// Module grid of the QR (error correction M), without the quiet zone.
+    private static var matrixCache: [String: [[Bool]]] = [:]
+    private static let context = CIContext()
+
+    /// Module grid of the QR (error correction M), without the quiet zone. Cached: the
+    /// view is re-created on every render of the sheet.
     static func matrix(for text: String) -> [[Bool]] {
+        if let cached = matrixCache[text] { return cached }
+        let grid = buildMatrix(for: text)
+        if matrixCache.count > 16 { matrixCache.removeAll() }
+        matrixCache[text] = grid
+        return grid
+    }
+
+    private static func buildMatrix(for text: String) -> [[Bool]] {
         let filter = CIFilter.qrCodeGenerator()
         filter.message = Data(text.utf8)
         filter.correctionLevel = "M"
         guard !text.isEmpty, let output = filter.outputImage,
-              let cg = CIContext().createCGImage(output, from: output.extent) else { return [] }
+              let cg = context.createCGImage(output, from: output.extent) else { return [] }
         let width = cg.width, height = cg.height
         var pixels = [UInt8](repeating: 0, count: width * height)
         guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
