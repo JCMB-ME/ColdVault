@@ -5,8 +5,8 @@
 //  Minimalist Bitcoin Vault Dashboard.
 //  1. The balance sits at the exact center of the screen, with the single action
 //     button (Receive <-> Send via swipe) right below it.
-//  2. Settings is a card that follows the finger: swipe right-to-left and it slides
-//     in from the right edge; swipe it back (or tap Close) to put it away.
+//  2. Balance and settings are one continuous canvas: swiping moves both pages
+//     together under the finger, like a single wide screen.
 //  3. Bilingual support (English & Spanish).
 //  4. Full native Light and Dark mode with ambient atmospheric refraction.
 //
@@ -29,11 +29,11 @@ public struct DashboardView: View {
     @State private var isButtonPressed: Bool = false
     @State private var isPillDragging: Bool = false
 
-    // Settings card: 0 = hidden off the right edge, 1 = fully open.
-    @State private var settingsProgress: CGFloat = 0
-    @State private var settingsMounted: Bool = false
-    @State private var settingsDragStart: CGFloat?
-
+    // One canvas, two pages: 0 = balance, 1 = settings. Follows the finger.
+    @State private var pageProgress: CGFloat = 0
+    @State private var pageDragBase: CGFloat?
+    @State private var settingsRoute: SettingsRoute?
+    
     public init() {}
 
     private var isWatchOnly: Bool {
@@ -48,9 +48,34 @@ public struct DashboardView: View {
 
     public var body: some View {
         ZStack {
-            // iOS 18 Ambient Glassmorphism Canvas
+            // A single static background behind both pages, so balance and settings
+            // read as one continuous screen sliding sideways (no card, no seam).
             GlassAmbientBackground()
 
+            GeometryReader { geo in
+                HStack(spacing: 0) {
+                    balancePage
+                        .frame(width: geo.size.width, height: geo.size.height)
+                    SettingsView(route: $settingsRoute)
+                        .environmentObject(walletManager)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                }
+                .offset(x: -pageProgress * geo.size.width)
+            }
+        }
+        .simultaneousGesture(pagerGesture)
+        .sheet(isPresented: $showReceiveSheet) {
+            ReceiveView()
+                .environmentObject(walletManager)
+        }
+        .sheet(isPresented: $showSendSheet) {
+            SendView()
+                .environmentObject(walletManager)
+        }
+    }
+
+    private var balancePage: some View {
+        ZStack(alignment: .top) {
             GeometryReader { geo in
                 ScrollView(showsIndicators: false) {
                     // The balance is centered in the full screen: the safe-area frame is
@@ -69,32 +94,7 @@ public struct DashboardView: View {
                     await walletManager.refreshBalance()
                 }
             }
-
-            VStack {
-                statusBadges
-                Spacer()
-            }
-
-            // Dim the dashboard as the settings card slides over it.
-            Color.black
-                .opacity(0.25 * settingsProgress)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-
-            if settingsMounted {
-                settingsCard
-            }
-        }
-        // Right-to-left swipe pulls the settings card in, following the finger.
-        // Simultaneous so vertical pull-to-refresh and the pill swipe keep working.
-        .simultaneousGesture(openSettingsGesture)
-        .sheet(isPresented: $showReceiveSheet) {
-            ReceiveView()
-                .environmentObject(walletManager)
-        }
-        .sheet(isPresented: $showSendSheet) {
-            SendView()
-                .environmentObject(walletManager)
+            statusBadges
         }
     }
 
@@ -250,69 +250,41 @@ public struct DashboardView: View {
         .allowsHitTesting(false)
     }
 
-    // MARK: - Settings card
+    // MARK: - Pager
 
-    private var settingsCard: some View {
-        SettingsView(onClose: { setSettings(open: false) })
-            .environmentObject(walletManager)
-            .background(Color(uiColor: .systemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: settingsProgress < 1 ? 38 : 0, style: .continuous))
-            .shadow(color: Color.black.opacity(0.25 * settingsProgress), radius: 24, x: -6, y: 0)
-            .offset(x: (1 - settingsProgress) * screenWidth)
-            .ignoresSafeArea()
-            // Swipe the card back to the right to close it, also following the finger.
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 20)
-                    .onChanged { gesture in
-                        let dx = gesture.translation.width
-                        guard dx > 0, abs(dx) > abs(gesture.translation.height) else { return }
-                        settingsProgress = max(0, 1 - dx / screenWidth)
-                    }
-                    .onEnded { gesture in
-                        guard settingsProgress < 1 else { return }
-                        let projected = gesture.predictedEndTranslation.width
-                        setSettings(open: projected < screenWidth * 0.4)
-                    }
-            )
-    }
-
-    private var openSettingsGesture: some Gesture {
+    private var pagerGesture: some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { gesture in
-                guard !isPillDragging, settingsProgress < 1 || !settingsMounted else { return }
+                // Inside a settings detail page the back button is used instead.
+                guard !isPillDragging, settingsRoute == nil else { return }
                 let dx = gesture.translation.width
-                // Only horizontal right-to-left drags; vertical ones are pull-to-refresh.
-                if settingsDragStart == nil {
-                    guard dx < 0, abs(dx) > abs(gesture.translation.height) else { return }
-                    settingsDragStart = dx
-                    settingsMounted = true
+                if pageDragBase == nil {
+                    // Only horizontal drags; vertical ones scroll / pull to refresh.
+                    guard abs(dx) > abs(gesture.translation.height) else { return }
+                    pageDragBase = pageProgress
                 }
-                settingsProgress = min(1, max(0, -dx / screenWidth))
+                let raw = (pageDragBase ?? 0) - dx / screenWidth
+                // Rubber band past either edge.
+                if raw < 0 {
+                    pageProgress = raw / 4
+                } else if raw > 1 {
+                    pageProgress = 1 + (raw - 1) / 4
+                } else {
+                    pageProgress = raw
+                }
             }
             .onEnded { gesture in
-                guard settingsDragStart != nil else { return }
-                settingsDragStart = nil
-                let projected = -gesture.predictedEndTranslation.width
-                setSettings(open: projected > screenWidth * 0.35)
+                guard let base = pageDragBase else { return }
+                pageDragBase = nil
+                let projected = base - gesture.predictedEndTranslation.width / screenWidth
+                let target: CGFloat = projected > 0.5 ? 1 : 0
+                if target != base { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+                withAnimation(.interactiveSpring(response: 0.42, dampingFraction: 0.88)) {
+                    pageProgress = target
+                }
             }
     }
-
-    private func setSettings(open: Bool) {
-        if open {
-            settingsMounted = true
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        }
-        withAnimation(.interactiveSpring(response: 0.38, dampingFraction: 0.86)) {
-            settingsProgress = open ? 1 : 0
-        }
-        if !open {
-            // Remove the card once it has slid away (clears any revealed secret).
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                if settingsProgress == 0 { settingsMounted = false }
-            }
-        }
-    }
-
+    
     @ViewBuilder
     private var balanceStatus: some View {
         Group {

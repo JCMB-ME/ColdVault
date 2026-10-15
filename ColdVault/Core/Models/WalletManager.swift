@@ -50,8 +50,11 @@ public final class WalletManager: ObservableObject {
         didSet { UserDefaults.standard.set(displayUnit.rawValue, forKey: "displayUnit") }
     }
 
-    @Published public var appLanguage: AppLanguage {
-        didSet { UserDefaults.standard.set(appLanguage.rawValue, forKey: "appLanguage") }
+    /// Follows the device language; there is no in-app language picker.
+    @Published public private(set) var appLanguage: AppLanguage
+
+    static var deviceLanguage: AppLanguage {
+        (Locale.preferredLanguages.first ?? "").lowercased().hasPrefix("es") ? .spanish : .english
     }
 
     public init() {
@@ -60,10 +63,8 @@ public final class WalletManager: ObservableObject {
         self.appTheme = AppTheme(rawValue: savedTheme) ?? .system
         let savedUnit = UserDefaults.standard.string(forKey: "displayUnit") ?? DisplayUnit.sats.rawValue
         self.displayUnit = DisplayUnit(rawValue: savedUnit) ?? .sats
-        // No language picked yet: follow the device language.
-        let deviceLanguage: AppLanguage = (Locale.preferredLanguages.first ?? "").hasPrefix("es") ? .spanish : .english
-        let savedLang = UserDefaults.standard.string(forKey: "appLanguage") ?? deviceLanguage.rawValue
-        self.appLanguage = AppLanguage(rawValue: savedLang) ?? deviceLanguage
+        // The app always speaks the iPhone's language (Spanish for any "es-*", else English).
+        self.appLanguage = WalletManager.deviceLanguage
 
         BlockchainService.shared.isNetworkBlocked = isAirGapped
         loadStoredWallet()
