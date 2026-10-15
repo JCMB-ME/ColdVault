@@ -25,6 +25,7 @@ public enum SecureKeyStoreError: LocalizedError {
     case itemNotFound
     case dataCorrupted
     case passcodeNotSet
+    case slotInUse
 
     public var errorDescription: String? {
         switch self {
@@ -40,6 +41,8 @@ public enum SecureKeyStoreError: LocalizedError {
             return "Los datos de la billetera están corruptos o no se pueden descifrar."
         case .passcodeNotSet:
             return "Configura un código de desbloqueo en este iPhone. ColdVault no guarda claves en un dispositivo sin código."
+        case .slotInUse:
+            return "Ya hay una billetera guardada en ese espacio del Keychain; no se sobrescribió."
         }
     }
 }
@@ -127,14 +130,16 @@ public final class SecureKeyStore {
     }
 
     // MARK: - Save Wallet
-    /// Replaces the stored wallet. `secret` is nil for watch-only wallets.
+    /// Stores a NEW wallet in the current slot. `secret` is nil for watch-only wallets.
+    /// Never overwrites: if the slot already holds a wallet (even one the app failed to
+    /// read, e.g. while the iPhone was still locked) it throws instead of deleting it.
     public func saveWallet(metadata: Data, secret: Data?) throws {
         if secret != nil && !isDevicePasscodeSet {
             throw SecureKeyStoreError.passcodeNotSet
         }
-
-        deleteItem(account: metadataAccount)
-        deleteItem(account: secretAccount)
+        guard !itemExists(account: metadataAccount), !itemExists(account: secretAccount) else {
+            throw SecureKeyStoreError.slotInUse
+        }
 
         if let secret = secret {
             var cfError: Unmanaged<CFError>?
@@ -172,6 +177,58 @@ public final class SecureKeyStore {
             deleteItem(account: secretAccount)
             throw SecureKeyStoreError.keychainSaveFailed(status)
         }
+    }
+
+    /// Whether a wallet (metadata or secret) is stored in this slot.
+    public func slotExists(_ slot: String) -> Bool {
+        let metadata = slot == "primary" ? "wallet_metadata" : "wallet_metadata_\(slot)"
+        return itemExists(account: metadata) || itemExists(account: SecureKeyStore.secretAccount(for: slot))
+    }
+
+    /// Every slot that has wallet metadata in the Keychain (to recover a wallet missing
+    /// from the library list). Reads attributes only: never prompts.
+    public func storedMetadataSlots() -> [String] {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecUseAuthenticationContext as String: context
+        ]
+        var items: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &items) == errSecSuccess,
+              let list = items as? [[String: Any]] else { return [] }
+        return list.compactMap { attributes -> String? in
+            guard let account = attributes[kSecAttrAccount as String] as? String else { return nil }
+            if account == "wallet_metadata" { return "primary" }
+            let prefix = "wallet_metadata_"
+            return account.hasPrefix(prefix) ? String(account.dropFirst(prefix.count)) : nil
+        }
+    }
+
+    /// Replaces the secret of a slot in place (SecItemUpdate: the old secret is never
+    /// deleted first, so a failure leaves it intact). Asks for Face ID / passcode.
+    public func replaceSecret(_ secret: Data, slot: String, reason: String) async throws {
+        let service = self.service
+        let account = SecureKeyStore.secretAccount(for: slot)
+        try await Task.detached(priority: .userInitiated) {
+            let context = LAContext()
+            context.localizedReason = reason
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account,
+                kSecUseAuthenticationContext as String: context
+            ]
+            let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: secret] as CFDictionary)
+            switch status {
+            case errSecSuccess: return
+            case errSecUserCanceled, errSecAuthFailed: throw SecureKeyStoreError.biometricsFailed("Acceso denegado.")
+            default: throw SecureKeyStoreError.keychainSaveFailed(status)
+            }
+        }.value
     }
 
     /// Rewrites only the public metadata (e.g. address indexes); the secret is untouched.
@@ -274,15 +331,19 @@ public final class SecureKeyStore {
     }
 
     private func itemExists(account: String) -> Bool {
+        let context = LAContext()
+        context.interactionNotAllowed = true          // existence check only: never prompt
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: false,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationContext as String: context
         ]
         let status = SecItemCopyMatching(query as CFDictionary, nil)
-        return status == errSecSuccess
+        // A protected item that cannot be read right now still exists.
+        return status == errSecSuccess || status == errSecInteractionNotAllowed || status == errSecAuthFailed
     }
 
     @discardableResult

@@ -14,6 +14,7 @@
 //
 
 import Foundation
+import UIKit
 
 extension WalletManager {
 
@@ -77,6 +78,12 @@ extension WalletManager {
     // MARK: - Load
 
     public func loadStoredWallet() {
+        // Launched in the background before the first unlock (prewarming): the Keychain
+        // and protected files can't be read yet. Wait instead of concluding "no wallet".
+        guard UIApplication.shared.isProtectedDataAvailable else {
+            WalletManager.reloadWhenProtectedDataAvailable(self)
+            return
+        }
         let store = SecureKeyStore.shared
         var index: WalletLibrary?
         if let data = try? store.loadLibrary() {
@@ -110,6 +117,16 @@ extension WalletManager {
             }
         }
 
+        // Self-repair: any wallet stored in the Keychain but missing from the list
+        // (e.g. the list was rewritten while one could not be read) is listed again.
+        let stored = store.storedMetadataSlots()
+        if var wallets = index {
+            for slot in stored where !wallets.slots.contains(slot) { wallets.slots.append(slot) }
+            index = wallets
+        } else if !stored.isEmpty {
+            index = WalletLibrary(slots: stored, selected: stored[0])
+        }
+
         guard let wallets = index else {
             hasWallet = false
             activeRecord = nil
@@ -127,6 +144,25 @@ extension WalletManager {
         loadWalletImages()
         saveLibrary()
         selectWallet(slot: selected, account: nil)
+    }
+
+    private static var protectedDataObserver: NSObjectProtocol?
+
+    /// Loads wallets and contacts once the iPhone is unlocked (one-shot observer).
+    static func reloadWhenProtectedDataAvailable(_ manager: WalletManager) {
+        guard protectedDataObserver == nil else { return }
+        protectedDataObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main
+        ) { [weak manager] _ in
+            Task { @MainActor in
+                if let observer = WalletManager.protectedDataObserver {
+                    NotificationCenter.default.removeObserver(observer)
+                    WalletManager.protectedDataObserver = nil
+                }
+                manager?.loadContacts()
+                manager?.loadStoredWallet()
+            }
+        }
     }
 
     // MARK: - Select
@@ -155,7 +191,10 @@ extension WalletManager {
     func persist(_ record: StoredWalletRecord, secret: WalletSecret?) throws -> StoredWalletRecord {
         var redacted = record
         if record.type != .watchOnly { redacted.secretPayload = "" }
-        let slot = library.isEmpty && (library.first { $0.slot == "primary" }) == nil ? "primary" : UUID().uuidString
+        // "primary" only if nothing at all is stored there; otherwise a fresh slot. (The
+        // Keychain call also refuses to overwrite, as a second guard.)
+        let primaryFree = !library.contains { $0.slot == "primary" } && !SecureKeyStore.shared.slotExists("primary")
+        let slot = primaryFree ? "primary" : UUID().uuidString
         let bundle = WalletBundle(name: defaultWalletName(for: record.type),
                                   accounts: [AccountSlot(number: redacted.accountNumber ?? 0,
                                                          name: defaultAccountName(redacted.accountNumber ?? 0),

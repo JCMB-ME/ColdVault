@@ -614,11 +614,13 @@ public final class WalletManager: ObservableObject {
         guard record.type != .watchOnly else { throw WalletError.unsupportedForWatchOnly }
 
         var secret = try await loadSecret(reason: "Confirma para cambiar la red de la billetera")
+        let originalPrivateKey = secret.privateKey
         if let key = secret.privateKey,
            case .privateKey(let data, let compressed, _) = BitcoinAddress.parseImportString(key) {
             secret.privateKey = WalletDerivation.wif(privateKey: data, isCompressed: compressed, isTestnet: isTestnet)
         }
         let newSecret = secret
+        let secretChanged = secret.privateKey != originalPrivateKey
         guard let wallet = activeWallet else { throw WalletError.derivationFailed }
         // Re-derive every account of this wallet for the other network.
         var bundle = wallet.bundle
@@ -644,8 +646,15 @@ public final class WalletManager: ObservableObject {
             bundle.accounts[position].record = updated
         }
         guard let metadata = encodeBundle(bundle) else { throw WalletError.derivationFailed }
+        // Update in place, never delete-then-add: a failure must not lose the secret.
+        // A phrase is the same on both networks; only a WIF key changes its prefix.
+        if secretChanged {
+            try await SecureKeyStore.shared.replaceSecret(try newSecret.encoded(), slot: wallet.slot,
+                                                          reason: "Confirma para guardar la clave para la otra red")
+        }
         SecureKeyStore.shared.slot = wallet.slot
-        try SecureKeyStore.shared.saveWallet(metadata: metadata, secret: try newSecret.encoded())
+        defer { SecureKeyStore.shared.slot = activeSlot }
+        try SecureKeyStore.shared.updateMetadata(metadata)
         if let index = library.firstIndex(where: { $0.slot == wallet.slot }) {
             library[index].bundle = bundle
         }

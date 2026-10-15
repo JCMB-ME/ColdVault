@@ -89,8 +89,9 @@ public struct LibraryWallet: Identifiable, Equatable {
 }
 
 public enum DisplayUnit: String, CaseIterable, Identifiable {
-    case sats = "sats"
+    // BTC first: it is listed first in Settings › Unit.
     case btc = "BTC"
+    case sats = "sats"
     
     public var id: String { rawValue }
 }

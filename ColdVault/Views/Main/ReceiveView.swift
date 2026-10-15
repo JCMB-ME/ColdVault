@@ -22,6 +22,8 @@ public struct ReceiveView: View {
     @State private var rotationError: String?
     @State private var isVerifying = false
     @State private var verifyError: String?
+    @State private var isAddingAccount = false
+    @State private var accountError: String?
     /// The QR leaves the center and rises to the top before the details appear.
     @State private var qrRaised: Bool = false
     /// 0 = only the QR; 1…4 = details appearing one after another.
@@ -127,10 +129,12 @@ public struct ReceiveView: View {
                         rotationFooter
                             .padding(.horizontal, 24)
                             .transition(.opacity)
+                        newAccountButton
+                            .padding(.horizontal, 24)
+                            .transition(.opacity)
                     }
                 }
                 .frame(maxWidth: .infinity)
-                // Centered in the sheet at first; at the top once raised.
                 // Centered on the sheet at first (minus half the title bar); at the top once raised.
                 .padding(.top, qrRaised ? 14 : max(14, (geo.size.height - ReceiveView.qrBlock) / 2 - 24))
                 .padding(.bottom, 24)
@@ -272,6 +276,66 @@ public struct ReceiveView: View {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
             }
             withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) { isVerifying = false }
+        }
+    }
+
+    /// A separate BIP-44 account of this phrase (own balance): created with Face ID,
+    /// selected, and its first address shown here. "New address" stays in the same account.
+    @ViewBuilder
+    private var newAccountButton: some View {
+        if walletManager.canAddAccounts {
+            VStack(spacing: 8) {
+                if let account = walletManager.activeWallet?.bundle.current {
+                    Text(t("Receiving in: ", "Recibiendo en: ") + account.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(Palette.secondary)
+                        .id(account.name)
+                        .transition(.opacity)
+                }
+                Button(action: addAccount) {
+                    Group {
+                        if isAddingAccount {
+                            ProgressView()
+                        } else {
+                            Label(t("New account", "Nueva cuenta"), systemImage: "plus.circle")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(Color(uiColor: .label))
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                    .frame(height: 40)
+                    .background(Capsule().fill(SettingsStyle.groupFill))
+                }
+                .buttonStyle(.plain)
+                .disabled(isAddingAccount)
+                if let error = accountError {
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 4)
+        }
+    }
+
+    private func addAccount() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        isAddingAccount = true
+        accountError = nil
+        Task {
+            do {
+                try await walletManager.addAccount(name: nil)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) {
+                    selectedIndex = 0
+                    copied = false
+                }
+            } catch {
+                accountError = error.localizedDescription
+            }
+            isAddingAccount = false
         }
     }
 

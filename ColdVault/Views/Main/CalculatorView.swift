@@ -161,7 +161,7 @@ struct CalculatorView: View {
                     .contentShape(Rectangle())
                     .onTapGesture {
                         guard let value = value else { return }
-                        UIPasteboard.general.string = plain(value, unit: item)
+                        SecurePasteboard.copy(plain(value, unit: item))
                         UINotificationFeedbackGenerator().notificationOccurred(.success)
                         withAnimation { copied = item }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {

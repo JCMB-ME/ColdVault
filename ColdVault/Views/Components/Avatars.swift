@@ -364,3 +364,32 @@ struct CameraBadge: View {
             .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: 3))
     }
 }
+
+/// Header card of a settings page: icon in a large circle, title and one line.
+struct SettingsHero: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    var tint: Color = Color(uiColor: .label)
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: 64, height: 64)
+                .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+            Text(title)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(Color(uiColor: .label))
+            Text(subtitle)
+                .font(.system(size: 13))
+                .foregroundColor(Palette.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 22)
+        .padding(.horizontal, 16)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+    }
+}

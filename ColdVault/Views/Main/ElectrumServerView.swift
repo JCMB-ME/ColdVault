@@ -41,39 +41,48 @@ struct ElectrumServerView: View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsTitle(text: t("Server", "Servidor"), topPadding: 0)
 
-            Text(t("By default ColdVault asks public Electrum servers (Blockstream, BlueWallet…) for your balance, so they see your addresses. Connect your own node (Umbrel, Start9, RaspiBlitz, Electrs, Fulcrum) and nobody else will. Mainnet only.",
-                   "Por defecto ColdVault consulta servidores Electrum públicos (Blockstream, BlueWallet…), que ven tus direcciones. Conecta tu propio nodo (Umbrel, Start9, RaspiBlitz, Electrs, Fulcrum) y nadie más las verá. Solo mainnet."))
-                .font(.system(size: 13))
-                .foregroundColor(Palette.secondary)
-                .padding(.horizontal, 4)
+            SettingsHero(icon: current == nil ? "globe" : "server.rack",
+                         title: current.map { "\($0.host):\($0.port)" } ?? t("Public servers", "Servidores públicos"),
+                         subtitle: current == nil
+                             ? t("Blockstream, BlueWallet… (they see your addresses)", "Blockstream, BlueWallet… (ven tus direcciones)")
+                             : (current?.useTLS == true ? t("Your node · TLS", "Tu nodo · TLS") : t("Your node · no TLS", "Tu nodo · sin TLS")))
 
-            SettingsSection(header: t("In use", "En uso"), footer: nil) {
-                SettingsRow(title: current.map { "\($0.host):\($0.port)" } ?? t("Public servers", "Servidores públicos")) {
-                    Image(systemName: current == nil ? "globe" : "server.rack")
-                        .foregroundColor(Palette.secondary)
-                }
+            VStack(alignment: .leading, spacing: 12) {
+                TipRow(icon: "eye",
+                       text: t("Public Electrum servers answer your balance queries, so they see your addresses (never your keys).",
+                               "Los servidores Electrum públicos responden tus consultas de saldo, así que ven tus direcciones (nunca tus claves)."))
+                TipRow(icon: "house",
+                       text: t("Connect your own node (Umbrel, Start9, RaspiBlitz, Electrs, Fulcrum) and nobody else will. Mainnet only.",
+                               "Conecta tu propio nodo (Umbrel, Start9, RaspiBlitz, Electrs, Fulcrum) y nadie más las verá. Solo mainnet."))
             }
+            .padding(.horizontal, 4)
 
             SettingsSection(header: t("Your server", "Tu servidor"),
                             footer: useTLS
                                 ? t("Port 50002 is the usual TLS port (50001 without TLS).", "El puerto 50002 es el habitual con TLS (50001 sin TLS).")
                                 : t("Without TLS the data travels unencrypted: use it only on your home network or over Tor.",
                                     "Sin TLS los datos viajan sin cifrar: úsalo solo en tu red de casa o por Tor.")) {
-                TextField(t("umbrel.local or 192.168.1.10", "umbrel.local o 192.168.1.10"), text: $host)
-                    .font(.system(size: 16, design: .monospaced))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
-                    .keyboardType(.URL)
-                    .padding(.horizontal, 16)
-                    .frame(minHeight: 52)
-                SettingsDivider()
-                TextField(t("Port", "Puerto"), text: $portText)
-                    .font(.system(size: 16, design: .monospaced))
-                    .keyboardType(.numberPad)
-                    .padding(.horizontal, 16)
-                    .frame(minHeight: 52)
-                SettingsDivider()
-                SettingsRow(title: t("TLS encryption", "Cifrado TLS")) {
+                HStack(spacing: 12) {
+                    RowIcon(systemName: "network")
+                    TextField(t("umbrel.local or 192.168.1.10", "umbrel.local o 192.168.1.10"), text: $host)
+                        .font(.system(size: 16, design: .monospaced))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .keyboardType(.URL)
+                }
+                .padding(.horizontal, 14)
+                .frame(minHeight: 56)
+                SettingsDivider(inset: 60)
+                HStack(spacing: 12) {
+                    RowIcon(systemName: "number")
+                    TextField(t("Port", "Puerto"), text: $portText)
+                        .font(.system(size: 16, design: .monospaced))
+                        .keyboardType(.numberPad)
+                }
+                .padding(.horizontal, 14)
+                .frame(minHeight: 56)
+                SettingsDivider(inset: 60)
+                SettingsRow(title: t("TLS encryption", "Cifrado TLS"), icon: useTLS ? "lock" : "lock.open") {
                     Toggle("", isOn: $useTLS).labelsHidden()
                 }
             }
@@ -98,7 +107,7 @@ struct ElectrumServerView: View {
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(Color(uiColor: .label))
                             .frame(maxWidth: .infinity)
-                            .frame(height: 46)
+                            .frame(height: 50)
                             .background(Capsule().fill(SettingsStyle.groupFill))
                     }
                 }
