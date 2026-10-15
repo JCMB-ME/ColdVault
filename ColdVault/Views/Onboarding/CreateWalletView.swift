@@ -59,7 +59,7 @@ public struct CreateWalletView: View {
 
                             Text(L10n.createWalletSubtitle(lang))
                                 .font(.system(size: 14))
-                                .foregroundColor(Color(uiColor: .secondaryLabel))
+                                .foregroundColor(Palette.secondary)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 16)
                         }
@@ -108,7 +108,7 @@ public struct CreateWalletView: View {
                                  ? "• Write these words on physical paper with indelible ink.\n• NEVER take screenshots or save in cloud notes (a screenshot discards this phrase).\n• For optimal security, keep this device in Airplane Mode."
                                  : "• Escribe estas palabras en papel con tinta indeleble.\n• NUNCA tomes capturas ni las guardes en notas en la nube (una captura descarta esta frase).\n• Para máxima seguridad, mantén este celular en Modo Avión sin conexión.")
                                 .font(.system(size: 13))
-                                .foregroundColor(Color(uiColor: .secondaryLabel))
+                                .foregroundColor(Palette.secondary)
                                 .lineSpacing(3)
                         }
                         .padding(16)
@@ -188,7 +188,7 @@ public struct CreateWalletView: View {
                 HStack(spacing: 6) {
                     Text("\(idx + 1).")
                         .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color(uiColor: .tertiaryLabel))
+                        .foregroundColor(Palette.tertiary)
 
                     Text(words[idx])
                         .font(.system(size: 15, weight: .semibold, design: .monospaced))
@@ -211,7 +211,7 @@ public struct CreateWalletView: View {
                  ? "Confirm your backup: type the requested words from your paper."
                  : "Confirma tu respaldo: escribe las palabras indicadas desde tu papel.")
                 .font(.system(size: 14))
-                .foregroundColor(Color(uiColor: .secondaryLabel))
+                .foregroundColor(Palette.secondary)
 
             ForEach(0..<verificationIndices.count, id: \.self) { i in
                 HStack(spacing: 10) {

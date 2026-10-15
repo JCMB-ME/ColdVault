@@ -60,7 +60,7 @@ public struct ImportWalletView: View {
                             
                             Text(L10n.importWalletSubtitle(lang))
                                 .font(.system(size: 14))
-                                .foregroundColor(Color(uiColor: .secondaryLabel))
+                                .foregroundColor(Palette.secondary)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 24)
                         }
@@ -153,7 +153,7 @@ public struct ImportWalletView: View {
                                          ? "A different passphrase opens a different wallet. Type it exactly as you set it."
                                          : "Una passphrase distinta abre otra billetera. Escríbela exactamente como la configuraste.")
                                         .font(.system(size: 12))
-                                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                                        .foregroundColor(Palette.secondary)
                                 }
                             }
                             .padding(14)
@@ -176,7 +176,7 @@ public struct ImportWalletView: View {
                                  ? "If you paste a public Bitcoin address (e.g. 1A1zP1eP..., bc1q...), the wallet will be added in watch-only mode to check balances without risking private keys. Paste the descriptors exported by your cold wallet (wpkh(...), tr(...)) or a zpub to follow every address and create PSBTs for it."
                                  : "Si pegas una dirección pública de Bitcoin (ej. 1A1zP1eP..., bc1q...), la billetera se agregará en modo observación para consultar balances sin exponer ninguna clave privada. Pega los descriptores exportados por tu billetera fría (wpkh(...), tr(...)) o una zpub para seguir todas sus direcciones y crear PSBTs para ella.")
                                 .font(.system(size: 13))
-                                .foregroundColor(Color(uiColor: .secondaryLabel))
+                                .foregroundColor(Palette.secondary)
                                 .lineSpacing(2)
                         }
                         .padding(16)
@@ -269,7 +269,7 @@ public struct ImportWalletView: View {
                         .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
                     Text(parsed.accounts.map { $0.label }.joined(separator: " · ") + (parsed.isTestnet ? " · Testnet" : ""))
                         .font(.system(size: 12))
-                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                        .foregroundColor(Palette.secondary)
                 }
                 Spacer()
             }
@@ -304,7 +304,7 @@ public struct ImportWalletView: View {
                         .foregroundColor(.green)
                     Text(L10n.seedDetectedDesc(lang))
                         .font(.system(size: 12))
-                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                        .foregroundColor(Palette.secondary)
                 }
                 Spacer()
             }
@@ -322,7 +322,7 @@ public struct ImportWalletView: View {
                         .foregroundColor(.green)
                     Text(L10n.keyDetectedDesc(lang))
                         .font(.system(size: 12))
-                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                        .foregroundColor(Palette.secondary)
                 }
                 Spacer()
             }
@@ -340,7 +340,7 @@ public struct ImportWalletView: View {
                         .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
                     Text("\(L10n.watchOnlyDetectedDesc(lang)) (\(format.rawValue)\(isTestnet ? " · Testnet" : ""))")
                         .font(.system(size: 12))
-                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                        .foregroundColor(Palette.secondary)
                 }
                 Spacer()
             }

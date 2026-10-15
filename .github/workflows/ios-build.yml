@@ -65,6 +65,14 @@ jobs:
 
       - name: Package Unsigned IPA
         run: |
+          # Ad-hoc signature carrying the App Group entitlement, so re-signing tools
+          # (Sideloadly, AltStore) keep the group the widget uses to read the balance.
+          APP=build_device/Build/Products/Release-iphoneos/ColdVault.app
+          if [ -d "$APP/PlugIns/ColdVaultWidget.appex" ]; then
+            codesign -f -s - --entitlements ColdVaultWidget/ColdVaultWidget.entitlements "$APP/PlugIns/ColdVaultWidget.appex"
+          fi
+          codesign -f -s - --entitlements ColdVault/ColdVault.entitlements "$APP"
+          codesign -d --entitlements - "$APP" || true
           mkdir -p build_device/Payload
           cp -r build_device/Build/Products/Release-iphoneos/ColdVault.app build_device/Payload/
           cd build_device

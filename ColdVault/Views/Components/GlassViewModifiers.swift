@@ -53,7 +53,18 @@ public struct GlassCardModifier: ViewModifier {
         }
     }
     
+    @ViewBuilder
     public func body(content: Content) -> some View {
+        if Palette.isBitcoin {
+            content
+                .background(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.16)))
+        } else {
+            frosted(content)
+        }
+    }
+
+    private func frosted(_ content: Content) -> some View {
         content
             .background(
                 ZStack {
@@ -123,7 +134,11 @@ public struct GlassPillModifier: ViewModifier {
     
     @ViewBuilder
     public func body(content: Content) -> some View {
-        if liquidGlass, #available(iOS 26.0, *) {
+        if Palette.isBitcoin && !liquidGlass {
+            content
+                .background(Capsule(style: .continuous)
+                    .fill(isEmphasized ? Color.black.opacity(0.88) : Color.white.opacity(0.22)))
+        } else if liquidGlass, #available(iOS 26.0, *) {
             // Apple's Liquid Glass: refracts what is behind and reacts to touch.
             let glass: Glass = isEmphasized
                 ? Glass.regular.tint(Color.black.opacity(isDark ? 0.25 : 0.55)).interactive()
@@ -288,5 +303,24 @@ public struct SheetCloseButton: View {
                 .foregroundColor(Color(uiColor: .label))
         }
         .accessibilityLabel(Text("Close"))
+    }
+}
+
+// MARK: - Theme palette
+/// Colours that depend on the theme. On the Bitcoin theme everything is white on
+/// the logo orange (instead of the grey system colours, which look muddy there).
+public enum Palette {
+    public static var isBitcoin: Bool {
+        UserDefaults.standard.string(forKey: "appTheme") == AppTheme.bitcoin.rawValue
+    }
+    public static var secondary: Color {
+        isBitcoin ? Color.white.opacity(0.78) : Color(uiColor: .secondaryLabel)
+    }
+    public static var tertiary: Color {
+        isBitcoin ? Color.white.opacity(0.55) : Color(uiColor: .tertiaryLabel)
+    }
+    /// Controls (toggles, selected states).
+    public static var accent: Color {
+        isBitcoin ? Color.black.opacity(0.85) : Color.accentColor
     }
 }

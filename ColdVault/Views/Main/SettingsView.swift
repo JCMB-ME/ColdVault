@@ -124,9 +124,16 @@ public struct SettingsView: View {
                     }
                     SettingsDivider()
                     Menu {
-                        Picker("", selection: $walletManager.fiatCurrency) {
-                            ForEach(FiatCurrency.supported, id: \.self) { code in
-                                Text(FiatCurrency.name(code, lang)).tag(code)
+                        // Explicit buttons (not a Picker) so every currency is always listed.
+                        ForEach(FiatCurrency.supported, id: \.self) { code in
+                            Button {
+                                walletManager.fiatCurrency = code
+                            } label: {
+                                if walletManager.fiatCurrency == code {
+                                    Label(FiatCurrency.name(code, lang), systemImage: "checkmark")
+                                } else {
+                                    Text(FiatCurrency.name(code, lang))
+                                }
                             }
                         }
                     } label: {
@@ -217,7 +224,7 @@ public struct SettingsView: View {
                         Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold))
                         Text(t("Settings", "Ajustes")).font(.system(size: 16))
                     }
-                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                    .foregroundColor(Palette.secondary)
                 }
                 .padding(.top, 8)
 
@@ -321,7 +328,7 @@ public struct SettingsView: View {
             Text(t("Save the addresses of friends, family or your other wallets to send to them without copying addresses.",
                    "Guarda las direcciones de amigos, familia u otras billeteras tuyas para enviarles sin copiar direcciones."))
                 .font(.system(size: 14))
-                .foregroundColor(Color(uiColor: .secondaryLabel))
+                .foregroundColor(Palette.secondary)
                 .padding(.horizontal, 4)
         } else {
             SettingsSection(header: t("Saved", "Guardados"), footer: nil) {
@@ -332,7 +339,7 @@ public struct SettingsView: View {
                             HStack(spacing: 6) {
                                 Text(shortAddress(contact.address))
                                     .font(.system(size: 13, design: .monospaced))
-                                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                                    .foregroundColor(Palette.secondary)
                                 Chevron()
                             }
                         }
@@ -483,7 +490,7 @@ private struct SettingsSection<Content: View>: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(header.uppercased())
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(Color(uiColor: .secondaryLabel))
+                .foregroundColor(Palette.secondary)
                 .padding(.leading, 16)
             VStack(spacing: 0) { content }
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
@@ -491,7 +498,7 @@ private struct SettingsSection<Content: View>: View {
             if let footer = footer {
                 Text(footer)
                     .font(.system(size: 12))
-                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                    .foregroundColor(Palette.secondary)
                     .padding(.horizontal, 16)
             }
         }
@@ -540,7 +547,7 @@ private struct SettingsRowValue: View {
             if let value = value {
                 Text(value)
                     .font(.system(size: 15))
-                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                    .foregroundColor(Palette.secondary)
             }
             if chevron { Chevron() }
         }
@@ -551,7 +558,7 @@ private struct Chevron: View {
     var body: some View {
         Image(systemName: "chevron.right")
             .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(Color(uiColor: .tertiaryLabel))
+            .foregroundColor(Palette.tertiary)
     }
 }
 

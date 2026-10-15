@@ -19,12 +19,12 @@ import Combine
 @MainActor
 public final class WalletManager: ObservableObject {
 
-    @Published public var hasWallet: Bool = false
+    @Published public var hasWallet: Bool = false { didSet { scheduleWidgetUpdate() } }
     @Published public var activeRecord: StoredWalletRecord?
-    @Published public var balanceSats: UInt64 = 0
+    @Published public var balanceSats: UInt64 = 0 { didSet { scheduleWidgetUpdate() } }
     @Published public var isLoadingBalance: Bool = false
     @Published public var balanceError: String?
-    @Published public var lastBalanceUpdate: Date?
+    @Published public var lastBalanceUpdate: Date? { didSet { scheduleWidgetUpdate() } }
     @Published public var errorMessage: String?
 
     // Address rotation: what the last gap-limit scan found (in memory only).
@@ -43,16 +43,25 @@ public final class WalletManager: ObservableObject {
     }
 
     @Published public var appTheme: AppTheme {
-        didSet { UserDefaults.standard.set(appTheme.rawValue, forKey: "appTheme") }
+        didSet {
+            UserDefaults.standard.set(appTheme.rawValue, forKey: "appTheme")
+            scheduleWidgetUpdate()
+        }
     }
 
     @Published public var displayUnit: DisplayUnit {
-        didSet { UserDefaults.standard.set(displayUnit.rawValue, forKey: "displayUnit") }
+        didSet {
+            UserDefaults.standard.set(displayUnit.rawValue, forKey: "displayUnit")
+            scheduleWidgetUpdate()
+        }
     }
 
     /// Decimals shown in the balance; nil = automatic. Custom values up to 16.
     @Published public var displayDecimals: Int? {
-        didSet { UserDefaults.standard.set(displayDecimals ?? -1, forKey: "displayDecimals") }
+        didSet {
+            UserDefaults.standard.set(displayDecimals ?? -1, forKey: "displayDecimals")
+            scheduleWidgetUpdate()
+        }
     }
 
     /// Liquid Glass buttons (iOS 26+). Read by GlassPillModifier through @AppStorage.
@@ -84,7 +93,7 @@ public final class WalletManager: ObservableObject {
         }
     }
 
-    @Published public internal(set) var fiatPrice: Double?
+    @Published public internal(set) var fiatPrice: Double? { didSet { scheduleWidgetUpdate() } }
     /// Full BTC/USD history (hourly recently, daily further back), oldest first.
     @Published public internal(set) var priceHistory: [PricePoint] = []
     var usdPrice: Double?
@@ -92,6 +101,7 @@ public final class WalletManager: ObservableObject {
     @Published public internal(set) var isLoadingTransactions: Bool = false
     @Published public internal(set) var contacts: [Contact] = []
     var lastPriceHistoryFetch: Date?
+    var widgetUpdatePending = false
     var priceHistoryCurrency: String?
 
     private func saveHomeOption(_ value: Bool, _ key: String) {
@@ -110,8 +120,9 @@ public final class WalletManager: ObservableObject {
         self.isAirGapped = UserDefaults.standard.bool(forKey: "isAirGapped")
         let savedTheme = UserDefaults.standard.string(forKey: "appTheme") ?? AppTheme.system.rawValue
         self.appTheme = AppTheme(rawValue: savedTheme) ?? .system
-        let savedUnit = UserDefaults.standard.string(forKey: "displayUnit") ?? DisplayUnit.sats.rawValue
-        self.displayUnit = DisplayUnit(rawValue: savedUnit) ?? .sats
+        // BTC is the default unit; sats once the user picks it.
+        let savedUnit = UserDefaults.standard.string(forKey: "displayUnit") ?? DisplayUnit.btc.rawValue
+        self.displayUnit = DisplayUnit(rawValue: savedUnit) ?? .btc
         // The app always speaks the iPhone's language (Spanish for any "es-*", else English).
         self.appLanguage = WalletManager.deviceLanguage
         let defaults = UserDefaults.standard

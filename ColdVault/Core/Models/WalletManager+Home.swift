@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import WidgetKit
 
 // MARK: - Models
 
@@ -335,5 +336,35 @@ extension WalletManager {
     public func contactName(for address: String) -> String? {
         let target = address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return contacts.first { $0.address.lowercased() == target }?.name
+    }
+}
+
+// MARK: - Home-screen widget
+
+extension WalletManager {
+    static let widgetSuite = "group.com.coldvault.wallet"
+
+    /// Coalesces several property changes into one widget refresh.
+    func scheduleWidgetUpdate() {
+        guard !widgetUpdatePending else { return }
+        widgetUpdatePending = true
+        DispatchQueue.main.async { [weak self] in
+            self?.widgetUpdatePending = false
+            self?.publishWidget()
+        }
+    }
+
+    /// Writes what the widget shows into the shared App Group container (public
+    /// display data only: no keys, no addresses) and asks WidgetKit to redraw.
+    func publishWidget() {
+        guard let defaults = UserDefaults(suiteName: WalletManager.widgetSuite) else { return }
+        defaults.set(hasWallet, forKey: "widget.hasWallet")
+        defaults.set(formattedBalance, forKey: "widget.balance")
+        defaults.set(displayUnit.rawValue, forKey: "widget.unit")
+        defaults.set(formattedFiatBalance, forKey: "widget.fiat")
+        defaults.set(lastBalanceUpdate?.timeIntervalSince1970 ?? 0, forKey: "widget.updated")
+        defaults.set(appLanguage == .spanish, forKey: "widget.spanish")
+        defaults.set(appTheme.rawValue, forKey: "widget.theme")
+        WidgetCenter.shared.reloadAllTimelines()
     }
 }

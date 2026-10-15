@@ -27,6 +27,12 @@ targets:
     dependencies:
       - package: CSecp256k1
         product: CSecp256k1
+      - target: ColdVaultWidget
+    entitlements:
+      path: ColdVault/ColdVault.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.coldvault.wallet
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.coldvault.wallet
       INFOPLIST_FILE: ColdVault/Info.plist
@@ -36,6 +42,43 @@ targets:
       CODE_SIGN_IDENTITY: ""
       CODE_SIGNING_ALLOWED: NO
       PRODUCT_NAME: ColdVault
+      TARGETED_DEVICE_FAMILY: "1"
+
+  # Home-screen / lock-screen balance widget. Reads the balance the app publishes in
+  # the shared App Group container; it has no keys and makes no network requests.
+  ColdVaultWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: ColdVaultWidget
+    info:
+      path: ColdVaultWidget/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: $(DEVELOPMENT_LANGUAGE)
+        CFBundleDisplayName: ColdVault
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundlePackageType: $(PRODUCT_BUNDLE_PACKAGE_TYPE)
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: ColdVaultWidget/ColdVaultWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.coldvault.wallet
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.coldvault.wallet.widget
+      PRODUCT_NAME: ColdVaultWidget
+      GENERATE_INFOPLIST_FILE: NO
+      SKIP_INSTALL: YES
+      CODE_SIGNING_REQUIRED: NO
+      CODE_SIGN_IDENTITY: ""
+      CODE_SIGNING_ALLOWED: NO
       TARGETED_DEVICE_FAMILY: "1"
 
   ColdVaultTests:

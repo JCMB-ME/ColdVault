@@ -6,8 +6,8 @@
 //  1. The balance sits at the exact center of the screen; below it the Receive and
 //     Send buttons (or, if enabled in Settings, a single pill that swipes between
 //     them), then the optional extras: last 10 transactions, contacts, price chart.
-//  2. Balance and settings are one continuous canvas: swiping moves both pages
-//     together under the finger, like a single wide screen.
+//  2. Balance and settings are one continuous canvas (native paging): swiping moves
+//     both pages together under the finger, like a single wide screen.
 //  3. Bilingual (follows the iPhone), light / dark / Bitcoin themes.
 //
 
@@ -31,9 +31,8 @@ public struct DashboardView: View {
     @State private var isButtonPressed: Bool = false
     @State private var isPillDragging: Bool = false
 
-    // One canvas, two pages: 0 = balance, 1 = settings. Follows the finger.
-    @State private var pageProgress: CGFloat = 0
-    @State private var pageDragBase: CGFloat?
+    // One canvas, two pages: 0 = balance, 1 = settings (native paging, follows the finger).
+    @State private var page: Int = 0
     @State private var settingsRoute: SettingsRoute?
 
     // Send to a contact from the home screen.
@@ -62,18 +61,21 @@ public struct DashboardView: View {
             // read as one continuous screen sliding sideways (no card, no seam).
             GlassAmbientBackground()
 
-            GeometryReader { geo in
-                HStack(spacing: 0) {
-                    balancePage
-                        .frame(width: geo.size.width, height: geo.size.height)
-                    SettingsView(route: $settingsRoute)
-                        .environmentObject(walletManager)
-                        .frame(width: geo.size.width, height: geo.size.height)
-                }
-                .offset(x: -pageProgress * geo.size.width)
+            // UIKit paging (UIPageViewController): it follows the finger and coexists
+            // with the vertical scroll views inside each page. A SwiftUI drag gesture on
+            // an ancestor loses touches that start inside a ScrollView on iOS 18+.
+            TabView(selection: $page) {
+                balancePage
+                    .tag(0)
+                SettingsView(route: $settingsRoute)
+                    .environmentObject(walletManager)
+                    .tag(1)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .onChange(of: page) { _ in
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
         }
-        .simultaneousGesture(pagerGesture)
         .sheet(isPresented: $showReceiveSheet) {
             ReceiveView()
                 .environmentObject(walletManager)
@@ -138,7 +140,7 @@ public struct DashboardView: View {
 
                 Text(walletManager.displayUnit.rawValue)
                     .font(.system(size: 22, weight: .medium, design: .default))
-                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                    .foregroundColor(Palette.secondary)
                     .fixedSize()
             }
             .padding(.horizontal, 24)
@@ -151,7 +153,7 @@ public struct DashboardView: View {
             if let fiat = walletManager.formattedFiatBalance {
                 Text("≈ \(fiat)")
                     .font(.system(size: 17, weight: .medium))
-                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                    .foregroundColor(Palette.secondary)
             }
             balanceStatus
 
@@ -292,42 +294,7 @@ public struct DashboardView: View {
             Text(text)
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
         }
-        .foregroundColor(Color(uiColor: .secondaryLabel))
-    }
-
-    // MARK: - Pager
-
-    private var pagerGesture: some Gesture {
-        DragGesture(minimumDistance: 20)
-            .onChanged { gesture in
-                // Inside a settings detail page the back button is used instead.
-                guard !isPillDragging, settingsRoute == nil else { return }
-                let dx = gesture.translation.width
-                if pageDragBase == nil {
-                    // Only horizontal drags; vertical ones scroll / pull to refresh.
-                    guard abs(dx) > abs(gesture.translation.height) else { return }
-                    pageDragBase = pageProgress
-                }
-                let raw = (pageDragBase ?? 0) - dx / screenWidth
-                // Rubber band past either edge.
-                if raw < 0 {
-                    pageProgress = raw / 4
-                } else if raw > 1 {
-                    pageProgress = 1 + (raw - 1) / 4
-                } else {
-                    pageProgress = raw
-                }
-            }
-            .onEnded { gesture in
-                guard let base = pageDragBase else { return }
-                pageDragBase = nil
-                let projected = base - gesture.predictedEndTranslation.width / screenWidth
-                let target: CGFloat = projected > 0.5 ? 1 : 0
-                if target != base { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
-                withAnimation(.interactiveSpring(response: 0.42, dampingFraction: 0.88)) {
-                    pageProgress = target
-                }
-            }
+        .foregroundColor(Palette.secondary)
     }
 
     @ViewBuilder
@@ -335,7 +302,7 @@ public struct DashboardView: View {
         Group {
             if walletManager.isAirGapped {
                 Label(t("Offline — balance not updated", "Sin conexión — saldo no actualizado"), systemImage: "wifi.slash")
-                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                    .foregroundColor(Palette.secondary)
             } else if walletManager.isLoadingBalance {
                 ProgressView()
             } else if walletManager.balanceError != nil {
@@ -344,7 +311,7 @@ public struct DashboardView: View {
                     .foregroundColor(.orange)
             } else if let updated = walletManager.lastBalanceUpdate {
                 Text(t("Updated ", "Actualizado ") + updated.formatted(date: .omitted, time: .shortened))
-                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                    .foregroundColor(Palette.secondary)
             }
         }
         .font(.system(size: 12, weight: .medium))
@@ -433,7 +400,7 @@ struct HomeExtrasView: View {
                                 .background(Circle().fill(SettingsStyle.groupFill))
                             Text(contact.name)
                                 .font(.system(size: 12))
-                                .foregroundColor(Color(uiColor: .secondaryLabel))
+                                .foregroundColor(Palette.secondary)
                                 .lineLimit(1)
                                 .frame(width: 64)
                         }
@@ -449,7 +416,7 @@ struct HomeExtrasView: View {
     private func note(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 14))
-            .foregroundColor(Color(uiColor: .secondaryLabel))
+            .foregroundColor(Palette.secondary)
             .frame(maxWidth: .infinity, minHeight: 56)
     }
 }
@@ -485,14 +452,14 @@ struct TransactionCard: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(Color(uiColor: .label))
                     .frame(width: 42, height: 42)
-                    .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+                    .background(Circle().fill(Palette.isBitcoin ? Color.white.opacity(0.25) : Color(uiColor: .systemBackground).opacity(0.9)))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(received ? t("Received", "Recibido") : t("Sent", "Enviado"))
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
                     Text(timeText)
                         .font(.system(size: 13))
-                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                        .foregroundColor(Palette.secondary)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 3) {
@@ -501,7 +468,7 @@ struct TransactionCard: View {
                         .foregroundColor(Color(uiColor: .label))
                     Text(walletManager.displayUnit.rawValue)
                         .font(.system(size: 12))
-                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                        .foregroundColor(Palette.secondary)
                 }
             }
             .padding(.horizontal, 14)
@@ -567,13 +534,13 @@ struct MinimalPriceChart: View {
         VStack(spacing: 6) {
             Text(t("Bitcoin price · ", "Precio de Bitcoin · ") + period.title(lang))
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(Color(uiColor: .secondaryLabel))
+                .foregroundColor(Palette.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
 
             if walletManager.isAirGapped {
                 Text(t("Offline", "Sin conexión"))
                     .font(.system(size: 14))
-                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                    .foregroundColor(Palette.secondary)
                     .frame(height: 150)
             } else if let first = points.first, let last = points.last, points.count > 1 {
                 let change = (last.price - first.price) / first.price * 100
@@ -583,7 +550,7 @@ struct MinimalPriceChart: View {
                         .foregroundColor(Color(uiColor: .label))
                     Text(String(format: "%+.1f%%", change))
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                        .foregroundColor(Palette.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
 
@@ -611,7 +578,7 @@ struct MinimalPriceChart: View {
                     } label: {
                         Text(item.short(lang))
                             .font(.system(size: 13, weight: item == period ? .semibold : .regular))
-                            .foregroundColor(item == period ? Color(uiColor: .label) : Color(uiColor: .secondaryLabel))
+                            .foregroundColor(item == period ? Color(uiColor: .label) : Palette.secondary)
                             .frame(minWidth: 38, minHeight: 30)
                             .background(Capsule().fill(item == period ? SettingsStyle.groupFill : Color.clear))
                     }

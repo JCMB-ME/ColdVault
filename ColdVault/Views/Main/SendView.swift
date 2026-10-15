@@ -196,7 +196,7 @@ public struct SendView: View {
                 if let name = walletManager.contactName(for: recipientAddress) {
                     Label(name, systemImage: "person.fill")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                        .foregroundColor(Palette.secondary)
                         .padding(.horizontal, 4)
                 }
 
@@ -216,7 +216,7 @@ public struct SendView: View {
                     Spacer()
                     Text("\(L10n.balanceLabel(lang)): \(walletManager.formattedBalance) \(walletManager.displayUnit.rawValue)")
                         .font(.system(size: 12))
-                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                        .foregroundColor(Palette.secondary)
                 }
                 .padding(.horizontal, 4)
 
@@ -229,7 +229,7 @@ public struct SendView: View {
 
                     Text("sats")
                         .font(.system(size: 17, weight: .medium))
-                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                        .foregroundColor(Palette.secondary)
 
                     Button(action: {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -250,7 +250,7 @@ public struct SendView: View {
                 if sendAll {
                     Text(t("Sends the entire balance minus the network fee.", "Envía todo el saldo menos la comisión de red."))
                         .font(.system(size: 12))
-                        .foregroundColor(Color(uiColor: .secondaryLabel))
+                        .foregroundColor(Palette.secondary)
                         .padding(.horizontal, 4)
                 }
             }
@@ -278,7 +278,7 @@ public struct SendView: View {
                         ProgressView()
                         Text(t("Loading network fees…", "Cargando comisiones de la red…"))
                             .font(.system(size: 12))
-                            .foregroundColor(Color(uiColor: .secondaryLabel))
+                            .foregroundColor(Palette.secondary)
                     }
                 } else if feesUnavailable {
                     Text(t("Could not load current fees. Check the rate before sending.",
@@ -350,7 +350,7 @@ public struct SendView: View {
                 Text(t("Replaceable (RBF) — you can bump the fee later from another wallet.",
                        "Reemplazable (RBF): puedes subir la comisión después desde otra billetera."))
                     .font(.system(size: 11))
-                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                    .foregroundColor(Palette.secondary)
                 if highFee {
                     Label(t("The fee is more than 10% of the amount.", "La comisión supera el 10% del monto."),
                           systemImage: "exclamationmark.triangle.fill")
@@ -399,7 +399,7 @@ public struct SendView: View {
             Text(t("1. Scan this QR with your cold device (ColdVault in Air-Gap mode, Sparrow, Keystone…). Large transactions are shown as an animated QR: keep the camera on it until it completes.\n2. Then scan the signed transaction it shows.",
                    "1. Escanea este QR con tu dispositivo frío (ColdVault en modo Air-Gap, Sparrow, Keystone…). Las transacciones grandes se muestran como QR animado: mantén la cámara sobre él hasta completarlo.\n2. Después escanea la transacción firmada que te muestre."))
                 .font(.system(size: 13))
-                .foregroundColor(Color(uiColor: .secondaryLabel))
+                .foregroundColor(Palette.secondary)
                 .multilineTextAlignment(.center)
             ShareLink(item: psbt) {
                 Label(L10n.share(lang), systemImage: "square.and.arrow.up")
@@ -439,7 +439,7 @@ public struct SendView: View {
                 .font(.system(size: 18, weight: .bold))
             Text(txid)
                 .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(Color(uiColor: .secondaryLabel))
+                .foregroundColor(Palette.secondary)
                 .multilineTextAlignment(.center)
                 .textSelection(.enabled)
             HStack(spacing: 16) {
@@ -479,7 +479,7 @@ public struct SendView: View {
                      : t("Other signatures are still needed. Return this PSBT to your coordinator.",
                          "Aún faltan otras firmas. Devuelve este PSBT a tu coordinador."))
                     .font(.system(size: 13))
-                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                    .foregroundColor(Palette.secondary)
                     .multilineTextAlignment(.center)
                 ShareLink(item: output) {
                     Label(L10n.share(lang), systemImage: "square.and.arrow.up")
@@ -540,7 +540,7 @@ public struct SendView: View {
                         HStack {
                             Text(output.isChange ? t("Change (yours)", "Cambio (tuyo)") : t("Sends to", "Envía a"))
                                 .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(output.isChange ? .green : Color(uiColor: .secondaryLabel))
+                                .foregroundColor(output.isChange ? .green : Palette.secondary)
                             Spacer()
                             Text("\(output.value) sats")
                                 .font(.system(size: 14, weight: .semibold, design: .monospaced))
@@ -595,7 +595,7 @@ public struct SendView: View {
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 12, weight: .bold))
-            .foregroundColor(Color(uiColor: .secondaryLabel))
+            .foregroundColor(Palette.secondary)
             .padding(.horizontal, 4)
     }
 
@@ -603,7 +603,7 @@ public struct SendView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundColor(Color(uiColor: .secondaryLabel))
+                .foregroundColor(Palette.secondary)
             Text(value)
                 .font(.system(size: 14, weight: .medium, design: mono ? .monospaced : .default))
                 .foregroundColor(Color(uiColor: .label))
@@ -618,7 +618,7 @@ public struct SendView: View {
                 .foregroundColor(color)
             Text(text)
                 .font(.system(size: 13))
-                .foregroundColor(Color(uiColor: .secondaryLabel))
+                .foregroundColor(Palette.secondary)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

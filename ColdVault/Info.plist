@@ -26,6 +26,9 @@
 	<string>ColdVault requiere la cámara para escanear códigos QR de direcciones y transacciones Bitcoin.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>ColdVault utiliza Face ID / Touch ID para proteger tus claves criptográficas y autorizar firmas.</string>
+	<!-- Classic design by default; Liquid Glass buttons are opt-in from Settings. -->
+	<key>UIDesignRequiresCompatibility</key>
+	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
