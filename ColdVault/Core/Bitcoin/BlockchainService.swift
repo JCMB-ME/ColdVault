@@ -108,8 +108,12 @@ public final class BlockchainService {
     }
 
     private func get(_ path: String, isTestnet: Bool) async throws -> Data {
-        guard !isNetworkBlocked else { throw BlockchainError.airGapped }
         guard let url = URL(string: baseURL(isTestnet: isTestnet) + path) else { throw BlockchainError.invalidResponse }
+        return try await get(url: url)
+    }
+
+    private func get(url: URL) async throws -> Data {
+        guard !isNetworkBlocked else { throw BlockchainError.airGapped }
         // Address scans send bursts of requests: back off and retry when rate limited.
         var attempt = 0
         while true {
@@ -207,13 +211,14 @@ public final class BlockchainService {
         return prices
     }
 
-    /// Hourly price points of the last `days` days, oldest first.
-    public func fetchPriceHistory(currency: String, days: Int) async throws -> [PricePoint] {
+    /// Price points (hourly recently, daily further back) of the last `days` days, or all
+    /// of them when `days` is nil; oldest first.
+    public func fetchPriceHistory(currency: String, days: Int?) async throws -> [PricePoint] {
         guard currency.allSatisfy({ $0.isASCII && $0.isLetter }) else { throw BlockchainError.invalidResponse }
         let data = try await get("/v1/historical-price?currency=\(currency)", isTestnet: false)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let prices = object["prices"] as? [[String: Any]] else { throw BlockchainError.invalidResponse }
-        let cutoff = Date().addingTimeInterval(-Double(days) * 86_400)
+        let cutoff = days.map { Date().addingTimeInterval(-Double($0) * 86_400) } ?? .distantPast
         var points = [PricePoint]()
         for entry in prices {
             guard let time = (entry["time"] as? NSNumber)?.doubleValue,
@@ -224,11 +229,37 @@ public final class BlockchainService {
         return points.sorted { $0.date < $1.date }
     }
 
-    // MARK: - Transaction history (most recent 25 per address)
-    public func fetchTransactions(address: String, isTestnet: Bool) async throws -> [EsploraTransaction] {
+    /// USD → other currencies (open.er-api.com, free, updated daily). Used for MXN and CNY,
+    /// which mempool.space does not price.
+    public func fetchUSDExchangeRates() async throws -> [String: Double] {
+        guard let url = URL(string: "https://open.er-api.com/v6/latest/USD") else { throw BlockchainError.invalidResponse }
+        let data = try await get(url: url)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rates = object["rates"] as? [String: Any] else { throw BlockchainError.invalidResponse }
+        var result = [String: Double]()
+        for (code, value) in rates {
+            if let number = value as? NSNumber, number.doubleValue > 0 { result[code] = number.doubleValue }
+        }
+        return result
+    }
+
+    // MARK: - Transaction history
+    /// Every transaction of an address: mempool + first 25 confirmed, then pages of 25
+    /// older confirmed ones (up to `maxPages`).
+    public func fetchTransactions(address: String, isTestnet: Bool, maxPages: Int = 20) async throws -> [EsploraTransaction] {
         let checked = try checkedAddress(address, isTestnet: isTestnet)
         let data = try await get("/address/\(checked)/txs", isTestnet: isTestnet)
-        return try JSONDecoder().decode([EsploraTransaction].self, from: data)
+        var all = try JSONDecoder().decode([EsploraTransaction].self, from: data)
+        var confirmedPage = all.filter { $0.status.confirmed }
+        var pages = 1
+        while confirmedPage.count >= 25, pages < maxPages, let lastSeen = confirmedPage.last?.txid,
+              lastSeen.count == 64, lastSeen.hexDecoded != nil {
+            let more = try await get("/address/\(checked)/txs/chain/\(lastSeen)", isTestnet: isTestnet)
+            confirmedPage = try JSONDecoder().decode([EsploraTransaction].self, from: more)
+            all += confirmedPage
+            pages += 1
+        }
+        return all
     }
 
     // MARK: - Broadcast

@@ -37,6 +37,44 @@ public struct PricePoint: Identifiable, Equatable {
     public let price: Double
 }
 
+public enum PricePeriod: String, CaseIterable, Identifiable {
+    case day, week, month, sixMonths, year, all
+    public var id: String { rawValue }
+
+    var seconds: TimeInterval? {
+        switch self {
+        case .day: return 86_400
+        case .week: return 7 * 86_400
+        case .month: return 30 * 86_400
+        case .sixMonths: return 182 * 86_400
+        case .year: return 365 * 86_400
+        case .all: return nil
+        }
+    }
+
+    public func short(_ lang: AppLanguage) -> String {
+        switch self {
+        case .day: return lang == .english ? "1D" : "1D"
+        case .week: return lang == .english ? "1W" : "1S"
+        case .month: return "1M"
+        case .sixMonths: return "6M"
+        case .year: return lang == .english ? "1Y" : "1A"
+        case .all: return lang == .english ? "All" : "Todo"
+        }
+    }
+
+    public func title(_ lang: AppLanguage) -> String {
+        switch self {
+        case .day: return lang == .english ? "1 day" : "1 día"
+        case .week: return lang == .english ? "1 week" : "1 semana"
+        case .month: return lang == .english ? "1 month" : "1 mes"
+        case .sixMonths: return lang == .english ? "6 months" : "6 meses"
+        case .year: return lang == .english ? "1 year" : "1 año"
+        case .all: return lang == .english ? "all time" : "todo"
+        }
+    }
+}
+
 public struct WalletTransaction: Identifiable, Equatable {
     public var id: String { txid }
     public let txid: String
@@ -47,8 +85,18 @@ public struct WalletTransaction: Identifiable, Equatable {
 }
 
 public enum FiatCurrency {
-    /// Currencies mempool.space publishes prices for.
-    public static let supported = ["USD", "EUR", "GBP", "CAD", "CHF", "AUD", "JPY"]
+    /// US dollar, Mexican peso, Japanese yen and Chinese yuan.
+    public static let supported = ["USD", "MXN", "JPY", "CNY"]
+
+    public static func name(_ code: String, _ lang: AppLanguage) -> String {
+        switch code {
+        case "USD": return lang == .english ? "US dollar (USD)" : "Dólar (USD)"
+        case "MXN": return lang == .english ? "Mexican peso (MXN)" : "Peso mexicano (MXN)"
+        case "JPY": return lang == .english ? "Japanese yen (JPY)" : "Yen japonés (JPY)"
+        case "CNY": return lang == .english ? "Chinese yuan (CNY)" : "Yuan chino (CNY)"
+        default: return code
+        }
+    }
 
     static var deviceDefault: String {
         let code: String?
@@ -130,20 +178,45 @@ extension WalletManager {
 
     func refreshMarketData(force: Bool) async {
         let currency = fiatCurrency
-        if let prices = try? await BlockchainService.shared.fetchPrices(), let price = prices[currency] {
-            fiatPrice = price
+        if let prices = try? await BlockchainService.shared.fetchPrices(), let usd = prices["USD"] {
+            usdPrice = usd
+            if currency == "USD" {
+                fiatPrice = usd
+            } else if let direct = prices[currency] {
+                fiatPrice = direct                                     // JPY comes from mempool.space
+            } else if let rates = try? await BlockchainService.shared.fetchUSDExchangeRates(),
+                      let rate = rates[currency] {
+                fiatPrice = usd * rate                                 // MXN, CNY: USD price × FX rate
+            }
         }
         guard homeShowPriceChart else { return }
-        if !force, let last = lastPriceHistoryFetch, Date().timeIntervalSince(last) < 3_600,
-           priceHistoryCurrency == currency { return }
-        if let history = try? await BlockchainService.shared.fetchPriceHistory(currency: currency, days: 30) {
+        if !force, let last = lastPriceHistoryFetch, Date().timeIntervalSince(last) < 3_600, !priceHistory.isEmpty { return }
+        if let history = try? await BlockchainService.shared.fetchPriceHistory(currency: "USD", days: nil) {
             priceHistory = history
-            priceHistoryCurrency = currency
             lastPriceHistoryFetch = Date()
         }
     }
 
-    /// Recent transactions of every used address (newest first, at most 50).
+    /// Price points for a period in the chosen currency (USD history scaled by today's
+    /// fiat/USD ratio), downsampled to at most 200 points for a clean line.
+    public func priceSeries(_ period: PricePeriod) -> [PricePoint] {
+        guard !priceHistory.isEmpty else { return [] }
+        let factor = (fiatPrice != nil && usdPrice != nil && usdPrice! > 0) ? fiatPrice! / usdPrice! : 1
+        var points = priceHistory
+        if let seconds = period.seconds {
+            let cutoff = Date().addingTimeInterval(-seconds)
+            points = points.filter { $0.date >= cutoff }
+        }
+        if let current = usdPrice {
+            points.append(PricePoint(date: Date(), price: current))
+        }
+        let step = max(1, points.count / 200)
+        var sampled = stride(from: 0, to: points.count, by: step).map { points[$0] }
+        if let last = points.last, sampled.last != last { sampled.append(last) }
+        return sampled.map { PricePoint(date: $0.date, price: $0.price * factor) }
+    }
+
+    /// Full transaction history of every used address (newest first).
     func refreshTransactions() async {
         guard let record = activeRecord else { return }
         let isTestnet = record.isTestnet
@@ -199,11 +272,11 @@ extension WalletManager {
             let date = tx.status.block_time.map { Date(timeIntervalSince1970: TimeInterval($0)) }
             return WalletTransaction(txid: tx.txid, net: net, date: date, confirmed: tx.status.confirmed)
         }
-        transactions = Array(list.sorted { lhs, rhs in
+        transactions = list.sorted { lhs, rhs in
             // Pending first, then newest.
             if lhs.confirmed != rhs.confirmed { return !lhs.confirmed }
             return (lhs.date ?? .distantFuture) > (rhs.date ?? .distantFuture)
-        }.prefix(50))
+        }
     }
 }
 

@@ -78,8 +78,8 @@ public struct SettingsView: View {
                 SettingsTitle(text: t("Settings", "Ajustes"))
 
                 SettingsSection(header: t("Home screen", "Pantalla principal"),
-                                footer: t("Start minimal. Add only what you need.",
-                                          "Empieza mínimo. Añade solo lo que necesites.")) {
+                                footer: t("Start minimal. Add only what you need. Swipe button: one Receive button you swipe to turn into Send.",
+                                          "Empieza mínimo. Añade solo lo que necesites. Botón deslizable: un solo botón Recibir que se convierte en Enviar al deslizarlo.")) {
                     SettingsRow(title: t("Transactions", "Transacciones")) {
                         Toggle("", isOn: $walletManager.homeShowTransactions).labelsHidden()
                     }
@@ -94,6 +94,10 @@ public struct SettingsView: View {
                     SettingsDivider()
                     SettingsRow(title: t("Contacts", "Contactos")) {
                         Toggle("", isOn: $walletManager.homeShowContacts).labelsHidden()
+                    }
+                    SettingsDivider()
+                    SettingsRow(title: t("Swipe button", "Botón deslizable")) {
+                        Toggle("", isOn: $walletManager.swipeActionButton).labelsHidden()
                     }
                 }
 
@@ -121,7 +125,9 @@ public struct SettingsView: View {
                     SettingsDivider()
                     Menu {
                         Picker("", selection: $walletManager.fiatCurrency) {
-                            ForEach(FiatCurrency.supported, id: \.self) { code in Text(code).tag(code) }
+                            ForEach(FiatCurrency.supported, id: \.self) { code in
+                                Text(FiatCurrency.name(code, lang)).tag(code)
+                            }
                         }
                     } label: {
                         SettingsRow(title: t("Currency", "Moneda"), value: walletManager.fiatCurrency, chevron: true)

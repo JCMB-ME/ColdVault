@@ -73,6 +73,10 @@ public final class WalletManager: ObservableObject {
     @Published public var homeShowContacts: Bool {
         didSet { saveHomeOption(homeShowContacts, "homeShowContacts") }
     }
+    /// One Receive/Send pill switched by swiping (on) or two separate buttons (off).
+    @Published public var swipeActionButton: Bool {
+        didSet { UserDefaults.standard.set(swipeActionButton, forKey: "swipeActionButton") }
+    }
     @Published public var fiatCurrency: String {
         didSet {
             UserDefaults.standard.set(fiatCurrency, forKey: "fiatCurrency")
@@ -81,7 +85,9 @@ public final class WalletManager: ObservableObject {
     }
 
     @Published public internal(set) var fiatPrice: Double?
+    /// Full BTC/USD history (hourly recently, daily further back), oldest first.
     @Published public internal(set) var priceHistory: [PricePoint] = []
+    var usdPrice: Double?
     @Published public internal(set) var transactions: [WalletTransaction] = []
     @Published public internal(set) var isLoadingTransactions: Bool = false
     @Published public internal(set) var contacts: [Contact] = []
@@ -116,6 +122,7 @@ public final class WalletManager: ObservableObject {
         self.homeShowFiat = defaults.bool(forKey: "homeShowFiat")
         self.homeShowPriceChart = defaults.bool(forKey: "homeShowPriceChart")
         self.homeShowContacts = defaults.bool(forKey: "homeShowContacts")
+        self.swipeActionButton = defaults.bool(forKey: "swipeActionButton")
         let savedCurrency = defaults.string(forKey: "fiatCurrency") ?? FiatCurrency.deviceDefault
         self.fiatCurrency = FiatCurrency.supported.contains(savedCurrency) ? savedCurrency : "USD"
         loadContacts()
