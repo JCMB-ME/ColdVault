@@ -39,6 +39,13 @@ public struct DashboardView: View {
     // Send to a contact from the home screen.
     @State private var sendRecipient: SendRecipient?
 
+    // Swiping the balance moves to the next / previous account (then wallet).
+    @State private var balanceOffset: CGFloat = 0
+    @State private var balanceFade: Double = 1
+    @State private var isSwitchingAccount = false
+    @State private var showAccountDots = false
+    @State private var dotsToken = 0
+
     /// Height reserved for the balance line, so it can be centered exactly.
     private static let balanceHeight: CGFloat = 80
 
@@ -168,30 +175,170 @@ public struct DashboardView: View {
     }
 
     private var balanceDisplay: some View {
-        Button(action: {
-            toggleDisplayUnit()
-        }) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(walletManager.formattedBalance)
-                    .font(.system(size: 64, weight: .bold, design: .default))
-                    .foregroundColor(colorScheme == .dark ? .white : .black)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.35)
-                    .modifier(RollingDigits())
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(walletManager.formattedBalance)
+                .font(.system(size: 64, weight: .bold, design: .default))
+                .foregroundColor(colorScheme == .dark ? .white : .black)
+                .lineLimit(1)
+                .minimumScaleFactor(0.35)
+                .modifier(RollingDigits())
 
-                // The unit slides up and is replaced from below.
-                Text(walletManager.displayUnit.rawValue)
-                    .font(.system(size: 22, weight: .medium, design: .default))
-                    .foregroundColor(Palette.secondary)
-                    .fixedSize()
-                    .id(walletManager.displayUnit)
-                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
-                                            removal: .move(edge: .top).combined(with: .opacity)))
-            }
-            .padding(.horizontal, 24)
-            .clipped()
+            // The unit slides up and is replaced from below.
+            Text(walletManager.displayUnit.rawValue)
+                .font(.system(size: 22, weight: .medium, design: .default))
+                .foregroundColor(Palette.secondary)
+                .fixedSize()
+                .id(walletManager.displayUnit)
+                .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                        removal: .move(edge: .top).combined(with: .opacity)))
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(.horizontal, 24)
+        .clipped()
+        // Follows the finger while swiping to another account.
+        .offset(x: balanceOffset)
+        .opacity(balanceFade)
+        .blur(radius: (1 - balanceFade) * 10)
+        .scaleEffect(0.92 + 0.08 * balanceFade)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if accountTargets.count < 2 { toggleDisplayUnit() }
+        }
+        // Tap: BTC / sats. Swipe: next / previous account. High priority with
+        // distance 0 so the page scroll is locked the moment the balance is touched.
+        .highPriorityGesture(balanceGesture, including: accountTargets.count > 1 ? .all : .subviews)
+        .overlay(alignment: .top) {
+            accountDots
+                .offset(y: -22)
+                .opacity(showAccountDots ? 1 : 0)
+                .allowsHitTesting(false)
+        }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { toggleDisplayUnit() }
+    }
+
+    // MARK: - Switching accounts by swiping the balance
+
+    private struct AccountTarget: Equatable {
+        let slot: String
+        let account: Int
+    }
+
+    /// Every account of every wallet, in the order of the Wallets page.
+    private var accountTargets: [AccountTarget] {
+        walletManager.library.flatMap { wallet in
+            wallet.bundle.accounts.indices.map { AccountTarget(slot: wallet.slot, account: $0) }
+        }
+    }
+
+    private var currentTarget: AccountTarget? {
+        guard let wallet = walletManager.activeWallet else { return nil }
+        return AccountTarget(slot: wallet.slot, account: wallet.bundle.selected)
+    }
+
+    private var balanceGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { gesture in
+                isPillDragging = true
+                guard !isSwitchingAccount else { return }
+                let dx = gesture.translation.width
+                balanceOffset = dx * 0.55
+                balanceFade = 1 - min(0.55, Double(abs(dx)) / 420)
+                if abs(dx) > 12 { revealAccountDots() }
+            }
+            .onEnded { gesture in
+                isPillDragging = false
+                guard !isSwitchingAccount else { return }
+                let dx = gesture.translation.width
+                let dy = gesture.translation.height
+                if abs(dx) < 10 && abs(dy) < 10 {
+                    resetBalancePosition()
+                    toggleDisplayUnit()
+                } else if abs(dx) > 50, abs(dx) > abs(dy) {
+                    switchAccount(by: dx < 0 ? 1 : -1)
+                } else {
+                    resetBalancePosition()
+                    hideAccountDotsLater()
+                }
+            }
+    }
+
+    private func resetBalancePosition() {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+            balanceOffset = 0
+            balanceFade = 1
+        }
+    }
+
+    /// The balance flies out to one side, the account changes, and the new balance
+    /// comes in from the other side.
+    private func switchAccount(by step: Int) {
+        let targets = accountTargets
+        guard targets.count > 1, let current = currentTarget,
+              let index = targets.firstIndex(of: current) else {
+            resetBalancePosition()
+            return
+        }
+        let next = targets[(index + step + targets.count) % targets.count]
+        isSwitchingAccount = true
+        revealAccountDots()
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        let distance = screenWidth * 0.6
+
+        withAnimation(.easeIn(duration: 0.16)) {
+            balanceOffset = -CGFloat(step) * distance
+            balanceFade = 0
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.17) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                walletManager.selectWallet(slot: next.slot, account: next.account)
+            }
+            var jump = Transaction()
+            jump.disablesAnimations = true
+            withTransaction(jump) { balanceOffset = CGFloat(step) * distance }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
+                    balanceOffset = 0
+                    balanceFade = 1
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    isSwitchingAccount = false
+                }
+                hideAccountDotsLater()
+            }
+        }
+    }
+
+    private func revealAccountDots() {
+        dotsToken += 1
+        guard !showAccountDots else { return }
+        withAnimation(.easeOut(duration: 0.2)) { showAccountDots = true }
+    }
+
+    private func hideAccountDotsLater() {
+        dotsToken += 1
+        let token = dotsToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            guard token == dotsToken else { return }
+            withAnimation(.easeInOut(duration: 0.4)) { showAccountDots = false }
+        }
+    }
+
+    /// Where we are: one group of dots per wallet, one dot per account.
+    private var accountDots: some View {
+        let current = currentTarget
+        return HStack(spacing: 12) {
+            ForEach(walletManager.library) { wallet in
+                HStack(spacing: 5) {
+                    ForEach(wallet.bundle.accounts.indices, id: \.self) { index in
+                        let active = current == AccountTarget(slot: wallet.slot, account: index)
+                        Capsule()
+                            .fill(active ? Color(uiColor: .label) : Color.gray.opacity(0.35))
+                            .frame(width: active ? 16 : 5, height: 4)
+                    }
+                }
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: current)
     }
 
     private var belowBalance: some View {
@@ -302,18 +449,25 @@ public struct DashboardView: View {
     // MARK: - Status badges (top)
 
     private var statusBadges: some View {
-        // Centered, plain: icon + text in the secondary colour, no capsule.
-        HStack(spacing: 16) {
-            if isWatchOnly {
-                badge(icon: "eye", text: L10n.watchOnlyBadge(lang))
-            } else if walletManager.isAirGapped {
-                badge(icon: "snowflake", text: L10n.airGapBadge(lang))
-            }
-            if walletManager.isTestnet {
-                badge(icon: "testtube.2", text: "TESTNET4")
+        // Centered, plain: icon + text in the secondary colour, no capsule. The modes
+        // on the first line, the wallet · account on its own line below.
+        VStack(spacing: 6) {
+            if hasModeBadges {
+                HStack(spacing: 16) {
+                    if isWatchOnly {
+                        badge(icon: "eye", text: L10n.watchOnlyBadge(lang))
+                    } else if walletManager.isAirGapped {
+                        badge(icon: "snowflake", text: L10n.airGapBadge(lang))
+                    }
+                    if walletManager.isTestnet {
+                        badge(icon: "testtube.2", text: "TESTNET4")
+                    }
+                }
             }
             if showsAccountName, let wallet = walletManager.activeWallet, let account = wallet.bundle.current {
-                badge(icon: "wallet.pass", text: "\(wallet.bundle.name) · \(account.name)")
+                badge(icon: nil, text: "\(wallet.bundle.name) · \(account.name)")
+                    .id("\(wallet.slot)-\(wallet.bundle.selected)")
+                    .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity)
@@ -322,8 +476,12 @@ public struct DashboardView: View {
         .allowsHitTesting(false)
     }
 
+    private var hasModeBadges: Bool {
+        isWatchOnly || walletManager.isAirGapped || walletManager.isTestnet
+    }
+
     private var hasBadges: Bool {
-        isWatchOnly || walletManager.isAirGapped || walletManager.isTestnet || showsAccountName
+        hasModeBadges || showsAccountName
     }
 
     /// With several wallets or accounts, which one is on screen.
@@ -331,10 +489,12 @@ public struct DashboardView: View {
         walletManager.library.count > 1 || (walletManager.activeWallet?.bundle.accounts.count ?? 0) > 1
     }
 
-    private func badge(icon: String, text: String) -> some View {
+    private func badge(icon: String?, text: String) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
+            if let icon = icon {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+            }
             Text(text)
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
         }
@@ -452,11 +612,7 @@ struct HomeExtrasView: View {
                         onSendToContact(contact)
                     } label: {
                         VStack(spacing: 6) {
-                            Text(contact.initials)
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundColor(Color(uiColor: .label))
-                                .frame(width: 54, height: 54)
-                                .background(Circle().fill(SettingsStyle.groupFill))
+                            ContactAvatar(contact: contact, size: 54)
                             Text(contact.name)
                                 .font(.system(size: 12))
                                 .foregroundColor(Palette.secondary)

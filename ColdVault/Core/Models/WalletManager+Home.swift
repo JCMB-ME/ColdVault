@@ -17,12 +17,15 @@ public struct Contact: Codable, Identifiable, Equatable {
     public var name: String
     public var address: String
     public var note: String
+    /// Small square JPEG (256 px), nil = initials.
+    public var photo: Data?
 
-    public init(id: UUID = UUID(), name: String, address: String, note: String = "") {
+    public init(id: UUID = UUID(), name: String, address: String, note: String = "", photo: Data? = nil) {
         self.id = id
         self.name = name
         self.address = address
         self.note = note
+        self.photo = photo
     }
 
     public var initials: String {

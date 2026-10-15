@@ -9,6 +9,7 @@
 //
 
 import SwiftUI
+import PhotosUI
 
 public enum SettingsRoute: Hashable, Identifiable {
     case backup
@@ -34,6 +35,8 @@ public struct SettingsView: View {
     @State private var showCustomDecimals: Bool = false
     @State private var customDecimalsText: String = ""
     @State private var editingContact: Contact?
+    /// Bumped on every reveal so the words animate in again.
+    @State private var revealCount = 0
 
     public init(route: Binding<SettingsRoute?>) {
         self._route = route
@@ -45,6 +48,9 @@ public struct SettingsView: View {
     public var body: some View {
         rootPage
             // Backup, Security and Contacts open as native bottom sheets.
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+                revealedSecret = nil
+            }
             .sheet(item: $route, onDismiss: {
                 // Closing Backup always hides the phrase again.
                 revealedSecret = nil
@@ -247,23 +253,103 @@ public struct SettingsView: View {
         walletManager.activeRecord?.type == .mnemonic12 || walletManager.activeRecord?.type == .mnemonic24
     }
 
+    /// The revealed secret split for display: phrase words (or nil for a private key)
+    /// and the BIP-39 passphrase, if any.
+    private var revealedParts: (words: [String]?, text: String, passphrase: String?)? {
+        guard let secret = revealedSecret else { return nil }
+        let pieces = secret.components(separatedBy: "\n\nPassphrase BIP-39: ")
+        let main = pieces[0].trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = main.split(separator: " ").map(String.init)
+        let isPhrase = [12, 15, 18, 21, 24].contains(words.count) && words.allSatisfy { $0.allSatisfy { $0.isLetter } }
+        return (isPhrase ? words : nil, main, pieces.count > 1 ? pieces[1] : nil)
+    }
+
     @ViewBuilder
     private var backupContent: some View {
         SettingsTitle(text: t("Backup", "Respaldo"), topPadding: 0)
 
-        SettingsSection(header: t("Wallet", "Billetera"), footer: nil) {
-            SettingsRow(title: t("Type", "Tipo"), value: walletTypeName)
-            if walletManager.activeRecord?.type != .watchOnly {
-                SettingsDivider()
-                Button(action: revealBackupSecret) {
-                    SettingsRow(title: t("Show recovery phrase", "Ver frase de recuperación")) {
-                        if isRevealing { ProgressView() } else { Chevron() }
+        // The wallet being backed up.
+        VStack(spacing: 10) {
+            WalletAvatar(name: walletManager.activeWallet?.bundle.name ?? "?", size: 64)
+            Text(walletManager.activeWallet?.bundle.name ?? "")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(Color(uiColor: .label))
+            Text(backupSubtitle)
+                .font(.system(size: 13))
+                .foregroundColor(Palette.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 22)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+
+        if let parts = revealedParts {
+            VStack(alignment: .leading, spacing: 16) {
+                Label(t("Never share it. Anyone with these words owns your bitcoin.",
+                        "No la compartas nunca. Quien tenga estas palabras tiene tus bitcoins."),
+                      systemImage: "exclamationmark.shield.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.red)
+
+                if let words = parts.words {
+                    SeedWordsGrid(words: words)
+                        .id(revealCount)
+                } else {
+                    Text(parts.text)
+                        .font(.system(size: 15, design: .monospaced))
+                        .foregroundColor(Color(uiColor: .label))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
+                }
+
+                if let passphrase = parts.passphrase {
+                    SettingsSection(header: t("BIP-39 passphrase", "Passphrase BIP-39"), footer: nil) {
+                        Text(passphrase)
+                            .font(.system(size: 15, design: .monospaced))
+                            .foregroundColor(Color(uiColor: .label))
+                            .padding(.horizontal, 16)
+                            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
                     }
                 }
-                .disabled(isRevealing)
+
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { revealedSecret = nil }
+                } label: {
+                    Label(t("Hide", "Ocultar"), systemImage: "eye.slash")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(Capsule().fill(SettingsStyle.groupFill))
+                }
             }
-            if isMnemonicWallet {
-                SettingsDivider()
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else if walletManager.activeRecord?.type != .watchOnly {
+            VStack(alignment: .leading, spacing: 12) {
+                TipRow(icon: "pencil.line",
+                       text: t("Keep it on paper, in a safe place. It restores your wallet on any device.",
+                               "Guárdala en papel, en un lugar seguro. Recupera tu billetera en cualquier dispositivo."))
+                TipRow(icon: "eye.slash",
+                       text: t("Check that nobody can see your screen before showing it.",
+                               "Asegúrate de que nadie vea tu pantalla antes de mostrarla."))
+            }
+            .padding(.horizontal, 4)
+            .transition(.opacity)
+
+            PrimaryCapsuleButton(title: isMnemonicWallet ? t("Show recovery phrase", "Ver frase de recuperación")
+                                                         : t("Show private key", "Ver clave privada"),
+                                 icon: "eye", isLoading: isRevealing) {
+                revealBackupSecret()
+            }
+            .transition(.opacity)
+        }
+
+        if isMnemonicWallet {
+            SettingsSection(header: t("Watch-only", "Observación"),
+                            footer: t("Public keys only: lets another device see your balance and prepare transactions, never spend.",
+                                      "Solo claves públicas: permite a otro dispositivo ver tu saldo y preparar transacciones, nunca gastar.")) {
                 Button(action: exportDescriptors) {
                     SettingsRow(title: t("Export watch-only (xpub)", "Exportar observación (xpub)")) {
                         if isExporting { ProgressView() } else { Chevron() }
@@ -272,24 +358,15 @@ public struct SettingsView: View {
                 .disabled(isExporting)
             }
         }
+    }
 
-        if let secret = revealedSecret {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(t("Never share it. Anyone with these words owns your bitcoin.",
-                       "No la compartas nunca. Quien tenga estas palabras tiene tus bitcoins."))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.red)
-                Text(secret)
-                    .font(.system(size: 15, design: .monospaced))
-                    .foregroundColor(Color(uiColor: .label))
-                    .fixedSize(horizontal: false, vertical: true)
-                Button(t("Hide", "Ocultar")) { revealedSecret = nil }
-                    .font(.system(size: 15, weight: .semibold))
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
+    private var backupSubtitle: String {
+        var parts = [walletTypeName]
+        if let wallet = walletManager.activeWallet, wallet.bundle.accounts.count > 1 {
+            parts.append(t("\(wallet.bundle.accounts.count) accounts, one phrase",
+                           "\(wallet.bundle.accounts.count) cuentas, una frase"))
         }
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -336,14 +413,22 @@ public struct SettingsView: View {
                 ForEach(Array(walletManager.contacts.enumerated()), id: \.element.id) { index, contact in
                     if index > 0 { SettingsDivider() }
                     Button { editingContact = contact } label: {
-                        SettingsRow(title: contact.name) {
-                            HStack(spacing: 6) {
+                        HStack(spacing: 12) {
+                            ContactAvatar(contact: contact, size: 36)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(contact.name)
+                                    .font(.system(size: 16))
+                                    .foregroundColor(Color(uiColor: .label))
                                 Text(shortAddress(contact.address))
-                                    .font(.system(size: 13, design: .monospaced))
+                                    .font(.system(size: 12, design: .monospaced))
                                     .foregroundColor(Palette.secondary)
-                                Chevron()
                             }
+                            Spacer(minLength: 12)
+                            Chevron()
                         }
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 60)
+                        .contentShape(Rectangle())
                     }
                 }
             }
@@ -421,7 +506,9 @@ public struct SettingsView: View {
         errorMessage = nil
         Task {
             do {
-                revealedSecret = try await walletManager.revealSecret()
+                let secret = try await walletManager.revealSecret()
+                revealCount += 1
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) { revealedSecret = secret }
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -626,6 +713,7 @@ struct ContactEditorView: View {
     @State private var errorMessage: String?
     @State private var showScanner = false
     @State private var showDeleteConfirmation = false
+    @State private var photoItem: PhotosPickerItem?
     private let isNew: Bool
 
     init(contact: Contact) {
@@ -642,6 +730,8 @@ struct ContactEditorView: View {
                 GlassAmbientBackground()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
+                        photoPicker
+
                         SettingsSection(header: t("Name", "Nombre"), footer: nil) {
                             TextField(t("E.g. Mom, Savings", "Ej. Mamá, Ahorros"), text: $contact.name)
                                 .font(.system(size: 16))
@@ -720,6 +810,53 @@ struct ContactEditorView: View {
                     walletManager.deleteContact(contact)
                     presentationMode.wrappedValue.dismiss()
                 }
+            }
+        }
+    }
+
+    /// Photo in a large circle; tap to pick one from the library.
+    private var photoPicker: some View {
+        VStack(spacing: 10) {
+            PhotosPicker(selection: $photoItem, matching: .images) {
+                ZStack(alignment: .bottomTrailing) {
+                    ContactAvatar(contact: contact, size: 104)
+                        .id(contact.photo?.count ?? 0)
+                        .transition(.scale(scale: 0.85).combined(with: .opacity))
+                    Image(systemName: "camera.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .systemBackground))
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(Color(uiColor: .label)))
+                        .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: 3))
+                }
+            }
+            .buttonStyle(.plain)
+
+            if contact.photo != nil {
+                Button {
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) { contact.photo = nil }
+                    photoItem = nil
+                } label: {
+                    Text(t("Remove photo", "Quitar foto"))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Palette.secondary)
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text(t("Add photo", "Añadir foto"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Palette.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 4)
+        .onChange(of: photoItem) { item in
+            guard let item = item else { return }
+            Task {
+                guard let data = try? await item.loadTransferable(type: Data.self),
+                      let photo = ContactPhoto.prepare(data) else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) { contact.photo = photo }
             }
         }
     }

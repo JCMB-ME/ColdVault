@@ -2,10 +2,11 @@
 //  CreateWalletView.swift
 //  ColdVault
 //
-//  Secure generation of BIP-39 mnemonic seed words (12 or 24 words).
-//  Numbered grid display, mandatory backup verification (3 random words),
-//  no clipboard export, automatic regeneration after a screenshot,
-//  bilingual L10n support, and Keychain persistence.
+//  New wallet, in two steps on one native sheet (same look as Receive):
+//   1. the recovery phrase (12 or 24 BIP-39 words), hidden until tapped, then shown
+//      word by word in a numbered grid, with the safety advice;
+//   2. backup check: type 3 random words back, optional name and BIP-39 passphrase.
+//  No clipboard export; a screenshot discards the phrase and generates a new one.
 //
 
 import SwiftUI
@@ -20,247 +21,316 @@ public struct CreateWalletView: View {
     @State private var isCreating: Bool = false
     @State private var errorMessage: String?
     @State private var noticeMessage: String?
+    /// The words stay hidden until tapped (nobody behind you sees them by surprise).
+    @State private var wordsRevealed: Bool = false
 
     // Backup verification: the user must type back 3 randomly chosen words
     @State private var isVerifying: Bool = false
     @State private var verificationIndices: [Int] = []
     @State private var verificationInputs: [String] = []
 
+    @State private var walletName: String = ""
+
     // Optional BIP-39 passphrase, typed twice
     @State private var usePassphrase: Bool = false
     @State private var passphrase: String = ""
     @State private var passphraseConfirm: String = ""
 
-    let columns = [
-        GridItem(.flexible(), spacing: 10),
-        GridItem(.flexible(), spacing: 10),
-        GridItem(.flexible(), spacing: 10)
-    ]
-
     public init() {}
 
-    private var lang: AppLanguage {
-        walletManager.appLanguage
-    }
+    private var lang: AppLanguage { walletManager.appLanguage }
+    private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+
+    private static let stepAnimation = Animation.spring(response: 0.5, dampingFraction: 0.86)
 
     public var body: some View {
-        NavigationStack {
+        ZStack {
+            GlassAmbientBackground()
+
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 24) {
+                    if isVerifying {
+                        verificationStep
+                            .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
+                                                    removal: .move(edge: .trailing).combined(with: .opacity)))
+                    } else {
+                        wordsStep
+                            .transition(.asymmetric(insertion: .move(edge: .leading).combined(with: .opacity),
+                                                    removal: .move(edge: .leading).combined(with: .opacity)))
+                    }
+                }
+                .padding(.top, 76)
+                .padding(.bottom, 32)
+            }
+            .scrollDismissesKeyboard(.interactively)
+        }
+        // Title, step dots and close button, as on the Receive sheet.
+        .overlay(alignment: .top) {
             ZStack {
-                GlassAmbientBackground()
+                VStack(spacing: 8) {
+                    Text(t("New wallet", "Nueva billetera"))
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                    StepDots(count: 2, current: isVerifying ? 1 : 0)
+                }
+                HStack {
+                    Spacer()
+                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
+                        .frame(width: 44, height: 44)
+                }
+                .padding(.trailing, 10)
+            }
+            .padding(.top, 18)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(isCreating)
+        .onAppear {
+            generateWords(count: wordCountSelection)
+        }
+        .onDisappear {
+            clearSensitiveState()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.userDidTakeScreenshotNotification)) { _ in
+            // The phrase may now sit in the photo library / iCloud Photos: never use it.
+            guard !words.isEmpty, !isCreating else { return }
+            withAnimation(CreateWalletView.stepAnimation) {
+                wordsRevealed = false
+                generateWords(count: wordCountSelection)
+            }
+            noticeMessage = t("Screenshot detected. That phrase was discarded and a new one was generated.",
+                              "Se detectó una captura. Esa frase se descartó y se generó una nueva.")
+        }
+    }
 
-                ScrollView {
-                    VStack(spacing: 24) {
+    // MARK: - Step 1: the words
 
-                        // Header
-                        VStack(spacing: 8) {
-                            Text(L10n.createWalletTitle(lang))
-                                .font(.system(size: 26, weight: .bold, design: .rounded))
-                                .foregroundColor(Color(uiColor: .label))
+    private var wordsStep: some View {
+        VStack(spacing: 22) {
+            VStack(spacing: 8) {
+                Text(t("Your recovery phrase", "Tu frase de recuperación"))
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundColor(Color(uiColor: .label))
+                Text(t("These words are your bitcoin. Write them on paper, in order.",
+                       "Estas palabras son tus bitcoins. Escríbelas en papel, en orden."))
+                    .font(.system(size: 14))
+                    .foregroundColor(Palette.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 28)
 
-                            Text(L10n.createWalletSubtitle(lang))
-                                .font(.system(size: 14))
-                                .foregroundColor(Palette.secondary)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 16)
-                        }
-                        .padding(.top, 16)
+            lengthSelector
 
-                        // 12 vs 24 words picker
-                        Picker("Seed Length", selection: $wordCountSelection) {
-                            Text(L10n.standard12(lang)).tag(12)
-                            Text(L10n.coldVault24(lang)).tag(24)
-                        }
-                        .pickerStyle(SegmentedPickerStyle())
-                        .padding(.horizontal, 24)
-                        .disabled(isVerifying)
-                        .onChange(of: wordCountSelection) { newCount in
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
-                            generateWords(count: newCount)
-                        }
+            ZStack {
+                if wordsRevealed && !words.isEmpty {
+                    SeedWordsGrid(words: words)
+                        .id(words)
+                } else {
+                    hiddenGrid
+                }
+            }
+            .padding(.horizontal, 20)
 
-                        if isVerifying {
-                            verificationSection
-                        } else {
-                            seedGrid
-                        }
+            if let notice = noticeMessage {
+                Label(notice, systemImage: "camera.badge.ellipsis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .transition(.opacity)
+            }
 
-                        if let notice = noticeMessage {
-                            Text(notice)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 20)
-                        }
+            VStack(alignment: .leading, spacing: 12) {
+                TipRow(icon: "pencil.line",
+                       text: t("Write them on paper with ink. Never in notes, photos or the cloud.",
+                               "Escríbelas en papel con tinta. Nunca en notas, fotos ni en la nube."))
+                TipRow(icon: "camera.metering.none",
+                       text: t("No screenshots: a screenshot discards this phrase.",
+                               "Sin capturas: una captura descarta esta frase."))
+                TipRow(icon: "person.2.slash",
+                       text: t("Never share them. Whoever has these words has your bitcoin.",
+                               "No las compartas. Quien tenga estas palabras tiene tus bitcoins."))
+            }
+            .padding(.horizontal, 24)
+            .opacity(wordsRevealed ? 1 : 0.6)
 
-                        // Cold Storage Security Warning Card
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "shield.lefthalf.filled.trianglebadge.exclamationmark")
-                                    .symbolRenderingMode(.hierarchical)
-                                    .foregroundColor(Color(red: 0.97, green: 0.58, blue: 0.10))
-                                Text(lang == .english ? "Cold Vault Security Notice" : "Aviso de Seguridad Fría")
-                                    .font(.system(size: 14, weight: .bold))
-                                    .foregroundColor(Color(uiColor: .label))
-                            }
+            errorText
 
-                            Text(lang == .english
-                                 ? "• Write these words on physical paper with indelible ink.\n• NEVER take screenshots or save in cloud notes (a screenshot discards this phrase).\n• For optimal security, keep this device in Airplane Mode."
-                                 : "• Escribe estas palabras en papel con tinta indeleble.\n• NUNCA tomes capturas ni las guardes en notas en la nube (una captura descarta esta frase).\n• Para máxima seguridad, mantén este celular en Modo Avión sin conexión.")
-                                .font(.system(size: 13))
-                                .foregroundColor(Palette.secondary)
-                                .lineSpacing(3)
-                        }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .glassCard(cornerRadius: 16)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16)
-                                .stroke(Color(red: 0.97, green: 0.58, blue: 0.10).opacity(0.3), lineWidth: 1)
-                        )
-                        .padding(.horizontal, 20)
+            PrimaryCapsuleButton(title: t("I've written them down", "Ya las anoté"),
+                                 enabled: wordsRevealed && !words.isEmpty) {
+                startVerification()
+            }
+            .padding(.horizontal, 24)
+        }
+    }
 
-                        if let error = errorMessage {
-                            Text(error)
-                                .font(.system(size: 13))
-                                .foregroundColor(.red)
-                                .padding(.horizontal, 20)
-                        }
+    /// 12 / 24 words, as a capsule segmented control (same as the fee selector in Send).
+    private var lengthSelector: some View {
+        HStack(spacing: 4) {
+            ForEach([12, 24], id: \.self) { count in
+                Button {
+                    guard wordCountSelection != count else { return }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { wordCountSelection = count }
+                    generateWords(count: count)
+                } label: {
+                    Text(t("\(count) words", "\(count) palabras"))
+                        .font(.system(size: 13, weight: wordCountSelection == count ? .semibold : .regular))
+                        .foregroundColor(wordCountSelection == count ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                        .frame(width: 110, height: 34)
+                        .background(Capsule().fill(wordCountSelection == count ? Color(uiColor: .label) : Color.clear))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(Capsule().fill(SettingsStyle.groupFill))
+    }
 
-                        // Continue → verify → save
-                        Button(action: {
-                            let generator = UIImpactFeedbackGenerator(style: .medium)
-                            generator.impactOccurred()
-                            if isVerifying {
-                                verifyAndCommit()
-                            } else {
-                                startVerification()
-                            }
-                        }) {
-                            if isCreating {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            } else {
-                                Text(isVerifying
-                                     ? (lang == .english ? "Verify & Create Wallet" : "Verificar y crear billetera")
-                                     : L10n.savedSeedConfirm(lang))
-                                    .font(.system(size: 17, weight: .semibold))
-                            }
-                        }
-                        .disabled(words.isEmpty || isCreating)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 56)
-                        .modifier(GlassPillModifier(isEmphasized: true))
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 24)
+    /// Placeholder cells with a "tap to show" hint; tap reveals the words one by one.
+    private var hiddenGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+            ForEach(0..<wordCountSelection, id: \.self) { index in
+                SeedWordCell(number: index + 1, word: "", hidden: true)
+            }
+        }
+        .blur(radius: 1.5)
+        .overlay {
+            VStack(spacing: 8) {
+                Image(systemName: "eye")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .systemBackground))
+                    .frame(width: 48, height: 48)
+                    .background(Circle().fill(Color(uiColor: .label)))
+                    .shadow(color: Color.black.opacity(0.15), radius: 8, x: 0, y: 4)
+                Text(t("Tap to show", "Toca para mostrar"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+            }
+            .opacity(words.isEmpty ? 0.4 : 1)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard !words.isEmpty else { return }
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            withAnimation(.easeOut(duration: 0.2)) { wordsRevealed = true }
+        }
+    }
+
+    // MARK: - Step 2: backup check
+
+    private var verificationStep: some View {
+        VStack(spacing: 22) {
+            VStack(spacing: 8) {
+                Text(t("Confirm your backup", "Confirma tu respaldo"))
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundColor(Color(uiColor: .label))
+                Text(t("Type these words from your paper.", "Escribe estas palabras desde tu papel."))
+                    .font(.system(size: 14))
+                    .foregroundColor(Palette.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 28)
+
+            VStack(alignment: .leading, spacing: 22) {
+                SettingsSection(header: t("Words", "Palabras"), footer: nil) {
+                    ForEach(0..<verificationIndices.count, id: \.self) { i in
+                        if i > 0 { SettingsDivider() }
+                        verificationRow(i)
+                    }
+                }
+
+                SettingsSection(header: t("Name", "Nombre"),
+                                footer: t("Optional. An emoji works too.", "Opcional. También puedes usar un emoji.")) {
+                    TextField(walletManager.defaultWalletName(for: wordCountSelection == 24 ? .mnemonic24 : .mnemonic12),
+                              text: $walletName)
+                        .font(.system(size: 16))
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 52)
+                }
+
+                SettingsSection(header: t("Advanced", "Avanzado"),
+                                footer: usePassphrase
+                                    ? t("The passphrase is part of your backup: without it the words open a different, empty wallet. Write it down too.",
+                                        "La passphrase es parte de tu respaldo: sin ella las palabras abren otra billetera vacía. Anótala también.")
+                                    : nil) {
+                    SettingsRow(title: t("BIP-39 passphrase", "Passphrase BIP-39")) {
+                        Toggle("", isOn: $usePassphrase.animation(.spring(response: 0.4, dampingFraction: 0.85)))
+                            .labelsHidden()
+                    }
+                    if usePassphrase {
+                        SettingsDivider()
+                        SecureField(t("Passphrase", "Passphrase"), text: $passphrase)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 52)
+                        SettingsDivider()
+                        SecureField(t("Repeat passphrase", "Repite la passphrase"), text: $passphraseConfirm)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 52)
                     }
                 }
             }
-            .navigationTitle(L10n.createNewWallet(lang))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
+            .padding(.horizontal, 20)
+
+            errorText
+
+            VStack(spacing: 14) {
+                PrimaryCapsuleButton(title: t("Create wallet", "Crear billetera"), isLoading: isCreating,
+                                     enabled: allWordsMatch) {
+                    verifyAndCommit()
                 }
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    errorMessage = nil
+                    withAnimation(CreateWalletView.stepAnimation) { isVerifying = false }
+                } label: {
+                    Text(t("Show the words again", "Ver las palabras de nuevo"))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Palette.secondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(isCreating)
             }
-            .onAppear {
-                generateWords(count: wordCountSelection)
-            }
-            .onDisappear {
-                clearSensitiveState()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIApplication.userDidTakeScreenshotNotification)) { _ in
-                // The phrase may now sit in the photo library / iCloud Photos: never use it.
-                guard !words.isEmpty, !isCreating else { return }
-                generateWords(count: wordCountSelection)
-                noticeMessage = lang == .english
-                    ? "Screenshot detected. That phrase was discarded and a new one was generated."
-                    : "Se detectó una captura. Esa frase se descartó y se generó una nueva."
-            }
+            .padding(.horizontal, 24)
         }
     }
 
-    // MARK: - Seed Grid
-    private var seedGrid: some View {
-        LazyVGrid(columns: columns, spacing: 10) {
-            ForEach(0..<words.count, id: \.self) { idx in
-                HStack(spacing: 6) {
-                    Text("\(idx + 1).")
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundColor(Palette.tertiary)
-
-                    Text(words[idx])
-                        .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                        .foregroundColor(Color(uiColor: .label))
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 10)
-                .glassCard(cornerRadius: 12)
-            }
-        }
-        .padding(.horizontal, 20)
-    }
-
-    // MARK: - Backup Verification
-    private var verificationSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(lang == .english
-                 ? "Confirm your backup: type the requested words from your paper."
-                 : "Confirma tu respaldo: escribe las palabras indicadas desde tu papel.")
-                .font(.system(size: 14))
+    private func verificationRow(_ i: Int) -> some View {
+        let index = i < verificationIndices.count ? verificationIndices[i] : 0
+        let correct = wordMatches(i)
+        return HStack(spacing: 12) {
+            Text("#\(index + 1)")
+                .font(.system(size: 14, weight: .semibold, design: .monospaced))
                 .foregroundColor(Palette.secondary)
-
-            ForEach(0..<verificationIndices.count, id: \.self) { i in
-                HStack(spacing: 10) {
-                    Text(lang == .english ? "Word #\(verificationIndices[i] + 1)" : "Palabra #\(verificationIndices[i] + 1)")
-                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        .foregroundColor(Color(uiColor: .label))
-                        .frame(width: 110, alignment: .leading)
-
-                    TextField("", text: verificationBinding(i))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-                        .font(.system(size: 15, design: .monospaced))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .glassCard(cornerRadius: 10)
-                }
-            }
-
-            Toggle(isOn: $usePassphrase) {
-                Text(lang == .english ? "Add a BIP-39 passphrase (advanced)" : "Añadir passphrase BIP-39 (avanzado)")
-                    .font(.system(size: 13, weight: .semibold))
-            }
-            if usePassphrase {
-                SecureField(lang == .english ? "Passphrase" : "Passphrase", text: $passphrase)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
-                    .padding(10)
-                    .glassCard(cornerRadius: 10)
-                SecureField(lang == .english ? "Repeat passphrase" : "Repite la passphrase", text: $passphraseConfirm)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
-                    .padding(10)
-                    .glassCard(cornerRadius: 10)
-                Text(lang == .english
-                     ? "The passphrase is part of your backup: without it the 12/24 words open a different, empty wallet. Write it down too."
-                     : "La passphrase es parte de tu respaldo: sin ella las palabras abren otra billetera vacía. Anótala también.")
-                    .font(.system(size: 12))
-                    .foregroundColor(.orange)
-            }
-
-            Button(lang == .english ? "Show the words again" : "Ver las palabras de nuevo") {
-                isVerifying = false
-                errorMessage = nil
-            }
-            .font(.system(size: 13, weight: .medium))
+                .frame(width: 40, alignment: .leading)
+            TextField(t("word", "palabra"), text: verificationBinding(i))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
+                .font(.system(size: 16, design: .monospaced))
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 18))
+                .foregroundColor(.green)
+                .opacity(correct ? 1 : 0)
+                .scaleEffect(correct ? 1 : 0.4)
+                .animation(.spring(response: 0.35, dampingFraction: 0.6), value: correct)
         }
-        .padding(16)
-        .glassCard(cornerRadius: 16)
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 16)
+        .frame(minHeight: 52)
+    }
+
+    @ViewBuilder
+    private var errorText: some View {
+        if let error = errorMessage {
+            Text(error)
+                .font(.system(size: 13))
+                .foregroundColor(.red)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+        }
     }
 
     /// Bounds-checked binding: the arrays are cleared on disappear while fields may still render.
@@ -271,7 +341,17 @@ public struct CreateWalletView: View {
         )
     }
 
+    private func wordMatches(_ i: Int) -> Bool {
+        guard i < verificationIndices.count, i < verificationInputs.count, verificationIndices[i] < words.count else { return false }
+        return verificationInputs[i].trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == words[verificationIndices[i]]
+    }
+
+    private var allWordsMatch: Bool {
+        verificationIndices.count == 3 && (0..<3).allSatisfy(wordMatches)
+    }
+
     // MARK: - Actions
+
     private func generateWords(count: Int) {
         errorMessage = nil
         noticeMessage = nil
@@ -309,25 +389,21 @@ public struct CreateWalletView: View {
         verificationInputs = Array(repeating: "", count: verificationIndices.count)
         errorMessage = nil
         noticeMessage = nil
-        isVerifying = true
+        withAnimation(CreateWalletView.stepAnimation) { isVerifying = true }
     }
 
     private func verifyAndCommit() {
-        let allMatch = zip(verificationIndices, verificationInputs).allSatisfy { index, input in
-            index < words.count
-                && input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == words[index]
-        }
-        guard allMatch, verificationIndices.count == 3 else {
-            errorMessage = lang == .english
-                ? "The words don't match. Check your paper backup."
-                : "Las palabras no coinciden. Revisa tu respaldo en papel."
+        guard allWordsMatch else {
+            errorMessage = t("The words don't match. Check your paper backup.",
+                             "Las palabras no coinciden. Revisa tu respaldo en papel.")
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
             return
         }
         if usePassphrase {
             guard !passphrase.isEmpty, passphrase == passphraseConfirm else {
-                errorMessage = lang == .english
-                    ? "The passphrases are empty or don't match."
-                    : "Las passphrases están vacías o no coinciden."
+                errorMessage = t("The passphrases are empty or don't match.",
+                                 "Las passphrases están vacías o no coinciden.")
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }
         }
@@ -337,12 +413,18 @@ public struct CreateWalletView: View {
     private func commitWallet() {
         guard !words.isEmpty else { return }
         isCreating = true
+        errorMessage = nil
         let mnemonicString = words.joined(separator: " ")
         let phrase = usePassphrase ? passphrase : ""
+        let name = walletName.trimmingCharacters(in: .whitespacesAndNewlines)
 
         Task {
             do {
                 try await walletManager.importWallet(input: mnemonicString, passphrase: phrase)
+                if !name.isEmpty {
+                    walletManager.renameWallet(slot: walletManager.activeSlot, to: name)
+                }
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
                 clearSensitiveState()
                 presentationMode.wrappedValue.dismiss()
             } catch {
@@ -358,5 +440,6 @@ public struct CreateWalletView: View {
         verificationIndices = []
         passphrase = ""
         passphraseConfirm = ""
+        wordsRevealed = false
     }
 }
