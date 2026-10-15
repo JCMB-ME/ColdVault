@@ -32,7 +32,7 @@ public struct Contact: Codable, Identifiable, Equatable {
     }
 }
 
-public struct PricePoint: Identifiable, Equatable {
+public struct PricePoint: Identifiable, Equatable, Codable {
     public var id: Date { date }
     public let date: Date
     public let price: Double
@@ -86,7 +86,7 @@ public struct PriceCandle: Identifiable, Equatable {
     public var isUp: Bool { close >= open }
 }
 
-public struct WalletTransaction: Identifiable, Equatable {
+public struct WalletTransaction: Identifiable, Equatable, Codable {
     public var id: String { txid }
     public let txid: String
     /// Net effect on this wallet in sats (positive = received).
@@ -175,6 +175,8 @@ extension WalletManager {
     public func refreshAll() async {
         await refreshBalance()
         await refreshHomeData()
+        await subscribeForPush()
+        saveCache()
     }
 
     public func refreshHomeData(force: Bool = false) async {
@@ -201,10 +203,21 @@ extension WalletManager {
             }
         }
         guard homeShowPriceChart else { return }
-        if !force, let last = lastPriceHistoryFetch, Date().timeIntervalSince(last) < 3_600, !priceHistory.isEmpty { return }
-        if let history = try? await BlockchainService.shared.fetchPriceHistory(currency: "USD", days: nil) {
+        // The full history (~1.5 MB) is downloaded at most every 12 hours and kept on
+        // disk; in between, each refresh only appends the current price.
+        if priceHistory.isEmpty, let cached = WalletManager.loadPriceHistoryCache() {
+            priceHistory = cached.points
+            lastPriceHistoryFetch = cached.fetchedAt
+        }
+        let stale = lastPriceHistoryFetch.map { Date().timeIntervalSince($0) > 12 * 3_600 } ?? true
+        if stale || priceHistory.isEmpty,
+           let history = try? await BlockchainService.shared.fetchPriceHistory(currency: "USD", days: nil) {
             priceHistory = history
             lastPriceHistoryFetch = Date()
+            WalletManager.savePriceHistoryCache(history, fetchedAt: Date())
+        } else if let usd = usdPrice, let last = priceHistory.last, Date().timeIntervalSince(last.date) > 1_800 {
+            priceHistory.append(PricePoint(date: Date(), price: usd))
+            WalletManager.savePriceHistoryCache(priceHistory, fetchedAt: lastPriceHistoryFetch ?? Date())
         }
     }
 
@@ -313,6 +326,17 @@ extension WalletManager {
 
         isLoadingTransactions = true
         defer { isLoadingTransactions = false }
+
+        // Electrum: every history, transaction and block time in a few round trips.
+        if !isTestnet {
+            let scripts = addresses.compactMap { BitcoinAddress.decode($0)?.scriptPubKey }
+            if let list = try? await BlockchainService.shared.electrumWalletTransactions(scripts: scripts, ownScripts: ownScripts) {
+                guard activeRecord?.primaryAddress == record.primaryAddress else { return }
+                transactions = WalletManager.sorted(list)
+                return
+            }
+        }
+
         var byTxid = [String: EsploraTransaction]()
         for address in addresses.suffix(60) {
             guard let txs = try? await BlockchainService.shared.fetchTransactions(address: address, isTestnet: isTestnet) else { continue }
@@ -335,7 +359,11 @@ extension WalletManager {
             let date = tx.status.block_time.map { Date(timeIntervalSince1970: TimeInterval($0)) }
             return WalletTransaction(txid: tx.txid, net: net, date: date, confirmed: tx.status.confirmed)
         }
-        transactions = list.sorted { lhs, rhs in
+        transactions = WalletManager.sorted(list)
+    }
+
+    static func sorted(_ list: [WalletTransaction]) -> [WalletTransaction] {
+        list.sorted { lhs, rhs in
             // Pending first, then newest.
             if lhs.confirmed != rhs.confirmed { return !lhs.confirmed }
             return (lhs.date ?? .distantFuture) > (rhs.date ?? .distantFuture)
@@ -428,5 +456,125 @@ extension WalletManager {
         defaults.set(appLanguage == .spanish, forKey: "widget.spanish")
         defaults.set(appTheme.rawValue, forKey: "widget.theme")
         WidgetCenter.shared.reloadAllTimelines()
+    }
+}
+
+// MARK: - Instant start: last known state on disk
+
+private struct WalletCacheFile: Codable {
+    var balanceSats: UInt64
+    var lastUpdate: Date?
+    var transactions: [WalletTransaction]
+    var fiatPrice: Double?
+    var usdPrice: Double?
+    var fiatCurrency: String?
+}
+
+private struct PriceHistoryFile: Codable {
+    var fetchedAt: Date
+    var points: [PricePoint]
+}
+
+extension WalletManager {
+
+    private static var cacheFolder: URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        let folder = base.appendingPathComponent("cache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    /// One file per wallet and network (named by a hash, not by the address).
+    private var walletCacheURL: URL? {
+        guard let record = activeRecord, let folder = WalletManager.cacheFolder else { return nil }
+        let key = BitcoinHash.sha256(Data("\(record.primaryAddress)|\(record.isTestnet)".utf8)).hexEncodedString
+        return folder.appendingPathComponent("wallet-\(key.prefix(16)).json")
+    }
+
+    /// Shows the last known balance, transactions and price immediately at launch,
+    /// while the network refresh runs in the background.
+    func loadCache() {
+        guard let url = walletCacheURL, let data = try? Data(contentsOf: url),
+              let cache = try? JSONDecoder().decode(WalletCacheFile.self, from: data) else { return }
+        balanceSats = cache.balanceSats
+        lastBalanceUpdate = cache.lastUpdate
+        transactions = cache.transactions
+        usdPrice = cache.usdPrice
+        if cache.fiatCurrency == fiatCurrency { fiatPrice = cache.fiatPrice }
+    }
+
+    func saveCache() {
+        guard let url = walletCacheURL, lastBalanceUpdate != nil else { return }
+        let cache = WalletCacheFile(balanceSats: balanceSats, lastUpdate: lastBalanceUpdate,
+                                    transactions: Array(transactions.prefix(500)),
+                                    fiatPrice: fiatPrice, usdPrice: usdPrice, fiatCurrency: fiatCurrency)
+        if let data = try? JSONEncoder().encode(cache) {
+            try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        }
+    }
+
+    /// Removes every cached balance / history (e.g. when the wallet is deleted).
+    func clearCaches() {
+        guard let folder = WalletManager.cacheFolder,
+              let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return }
+        for file in files where file.lastPathComponent.hasPrefix("wallet-") {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
+    static func loadPriceHistoryCache() -> (points: [PricePoint], fetchedAt: Date)? {
+        guard let url = cacheFolder?.appendingPathComponent("price-history.json"),
+              let data = try? Data(contentsOf: url),
+              let file = try? JSONDecoder().decode(PriceHistoryFile.self, from: data), !file.points.isEmpty else { return nil }
+        return (file.points, file.fetchedAt)
+    }
+
+    static func savePriceHistoryCache(_ points: [PricePoint], fetchedAt: Date) {
+        guard let url = cacheFolder?.appendingPathComponent("price-history.json"),
+              let data = try? JSONEncoder().encode(PriceHistoryFile(fetchedAt: fetchedAt, points: points)) else { return }
+        try? data.write(to: url, options: [.atomic])
+    }
+}
+
+// MARK: - Real-time payments (Electrum subscriptions)
+
+extension WalletManager {
+
+    /// Subscribes to the addresses that can receive or hold coins right now; the
+    /// server then pushes a notification when any of them changes.
+    func subscribeForPush() async {
+        guard let record = activeRecord, !record.isTestnet, !isAirGapped else { return }
+        var scripts = [Data]()
+        if usesAddressRotation {
+            let current = indexes(for: record)
+            for deriver in derivers(for: record) {
+                let state = current[deriver.accountIndex]
+                if let receive = deriver.address(chain: 0, index: state.receiveShown) { scripts.append(receive.scriptPubKey) }
+                if let change = deriver.address(chain: 1, index: state.changeUsed) { scripts.append(change.scriptPubKey) }
+            }
+            scripts += fundedAddresses.map { $0.scriptPubKey }
+        } else {
+            scripts = receiveAddresses.compactMap { BitcoinAddress.decode($0)?.scriptPubKey }
+        }
+        await ElectrumClient.shared.subscribe(scripts.map { ElectrumClient.scriptHash($0) })
+    }
+
+    func startPushUpdates() {
+        Task {
+            await ElectrumClient.shared.setNotificationHandler { [weak self] _ in
+                Task { @MainActor in self?.handlePush() }
+            }
+        }
+    }
+
+    /// A subscribed address changed: refresh once (several pushes are coalesced).
+    func handlePush() {
+        guard !pushRefreshPending else { return }
+        pushRefreshPending = true
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            pushRefreshPending = false
+            await refreshAll()
+        }
     }
 }

@@ -29,14 +29,16 @@ public final class WalletManager: ObservableObject {
 
     // Address rotation: what the last gap-limit scan found (in memory only).
     private var trackedByScript: [Data: TrackedAddress] = [:]
-    private var fundedAddresses: [TrackedAddress] = []
+    var fundedAddresses: [TrackedAddress] = []
 
     // Cold Wallet Settings
     @Published public var isAirGapped: Bool {
         didSet {
             UserDefaults.standard.set(isAirGapped, forKey: "isAirGapped")
             BlockchainService.shared.isNetworkBlocked = isAirGapped
-            if !isAirGapped {
+            if isAirGapped {
+                Task { await ElectrumClient.shared.disconnect() }
+            } else {
                 Task { await refreshAll() }
             }
         }
@@ -97,6 +99,7 @@ public final class WalletManager: ObservableObject {
     /// Full BTC/USD history (hourly recently, daily further back), oldest first.
     @Published public internal(set) var priceHistory: [PricePoint] = []
     var usdPrice: Double?
+    var pushRefreshPending = false
     @Published public internal(set) var transactions: [WalletTransaction] = []
     @Published public internal(set) var isLoadingTransactions: Bool = false
     @Published public internal(set) var contacts: [Contact] = []
@@ -139,6 +142,7 @@ public final class WalletManager: ObservableObject {
         loadContacts()
 
         BlockchainService.shared.isNetworkBlocked = isAirGapped
+        startPushUpdates()
         loadStoredWallet()
     }
 
@@ -279,6 +283,7 @@ public final class WalletManager: ObservableObject {
                 self.activeRecord = nil
                 return
             }
+            loadCache()
             Task {
                 await refreshAll()
             }
@@ -308,6 +313,7 @@ public final class WalletManager: ObservableObject {
         self.trackedByScript = [:]
         self.fundedAddresses = []
         self.transactions = []
+        loadCache()
         Task {
             await refreshAll()
         }
@@ -805,6 +811,8 @@ public final class WalletManager: ObservableObject {
         self.trackedByScript = [:]
         self.fundedAddresses = []
         self.transactions = []
+        clearCaches()
+        Task { await ElectrumClient.shared.disconnect() }
     }
 
     // MARK: - Formatted Balance Display

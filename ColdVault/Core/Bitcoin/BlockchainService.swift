@@ -140,8 +140,137 @@ public final class BlockchainService {
         return address.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    // MARK: - Electrum (mainnet): one pipelined TLS connection, mempool.space as fallback
+
+    private func scriptPubKey(_ address: String, isTestnet: Bool) throws -> Data {
+        guard let decoded = BitcoinAddress.decode(address.trimmingCharacters(in: .whitespacesAndNewlines)),
+              decoded.isTestnet == isTestnet else { throw BlockchainError.invalidAddress }
+        return decoded.scriptPubKey
+    }
+
+    private func electrumActivity(_ address: String) async throws -> AddressActivity {
+        let hash = ElectrumClient.scriptHash(try scriptPubKey(address, isTestnet: false))
+        let results = try await ElectrumClient.shared.batch([
+            ("blockchain.scripthash.get_history", [hash]),
+            ("blockchain.scripthash.get_balance", [hash])
+        ])
+        guard let history = results[0] as? [Any], let balance = results[1] as? [String: Any],
+              let confirmed = (balance["confirmed"] as? NSNumber)?.int64Value,
+              let unconfirmed = (balance["unconfirmed"] as? NSNumber)?.int64Value else {
+            throw ElectrumError.invalidResponse
+        }
+        return AddressActivity(used: !history.isEmpty, balance: confirmed + unconfirmed)
+    }
+
+    private func electrumUTXOs(_ address: String) async throws -> [UTXO] {
+        let hash = ElectrumClient.scriptHash(try scriptPubKey(address, isTestnet: false))
+        guard let list = try await ElectrumClient.shared.request("blockchain.scripthash.listunspent", [hash]) as? [[String: Any]] else {
+            throw ElectrumError.invalidResponse
+        }
+        return try list.map { item in
+            guard let txid = item["tx_hash"] as? String, txid.count == 64, txid.hexDecoded != nil,
+                  let vout = (item["tx_pos"] as? NSNumber)?.uint32Value,
+                  let value = (item["value"] as? NSNumber)?.uint64Value,
+                  let height = (item["height"] as? NSNumber)?.intValue else { throw ElectrumError.invalidResponse }
+            return UTXO(txid: txid, vout: vout, value: value, status: UTXO.Status(confirmed: height > 0))
+        }
+    }
+
+    // Confirmed transactions and block times never change: cache them.
+    private var rawTxCache = [String: Transaction]()
+    private var blockTimeCache = [Int: Date]()
+
+    private func cachedTx(_ txid: String) -> Transaction? {
+        lock.lock(); defer { lock.unlock() }
+        return rawTxCache[txid]
+    }
+
+    private func cache(_ tx: Transaction) {
+        lock.lock(); rawTxCache[tx.txid] = tx; lock.unlock()
+    }
+
+    private func cachedTime(_ height: Int) -> Date? {
+        lock.lock(); defer { lock.unlock() }
+        return blockTimeCache[height]
+    }
+
+    private func cache(time: Date, height: Int) {
+        lock.lock(); blockTimeCache[height] = time; lock.unlock()
+    }
+
+    /// Full history of a set of scripts through Electrum: histories, raw transactions and
+    /// block times, all pipelined. Net amounts come from our outputs minus our spent
+    /// outputs (every funding transaction of ours is in the same history).
+    public func electrumWalletTransactions(scripts: [Data], ownScripts: Set<Data>) async throws -> [WalletTransaction] {
+        let client = ElectrumClient.shared
+        var heights = [String: Int]()
+        for chunk in stride(from: 0, to: scripts.count, by: 100).map({ Array(scripts[$0..<min($0 + 100, scripts.count)]) }) {
+            let histories = try await client.batch(chunk.map { ("blockchain.scripthash.get_history", [ElectrumClient.scriptHash($0)]) })
+            for history in histories {
+                guard let items = history as? [[String: Any]] else { throw ElectrumError.invalidResponse }
+                for item in items {
+                    guard let txid = item["tx_hash"] as? String, txid.count == 64,
+                          let height = (item["height"] as? NSNumber)?.intValue else { continue }
+                    heights[txid.lowercased()] = height
+                }
+            }
+        }
+
+        var transactions = [String: Transaction]()
+        var missing = [String]()
+        for txid in heights.keys {
+            if let tx = cachedTx(txid) { transactions[txid] = tx } else { missing.append(txid) }
+        }
+        for chunk in stride(from: 0, to: missing.count, by: 100).map({ Array(missing[$0..<min($0 + 100, missing.count)]) }) {
+            let raws = try await client.batch(chunk.map { ("blockchain.transaction.get", [$0]) })
+            for (txid, raw) in zip(chunk, raws) {
+                guard let hex = raw as? String, let bytes = hex.hexDecoded,
+                      let tx = try? Transaction.parse(bytes), tx.txid == txid else { throw ElectrumError.invalidResponse }
+                transactions[txid] = tx
+                if (heights[txid] ?? 0) > 0 { cache(tx) }
+            }
+        }
+
+        let confirmedHeights = Set(heights.values.filter { $0 > 0 })
+        var times = [Int: Date]()
+        var unknownHeights = [Int]()
+        for height in confirmedHeights {
+            if let time = cachedTime(height) { times[height] = time } else { unknownHeights.append(height) }
+        }
+        for chunk in stride(from: 0, to: unknownHeights.count, by: 100).map({ Array(unknownHeights[$0..<min($0 + 100, unknownHeights.count)]) }) {
+            let headers = try await client.batch(chunk.map { ("blockchain.block.header", [$0]) })
+            for (height, header) in zip(chunk, headers) {
+                guard let hex = header as? String, let bytes = hex.hexDecoded, bytes.count == 80 else { continue }
+                let b = [UInt8](bytes)
+                let timestamp = UInt32(b[68]) | UInt32(b[69]) << 8 | UInt32(b[70]) << 16 | UInt32(b[71]) << 24
+                let date = Date(timeIntervalSince1970: TimeInterval(timestamp))
+                times[height] = date
+                cache(time: date, height: height)
+            }
+        }
+
+        var ourOutputs = [String: UInt64]()       // "txid:vout" → value
+        for (txid, tx) in transactions {
+            for (index, output) in tx.outputs.enumerated() where ownScripts.contains(output.scriptPubKey) {
+                ourOutputs["\(txid):\(index)"] = output.value
+            }
+        }
+        return transactions.map { txid, tx in
+            var net: Int64 = 0
+            for output in tx.outputs where ownScripts.contains(output.scriptPubKey) {
+                net += Int64(output.value)
+            }
+            for input in tx.inputs {
+                if let value = ourOutputs["\(input.prevTxidHex):\(input.vout)"] { net -= Int64(value) }
+            }
+            let height = heights[txid] ?? 0
+            return WalletTransaction(txid: txid, net: net, date: height > 0 ? times[height] : nil, confirmed: height > 0)
+        }
+    }
+
     // MARK: - Address activity: has it ever been used, and its balance (confirmed + mempool)
     public func fetchAddressActivity(address: String, isTestnet: Bool) async throws -> AddressActivity {
+        if !isTestnet, let activity = try? await electrumActivity(address) { return activity }
         let checked = try checkedAddress(address, isTestnet: isTestnet)
         let data = try await get("/address/\(checked)", isTestnet: isTestnet)
         let decoded = try JSONDecoder().decode(AddressResponse.self, from: data)
@@ -176,6 +305,7 @@ public final class BlockchainService {
 
     // MARK: - UTXOs
     public func fetchUTXOs(address: String, isTestnet: Bool) async throws -> [UTXO] {
+        if !isTestnet, let utxos = try? await electrumUTXOs(address) { return utxos }
         let checked = try checkedAddress(address, isTestnet: isTestnet)
         let data = try await get("/address/\(checked)/utxo", isTestnet: isTestnet)
         let utxos = try JSONDecoder().decode([UTXO].self, from: data)
@@ -188,6 +318,10 @@ public final class BlockchainService {
     // MARK: - Raw previous transaction (needed in PSBTs for legacy inputs)
     public func fetchRawTransaction(txid: String, isTestnet: Bool) async throws -> Transaction {
         guard txid.count == 64, txid.hexDecoded != nil else { throw BlockchainError.invalidResponse }
+        if !isTestnet, let hex = try? await ElectrumClient.shared.request("blockchain.transaction.get", [txid.lowercased()]) as? String,
+           let raw = hex.hexDecoded, let tx = try? Transaction.parse(raw), tx.txid == txid.lowercased() {
+            return tx
+        }
         let data = try await get("/tx/\(txid)/hex", isTestnet: isTestnet)
         guard let hex = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
               let raw = hex.hexDecoded else { throw BlockchainError.invalidResponse }
@@ -266,6 +400,23 @@ public final class BlockchainService {
     @discardableResult
     public func broadcast(_ tx: Transaction, isTestnet: Bool) async throws -> String {
         guard !isNetworkBlocked else { throw BlockchainError.airGapped }
+        if !isTestnet {
+            do {
+                let result = try await ElectrumClient.shared.request("blockchain.transaction.broadcast",
+                                                                     [tx.serialized().hexEncodedString])
+                guard let txid = (result as? String)?.lowercased(), txid == tx.txid else {
+                    throw BlockchainError.txidMismatch(expected: tx.txid, received: "\(result)")
+                }
+                return txid
+            } catch ElectrumError.server(let message) {
+                // The network rejected it (fee too low, already spent…): no point retrying.
+                throw BlockchainError.http(400, message)
+            } catch let error as BlockchainError {
+                throw error
+            } catch {
+                // Server unreachable: fall through to mempool.space.
+            }
+        }
         guard let url = URL(string: "\(baseURL(isTestnet: isTestnet))/tx") else { throw BlockchainError.invalidResponse }
 
         var request = URLRequest(url: url)

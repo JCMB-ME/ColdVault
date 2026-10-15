@@ -143,7 +143,7 @@ public enum AddressScanner {
     public static let changeGap = 10
     /// Addresses looked at past the known frontier in a quick scan.
     public static let quickGap = 3
-    static let batchSize = 10
+    static let batchSize = 20      // pipelined on one Electrum connection
     static let maxIndex = 100_000
 
     /// - full: BIP-44 gap-limit discovery of every account (restores, daily check).
