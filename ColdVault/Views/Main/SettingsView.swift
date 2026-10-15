@@ -10,10 +10,12 @@
 
 import SwiftUI
 
-public enum SettingsRoute: Hashable {
+public enum SettingsRoute: Hashable, Identifiable {
     case backup
     case security
     case contacts
+
+    public var id: Self { self }
 }
 
 public struct SettingsView: View {
@@ -41,33 +43,15 @@ public struct SettingsView: View {
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
     public var body: some View {
-        ZStack {
-            if let current = route {
-                detailPage(current)
-                    .transition(.move(edge: .trailing))
-            } else {
-                rootPage
-                    .transition(.move(edge: .leading))
+        rootPage
+            // Backup, Security and Contacts open as native bottom sheets.
+            .sheet(item: $route, onDismiss: {
+                // Closing Backup always hides the phrase again.
+                revealedSecret = nil
+                errorMessage = nil
+            }) { page in
+                detailPage(page)
             }
-        }
-        .animation(.easeInOut(duration: 0.28), value: route)
-        .onChange(of: route) { newValue in
-            // Leaving Backup always hides the phrase again.
-            if newValue != .backup { revealedSecret = nil }
-            errorMessage = nil
-        }
-        .sheet(isPresented: $showDescriptors, onDismiss: { descriptors = [] }) {
-            DescriptorExportView(descriptors: descriptors, lang: lang)
-        }
-        .alert(L10n.deleteWalletConfirmTitle(lang), isPresented: $showDeleteConfirmation) {
-            Button(L10n.cancel(lang), role: .cancel) {}
-            Button(L10n.deletePermanently(lang), role: .destructive) {
-                route = nil
-                walletManager.deleteWallet()
-            }
-        } message: {
-            Text(L10n.deleteWalletConfirmDesc(lang))
-        }
     }
 
     // MARK: - Root
@@ -215,31 +199,48 @@ public struct SettingsView: View {
 
     // MARK: - Detail pages
 
-    @ViewBuilder
     private func detailPage(_ page: SettingsRoute) -> some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 26) {
-                Button { route = nil } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold))
-                        Text(t("Settings", "Ajustes")).font(.system(size: 16))
+        NavigationStack {
+            ZStack {
+                GlassAmbientBackground()
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 26) {
+                        switch page {
+                        case .backup: backupContent
+                        case .security: securityContent
+                        case .contacts: contactsContent
+                        }
+
+                        errorText
                     }
-                    .foregroundColor(Palette.secondary)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 40)
+                    .buttonStyle(.plain)
                 }
-                .padding(.top, 8)
-
-                switch page {
-                case .backup: backupContent
-                case .security: securityContent
-                case .contacts: contactsContent
-                }
-
-                errorText
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 40)
-            .buttonStyle(.plain)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    SheetCloseButton { route = nil }
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            // Presented from inside this sheet (a sheet can't present from behind itself).
+            .sheet(isPresented: $showDescriptors, onDismiss: { descriptors = [] }) {
+                DescriptorExportView(descriptors: descriptors, lang: lang)
+            }
+            .alert(L10n.deleteWalletConfirmTitle(lang), isPresented: $showDeleteConfirmation) {
+                Button(L10n.cancel(lang), role: .cancel) {}
+                Button(L10n.deletePermanently(lang), role: .destructive) {
+                    route = nil
+                    walletManager.deleteWallet()
+                }
+            } message: {
+                Text(L10n.deleteWalletConfirmDesc(lang))
+            }
         }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
     }
 
     private var isMnemonicWallet: Bool {

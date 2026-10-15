@@ -158,13 +158,19 @@ public struct DashboardView: View {
                     .foregroundColor(colorScheme == .dark ? .white : .black)
                     .lineLimit(1)
                     .minimumScaleFactor(0.35)
+                    .modifier(RollingDigits())
 
+                // The unit slides up and is replaced from below.
                 Text(walletManager.displayUnit.rawValue)
                     .font(.system(size: 22, weight: .medium, design: .default))
                     .foregroundColor(Palette.secondary)
                     .fixedSize()
+                    .id(walletManager.displayUnit)
+                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                            removal: .move(edge: .top).combined(with: .opacity)))
             }
             .padding(.horizontal, 24)
+            .clipped()
         }
         .buttonStyle(PlainButtonStyle())
     }
@@ -328,7 +334,22 @@ public struct DashboardView: View {
     private func toggleDisplayUnit() {
         let generator = UIImpactFeedbackGenerator(style: .light)
         generator.impactOccurred()
-        walletManager.displayUnit = (walletManager.displayUnit == .sats) ? .btc : .sats
+        // Digits roll to the new value (iOS 17+) and the unit swaps with a spring.
+        withAnimation(.spring(response: 0.55, dampingFraction: 0.78)) {
+            walletManager.displayUnit = (walletManager.displayUnit == .sats) ? .btc : .sats
+        }
+    }
+}
+
+/// Rolling-digit transition for the balance (numeric content transition on iOS 17+,
+/// a cross-fade before).
+struct RollingDigits: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 17.0, *) {
+            content.contentTransition(.numericText())
+        } else {
+            content.transition(.opacity)
+        }
     }
 }
 

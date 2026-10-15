@@ -20,9 +20,13 @@ public struct ReceiveView: View {
     @State private var copied: Bool = false
     @State private var isEnablingRotation: Bool = false
     @State private var rotationError: String?
-    @State private var detent: PresentationDetent = .medium
+    /// The QR leaves the center and rises to the top before the details appear.
+    @State private var qrRaised: Bool = false
     /// 0 = only the QR; 1…4 = details appearing one after another.
     @State private var revealStep: Int = 0
+
+    private static let qrSize: CGFloat = 230
+    private static let qrBlock: CGFloat = qrSize + 36          // QR plus its white frame
 
     public init() {}
 
@@ -47,6 +51,7 @@ public struct ReceiveView: View {
                 .contentShape(Rectangle())
                 .onTapGesture(perform: reveal)
 
+            GeometryReader { geo in
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 22) {
                     if revealStep >= 1, addresses.count > 1 {
@@ -61,7 +66,7 @@ public struct ReceiveView: View {
                     }
 
                     // The QR, redrawn (and re-animated) whenever the address changes.
-                    PixelRevealQRCode(text: currentAddress, size: 230)
+                    PixelRevealQRCode(text: currentAddress, size: ReceiveView.qrSize)
                         .id(currentAddress)
                         .onTapGesture(perform: reveal)
 
@@ -116,10 +121,12 @@ public struct ReceiveView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.top, revealStep == 0 ? 40 : 28)
+                // Centered in the sheet at first; at the top once raised.
+                .padding(.top, qrRaised ? 28 : max(28, (geo.size.height - ReceiveView.qrBlock) / 2))
                 .padding(.bottom, 24)
             }
             .scrollDisabled(revealStep == 0)
+            }
 
             if revealStep == 0 {
                 VStack {
@@ -133,17 +140,18 @@ public struct ReceiveView: View {
                 .transition(.opacity)
             }
         }
-        .presentationDetents([.medium, .large], selection: $detent)
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
 
-    /// Shows the details one after another, and opens the sheet to full height.
+    /// Raises the QR, then shows the details one after another.
     private func reveal() {
-        guard revealStep == 0 else { return }
+        guard revealStep == 0, !qrRaised else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { detent = .large }
+        // 1) the QR glides up; 2) once it is there, the details come in one by one.
+        withAnimation(.spring(response: 0.6, dampingFraction: 0.86)) { qrRaised = true }
         for step in 1...4 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08 * Double(step)) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.42 + 0.09 * Double(step)) {
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) { revealStep = step }
             }
         }

@@ -12,7 +12,23 @@ import WidgetKit
 import SwiftUI
 
 private enum Shared {
-    static let suite = "group.com.coldvault.wallet"
+    static let defaultSuite = "group.com.coldvault.wallet"
+
+    /// Same lookup as the app's AppGroup: the group in this extension's provisioning
+    /// profile (re-signing tools may rename it), else the default.
+    static let suite: String = {
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url),
+              let start = data.range(of: Data("<?xml".utf8)),
+              let end = data.range(of: Data("</plist>".utf8), in: start.lowerBound..<data.endIndex),
+              let plist = try? PropertyListSerialization.propertyList(from: data[start.lowerBound..<end.upperBound],
+                                                                      format: nil) as? [String: Any],
+              let entitlements = plist["Entitlements"] as? [String: Any],
+              let groups = entitlements["com.apple.security.application-groups"] as? [String] else {
+            return defaultSuite
+        }
+        return groups.first { $0.hasPrefix(defaultSuite) } ?? groups.first ?? defaultSuite
+    }()
 }
 
 struct BalanceEntry: TimelineEntry {

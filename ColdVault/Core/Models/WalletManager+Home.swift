@@ -127,23 +127,30 @@ extension WalletManager {
     /// Balance (or any amount) in the current unit with the chosen number of decimals.
     /// `nil` decimals = automatic (sats as integers, BTC without trailing zeros).
     public func format(sats: UInt64) -> String {
+        // Thousands and decimal separators of the iPhone's region, like the fiat value
+        // (e.g. 79,957.5 BTC in the US, 79.957,5 BTC in Spain).
+        let locale = Locale.current
+        let decimalSeparator = locale.decimalSeparator ?? "."
+        let grouping = NumberFormatter()
+        grouping.numberStyle = .decimal
+        grouping.locale = locale
+        grouping.maximumFractionDigits = 0
+        func grouped(_ value: UInt64) -> String {
+            grouping.string(from: NSNumber(value: value)) ?? "\(value)"
+        }
+
         switch displayUnit {
         case .sats:
-            let formatter = NumberFormatter()
-            formatter.numberStyle = .decimal
-            formatter.groupingSeparator = "."
-            formatter.usesGroupingSeparator = true
-            let whole = formatter.string(from: NSNumber(value: sats)) ?? "\(sats)"
+            let whole = grouped(sats)
             guard let decimals = displayDecimals, decimals > 0 else { return whole }
-            return whole + "," + String(repeating: "0", count: decimals)
+            return whole + decimalSeparator + String(repeating: "0", count: decimals)
         case .btc:
-            let exact = WalletManager.formatBTC(sats)                 // "W.FFFFFFFF"
-            let parts = exact.split(separator: ".")
-            let whole = String(parts[0])
-            var fraction = parts.count > 1 ? String(parts[1]) : ""
+            let whole = grouped(sats / 100_000_000)
+            let exact = String(sats % 100_000_000)
+            var fraction = String(repeating: "0", count: 8 - exact.count) + exact
             guard let decimals = displayDecimals else {
                 while fraction.hasSuffix("0") { fraction.removeLast() }
-                return fraction.isEmpty ? whole : "\(whole).\(fraction)"
+                return fraction.isEmpty ? whole : whole + decimalSeparator + fraction
             }
             if decimals == 0 { return whole }
             // Truncate (never show more than the wallet holds); pad past 8 decimals.
@@ -152,7 +159,7 @@ extension WalletManager {
             } else {
                 fraction += String(repeating: "0", count: decimals - fraction.count)
             }
-            return "\(whole).\(fraction)"
+            return whole + decimalSeparator + fraction
         }
     }
 
@@ -432,7 +439,7 @@ extension WalletManager {
 // MARK: - Home-screen widget
 
 extension WalletManager {
-    static let widgetSuite = "group.com.coldvault.wallet"
+    static var widgetSuite: String { AppGroup.identifier }
 
     /// Coalesces several property changes into one widget refresh.
     func scheduleWidgetUpdate() {
