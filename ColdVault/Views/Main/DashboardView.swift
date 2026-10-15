@@ -292,7 +292,7 @@ public struct DashboardView: View {
             withAnimation(.easeInOut(duration: 0.3)) {
                 walletManager.selectWallet(slot: next.slot, account: next.account)
             }
-            var jump = Transaction()
+            var jump = SwiftUI.Transaction()
             jump.disablesAnimations = true
             withTransaction(jump) { balanceOffset = CGFloat(step) * distance }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
