@@ -5,7 +5,8 @@
 //  Camera QR code scanner. Delivers exactly one result per presentation and
 //  explains what to do when camera access is denied or unavailable.
 //  Animated multi-part UR codes (`ur:crypto-psbt/1-12/...`) are assembled frame by
-//  frame with a progress indicator and delivered as one Base64 PSBT.
+//  frame with a progress indicator. By default the result is delivered as a Base64
+//  PSBT; callers can convert other UR types (e.g. wallet exports) themselves.
 //
 
 import SwiftUI
@@ -13,9 +14,13 @@ import AVFoundation
 
 public struct QRScannerView: UIViewControllerRepresentable {
     public let didFindCode: (String) -> Void
+    /// Turns a completed UR into the text delivered to `didFindCode`.
+    public let decodeUR: (UniformResource) throws -> String
     @Environment(\.presentationMode) var presentationMode
 
-    public init(didFindCode: @escaping (String) -> Void) {
+    public init(decodeUR: @escaping (UniformResource) throws -> String = { try URPSBT.psbtData(from: $0).base64EncodedString() },
+                didFindCode: @escaping (String) -> Void) {
+        self.decodeUR = decodeUR
         self.didFindCode = didFindCode
     }
 
@@ -56,7 +61,7 @@ public struct QRScannerView: UIViewControllerRepresentable {
             switch decoder.result {
             case .success(let resource):
                 do {
-                    finish(with: try URPSBT.psbtData(from: resource).base64EncodedString())
+                    finish(with: try parent.decodeUR(resource))
                 } catch {
                     controller?.showProgress(error.localizedDescription)
                     decoder = URDecoder()

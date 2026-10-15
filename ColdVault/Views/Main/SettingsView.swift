@@ -17,6 +17,7 @@ public struct SettingsView: View {
     @State private var showDeleteConfirmation: Bool = false
     @State private var errorMessage: String?
     @State private var isSwitchingNetwork: Bool = false
+    @State private var isRescanning: Bool = false
     @State private var isExporting: Bool = false
     @State private var descriptors: [WalletKeyring.AccountDescriptor] = []
     @State private var showDescriptors: Bool = false
@@ -152,6 +153,28 @@ public struct SettingsView: View {
                         }
                         .disabled(walletManager.isWatchOnly || isSwitchingNetwork)
                         .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
+
+                        if walletManager.usesAddressRotation {
+                            Button(action: rescanAddresses) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Label(lang == .english ? "Rescan all addresses" : "Volver a escanear direcciones",
+                                              systemImage: "arrow.clockwise.circle")
+                                            .symbolRenderingMode(.hierarchical)
+                                            .foregroundColor(Color(uiColor: .label))
+                                        Text(lang == .english
+                                             ? "Full gap-limit search (done automatically once a day). Use it after using this seed in another wallet."
+                                             : "Búsqueda completa con gap limit (se hace sola una vez al día). Úsala si usaste esta semilla en otra billetera.")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(Color(uiColor: .secondaryLabel))
+                                    }
+                                    Spacer()
+                                    if isRescanning { ProgressView() }
+                                }
+                            }
+                            .disabled(isRescanning || walletManager.isAirGapped)
+                            .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.75))
+                        }
                     }
                     
                     // Section 3: Preferences (Language, Appearance, Units)
@@ -240,6 +263,19 @@ public struct SettingsView: View {
         }
     }
     
+    private func rescanAddresses() {
+        isRescanning = true
+        errorMessage = nil
+        Task {
+            do {
+                try await walletManager.rescanAddresses()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isRescanning = false
+        }
+    }
+
     private func revealBackupSecret() {
         isRevealing = true
         errorMessage = nil
@@ -305,7 +341,7 @@ private struct DescriptorExportView: View {
                             Text(descriptors[index].label).tag(index)
                         }
                     }
-                    .pickerStyle(SegmentedPickerStyle())
+                    .pickerStyle(.menu)
 
                     if let item = current {
                         QRCodeView(string: item.descriptor, size: 240)

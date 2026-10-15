@@ -153,9 +153,15 @@ public enum Secp256k1 {
         return Data(output)
     }
 
-    /// BIP-86 / BIP-341 key-path-only output key: Q = lift_x(P) + H_TapTweak(P)·G.
-    /// Accepts a 33-byte compressed key or a 32-byte x-only key and returns x(Q).
-    public static func taprootOutputKey(internalKey: Data) -> Data? {
+    /// BIP-341 output key: Q = lift_x(P) + H_TapTweak(P || merkleRoot)·G (no merkle root
+    /// for BIP-86 key-path-only outputs). Accepts a 33-byte compressed or 32-byte x-only
+    /// key and returns x(Q).
+    public static func taprootOutputKey(internalKey: Data, merkleRoot: Data? = nil) -> Data? {
+        return taprootOutputKeyWithParity(internalKey: internalKey, merkleRoot: merkleRoot)?.key
+    }
+
+    /// x(Q) and the parity of Q's Y coordinate (needed to check control blocks).
+    public static func taprootOutputKeyWithParity(internalKey: Data, merkleRoot: Data? = nil) -> (key: Data, parity: UInt8)? {
         let bytes = [UInt8](internalKey)
         let xOnly: Data
         if bytes.count == 33, bytes[0] == 0x02 || bytes[0] == 0x03 {
@@ -165,19 +171,21 @@ public enum Secp256k1 {
         } else {
             return nil
         }
-        guard var internalPoint = xOnlyPublicKey(xOnly) else { return nil }
-        let tweak = [UInt8](taggedHash("TapTweak", xOnly))
+        guard merkleRoot == nil || merkleRoot?.count == 32,
+              var internalPoint = xOnlyPublicKey(xOnly) else { return nil }
+        let tweak = [UInt8](taggedHash("TapTweak", xOnly + (merkleRoot ?? Data())))
         var output = secp256k1_pubkey()
         guard secp256k1_xonly_pubkey_tweak_add(context, &output, &internalPoint, tweak) == 1 else { return nil }
         var outputX = secp256k1_xonly_pubkey()
         var parity: Int32 = 0
-        guard secp256k1_xonly_pubkey_from_pubkey(context, &outputX, &parity, &output) == 1 else { return nil }
-        return serialize(&outputX)
+        guard secp256k1_xonly_pubkey_from_pubkey(context, &outputX, &parity, &output) == 1,
+              let key = serialize(&outputX) else { return nil }
+        return (key, UInt8(parity))
     }
 
-    /// BIP-341 tweaked private key for a BIP-86 (no script tree) key-path spend:
-    /// d' = d if P has even Y else n - d;  result = d' + H_TapTweak(x(P)) mod n.
-    public static func taprootTweakedPrivateKey(_ privateKey: Data) -> Data? {
+    /// BIP-341 tweaked private key for a key-path spend:
+    /// d' = d if P has even Y else n - d;  result = d' + H_TapTweak(x(P) || merkleRoot) mod n.
+    public static func taprootTweakedPrivateKey(_ privateKey: Data, merkleRoot: Data? = nil) -> Data? {
         var key = [UInt8](privateKey)
         defer { wipe(&key) }
         guard key.count == 32 else { return nil }
@@ -188,7 +196,8 @@ public enum Secp256k1 {
         var internalKey = secp256k1_xonly_pubkey()
         guard secp256k1_keypair_xonly_pub(context, &internalKey, nil, &keypair) == 1,
               let internalX = serialize(&internalKey) else { return nil }
-        let tweak = [UInt8](taggedHash("TapTweak", internalX))
+        guard merkleRoot == nil || merkleRoot?.count == 32 else { return nil }
+        let tweak = [UInt8](taggedHash("TapTweak", internalX + (merkleRoot ?? Data())))
         guard secp256k1_keypair_xonly_tweak_add(context, &keypair, tweak) == 1 else { return nil }
 
         var tweaked = [UInt8](repeating: 0, count: 32)

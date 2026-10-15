@@ -63,7 +63,7 @@ public enum Bech32 {
     }
     
     public static func encode(hrp: String, values: [UInt8], type: EncodingType = .bech32) -> String {
-        var combined = hrpExpand(hrp) + values + [0, 0, 0, 0, 0, 0]
+        let combined = hrpExpand(hrp) + values + [0, 0, 0, 0, 0, 0]
         let pm = polymod(combined) ^ type.checksumConstant
         var checksum = [UInt8]()
         for i in 0..<6 {

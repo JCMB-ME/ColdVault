@@ -255,6 +255,16 @@ public struct WalletKeyring {
             guard let descriptor = DescriptorChecksum.append(to: body) else { continue }
             result.append(AccountDescriptor(label: label, descriptor: descriptor, xpub: xpub, derivationPath: "m/\(path)"))
         }
+        // BIP-48 cosigner keys for multisig wallets built in a coordinator (Sparrow,
+        // Nunchuk, Specter…): the key expression "[fingerprint/path]xpub" they import.
+        for (scriptIndex, label) in [(UInt32(2), "Multisig P2WSH (BIP-48)"), (UInt32(1), "Multisig P2SH-P2WSH (BIP-48)")] {
+            guard let ext = BIP32.derive(master: master, indices: [48 | WalletKeyring.hardened, coin | WalletKeyring.hardened,
+                                                                   WalletKeyring.hardened, scriptIndex | WalletKeyring.hardened]) else { continue }
+            let xpub = BIP32.serializePublic(ext, version: version)
+            let path = "48h/\(coin)h/0h/\(scriptIndex)h"
+            result.append(AccountDescriptor(label: label, descriptor: "[\(fingerprint.hexEncodedString)/\(path)]\(xpub)",
+                                            xpub: xpub, derivationPath: "m/\(path)"))
+        }
         return result
     }
 }

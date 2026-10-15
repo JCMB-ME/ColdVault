@@ -93,9 +93,11 @@ final class RotationAndURTests: XCTestCase {
             return AddressActivity(used: false, balance: 0)
         }
         XCTAssertEqual(result.balance, 6_700)
-        XCTAssertEqual(result.indexes[0], AddressIndexes(receiveUsed: 21, receiveShown: 21, changeUsed: 1))
-        XCTAssertEqual(result.indexes[1], AddressIndexes(receiveUsed: 3, receiveShown: 3, changeUsed: 0))
-        XCTAssertEqual(result.indexes[2], AddressIndexes())
+        XCTAssertEqual(result.indexes[0], AddressIndexes(receiveUsed: 21, receiveShown: 21, changeUsed: 1,
+                                                         receiveFunded: [20], changeFunded: [0]))
+        XCTAssertEqual(result.indexes[1], AddressIndexes(receiveUsed: 3, receiveShown: 3, changeUsed: 0,
+                                                         receiveFunded: [2], changeFunded: []))
+        XCTAssertEqual(result.indexes[2], AddressIndexes(receiveFunded: [], changeFunded: []))
         XCTAssertEqual(Set(result.funded.map { $0.address }), Set(used.filter { $0.value > 0 }.map { $0.key }))
         // Receive scanned to 21 + 20, change to 1 + 10, for the first account.
         XCTAssertEqual(result.tracked.filter { $0.account == 0 && $0.chain == 0 }.count, 41)
@@ -106,6 +108,31 @@ final class RotationAndURTests: XCTestCase {
             AddressActivity(used: used[address] != nil, balance: used[address] ?? 0)
         }
         XCTAssertEqual(again.indexes[0].receiveShown, 30)
+
+        // Quick scan: only funded addresses plus a few past the frontier.
+        let counter = RequestCounter()
+        let quick = try await AddressScanner.scan(derivers: d, previous: result.indexes, full: false) { address in
+            counter.increment()
+            return AddressActivity(used: used[address] != nil, balance: used[address] ?? 0)
+        }
+        XCTAssertEqual(quick.balance, 6_700)
+        XCTAssertEqual(quick.indexes.map { $0.receiveUsed }, result.indexes.map { $0.receiveUsed })
+        XCTAssertEqual(quick.indexes.map { $0.changeUsed }, result.indexes.map { $0.changeUsed })
+        // account 0: receive 20 (funded, below frontier) + 21..23, change 0 + 1..3 = 8;
+        // account 1: receive 2 + 3..5, change 0..2 = 7; account 2: 0..2 twice = 6 → 21.
+        XCTAssertEqual(counter.value, 21)
+        XCTAssertLessThan(counter.value, result.tracked.count / 3)
+
+        // A payment to the next fresh address is found by the quick scan too.
+        var paid = used
+        paid[segwit.address(chain: 0, index: 21)!.address] = 2_000
+        let paidSnapshot = paid
+        let afterPayment = try await AddressScanner.scan(derivers: d, previous: result.indexes, full: false) { address in
+            AddressActivity(used: paidSnapshot[address] != nil, balance: paidSnapshot[address] ?? 0)
+        }
+        XCTAssertEqual(afterPayment.balance, 8_700)
+        XCTAssertEqual(afterPayment.indexes[0].receiveUsed, 22)
+        XCTAssertEqual(afterPayment.indexes[0].receiveShown, 22)
     }
 
     // MARK: - Descriptor import (watch-only)
@@ -265,4 +292,12 @@ final class RotationAndURTests: XCTestCase {
         XCTAssertEqual(try URPSBT.psbtData(from: resource), psbt)
         XCTAssertThrowsError(try URPSBT.psbtData(from: UniformResource(type: "crypto-account", cbor: CBOR.bytes([1]))))
     }
+}
+
+/// Thread-safe counter for the @Sendable fetch closure.
+final class RequestCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func increment() { lock.lock(); count += 1; lock.unlock() }
+    var value: Int { lock.lock(); defer { lock.unlock() }; return count }
 }

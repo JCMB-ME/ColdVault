@@ -252,7 +252,10 @@ final class TransactionTests: XCTestCase {
         guard let derived = keyring.key(origin: origin, type: .p2wpkh) else { return XCTFail("derive failed") }
         XCTAssertEqual(BitcoinAddress.address(for: derived.scriptPubKey, isTestnet: false),
                        "bc1qnjg0jd8228aq7egyzacy8cys3knf9xvrerkf9g") // BIP-84 vector, second receive address
-        XCTAssertNil(keyring.key(forScript: derived.scriptPubKey))
+        // Not one of the three default keys; since address rotation the keyring also finds
+        // it by searching the account's chains, so the path is not the only way in.
+        XCTAssertFalse(keyring.keys.contains { $0.scriptPubKey == derived.scriptPubKey })
+        XCTAssertEqual(keyring.key(forScript: derived.scriptPubKey)?.publicKey, derived.publicKey)
 
         var tx = Transaction()
         tx.inputs = [TxInput(prevTxid: Data(repeating: 0x11, count: 32), vout: 0)]
@@ -436,7 +439,7 @@ final class TransactionTests: XCTestCase {
 
         let keyring = try WalletKeyring.fromMnemonic(TransactionTests.abandonMnemonic, isTestnet: false)
         XCTAssertEqual(keyring.fingerprint?.hexEncodedString, "73c5da0a")
-        let descriptors = keyring.accountDescriptors().map { $0.descriptor }
+        let descriptors = keyring.accountDescriptors().prefix(3).map { $0.descriptor }
         XCTAssertEqual(descriptors, [
             "wpkh([73c5da0a/84h/0h/0h]xpub6CatWdiZiodmUeTDp8LT5or8nmbKNcuyvz7WyksVFkKB4RHwCD3XyuvPEbvqAQY3rAPshWcMLoP2fMFMKHPJ4ZeZXYVUhLv1VMrjPC7PW6V/0/*)#afwvtk2s",
             "tr([73c5da0a/86h/0h/0h]xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWcLteoGVky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ/0/*)#se42yddx",

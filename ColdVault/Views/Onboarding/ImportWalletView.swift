@@ -231,7 +231,9 @@ public struct ImportWalletView: View {
                 }
             }
             .sheet(isPresented: $showScanner) {
-                QRScannerView { scannedCode in
+                // Animated wallet exports (ur:crypto-account / crypto-output / crypto-hdkey)
+                // become descriptor text; anything else is shown as scanned.
+                QRScannerView(decodeUR: { try URAccountImport.descriptorText(from: $0) }) { scannedCode in
                     self.inputText = scannedCode.trimmingCharacters(in: .whitespacesAndNewlines)
                     self.pastedFromClipboard = false
                 }

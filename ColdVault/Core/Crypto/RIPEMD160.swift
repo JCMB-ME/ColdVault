@@ -155,7 +155,7 @@ public enum RIPEMD160 {
         }
         
         var result = Data(capacity: 20)
-        var words = [h0.littleEndian, h1.littleEndian, h2.littleEndian, h3.littleEndian, h4.littleEndian]
+        let words = [h0.littleEndian, h1.littleEndian, h2.littleEndian, h3.littleEndian, h4.littleEndian]
         for var w in words {
             withUnsafeBytes(of: &w) { result.append(contentsOf: $0) }
         }

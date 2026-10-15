@@ -124,6 +124,7 @@ flowchart TD
 
 #### `AddressBook.swift` (Core/Bitcoin)
 - **Rotación de direcciones:** las billeteras HD guardan en los metadatos la xpub de cada cuenta (BIP-84, BIP-86, BIP-44), así que las direcciones nuevas se derivan sin Face ID ni secreto (CKDpub).
+- **Consultas a la red:** el escaneo completo (gap limit) se hace al crear/importar y luego una vez al día o con "Volver a escanear direcciones"; entre medias un escaneo rápido solo consulta las direcciones con fondos y unas pocas tras la primera libre (~18 consultas en una billetera nueva en lugar de ~90).
 - **Escaneo con gap limit (BIP-44):** recorre recibir (`/0/i`, hueco 20) y cambio (`/1/i`, hueco 10) de cada cuenta, suma el saldo de todas las direcciones usadas y guarda el primer índice libre. Recibir muestra siempre una dirección sin usar (con botón "Nueva dirección" sin pasar del gap limit) y el cambio va a una dirección de cambio nueva del mismo tipo que el destino (SegWit o Taproot).
 - **Billeteras de observación HD:** importación de descriptores `wpkh(...)`, `tr(...)`, `pkh(...)` (con o sin origen `[huella/ruta]`, sufijo `/0/*` o `/<0;1>/*`, checksum verificado) o de una zpub/vpub. Sus PSBT llevan las rutas BIP-32 / BIP-371 de entradas y cambio, así que Sparrow, Keystone o ColdVault en Air-Gap encuentran la clave y reconocen el cambio.
 - Las billeteras creadas antes de esta versión activan la rotación con un toque (una confirmación de Face ID) o automáticamente la próxima vez que firman.
@@ -131,6 +132,13 @@ flowchart TD
 #### `UniformResource.swift` (Core/Bitcoin)
 - **QR animados BC-UR** (BCR-2020-005/006/012): Bytewords, CRC-32, Xoshiro256**, muestreador alias y códigos fuente (fountain) del encoder/decoder de referencia de Blockchain Commons, validados con sus vectores.
 - Los PSBT se muestran como `ur:crypto-psbt` (un QR si cabe, si no una animación de 4 fotogramas/s) y el escáner reconstruye QR animados de Sparrow, Keystone, Passport, BlueWallet o ColdVault aunque se pierdan fotogramas.
+
+#### `AdvancedSigning.swift` (Core/Bitcoin)
+- **Cosignatario multisig:** firma entradas `multi`/`sortedmulti` en P2WSH, P2SH-P2WSH y P2SH cuando el PSBT trae la ruta BIP-32 con nuestra huella (añade la firma parcial; finaliza cuando hay m firmas). Reconoce el cambio multisig. Exporta las claves BIP-48 (`[huella/48h/0h/0h/2h]xpub…`) en "Exportar xpub".
+- **Taproot por script path (BIP-341/342):** verifica que el bloque de control compromete la hoja con la salida gastada, firma con el sighash de script path (`PSBT_IN_TAP_SCRIPT_SIG`) y finaliza hojas `<clave> OP_CHECKSIG` y `multi_a`. También firma key path de salidas con árbol de scripts (tweak con merkle root).
+
+#### `URAccountImport.swift` (Core/Bitcoin)
+- Importa billeteras de observación desde el QR animado de exportación de Sparrow / Keystone / Passport (`ur:crypto-account`, `crypto-output`, `crypto-hdkey`), con un decodificador CBOR genérico; validado con el vector oficial de BCR-2020-015.
 
 #### `PSBT.swift` (Core/Bitcoin)
 - BIP-174 v0: parser estricto (claves duplicadas, tx global firmada o en formato witness, datos truncados → error), serializador byte-idéntico, firmante + finalizador para P2PKH / P2WPKH / P2TR (key-path) y extractor.
@@ -245,8 +253,8 @@ Si eres un agente de IA que toma el relevo de este proyecto, aquí están las pa
 4. **Respetar el ciclo de CI:** Para compilar, sube tus commits a la rama `main` del repositorio `joshemartinez/ColdVault`. El flujo generará automáticamente el binario listo para descargar.
 
 ### 5.2 Posibles Tareas Siguientes
-- **Importar xpub por QR UR (`ur:crypto-account` / `crypto-output`):** hoy la billetera de observación se importa pegando los descriptores (o una zpub) como texto o QR de texto.
-- **Taproot por script path y multisig:** solo se firman P2PKH, P2WPKH y P2TR key-path.
+- **Coordinador multisig propio:** ColdVault firma como cosignatario (y exporta su clave BIP-48), pero crear la billetera multisig y sus PSBT se hace en Sparrow / Nunchuk / Specter.
+- **Scripts Taproot arbitrarios:** se firman todas las hojas donde aparece una clave nuestra, pero solo se finalizan hojas de una clave y `multi_a`; el resto lo finaliza el coordinador.
 - **Historial de Transacciones Local:** Almacenar transacciones entrantes y salientes en caché cifrada para visualizarlas en modo sin conexión.
 - **Soporte de Monedas Fiat Adicionales:** Conversor de sats a USD/EUR consultando APIs públicas de tickers.
 

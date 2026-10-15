@@ -413,8 +413,24 @@ public enum PSBTSigner {
                 keyring.key(origin: entry.origin, type: .p2tr)?.scriptPubKey == output.scriptPubKey
             }
         }
-        return PSBT.bip32Derivations(map, type: PSBT.outBIP32Derivation).contains { entry in
-            keyring.key(origin: entry.origin, type: type)?.scriptPubKey == output.scriptPubKey
+        let derivations = PSBT.bip32Derivations(map, type: PSBT.outBIP32Derivation)
+        if derivations.contains(where: { keyring.key(origin: $0.origin, type: type)?.scriptPubKey == output.scriptPubKey }) {
+            return true
+        }
+        // Multisig change: one of our keys is in the script that the output pays to.
+        let witnessScript = psbt.value(map, type: 0x01)
+        let redeemScript = psbt.value(map, type: 0x00)
+        guard let script = witnessScript ?? redeemScript,
+              let multisig = ScriptTemplates.parseMultisig(script) else { return false }
+        let paysScript: Bool
+        if let ws = witnessScript {
+            paysScript = output.scriptPubKey == ScriptTemplates.p2wsh(ws)
+                || (redeemScript == ScriptTemplates.p2wsh(ws) && output.scriptPubKey == ScriptTemplates.p2sh(ScriptTemplates.p2wsh(ws)))
+        } else {
+            paysScript = output.scriptPubKey == ScriptTemplates.p2sh(script)
+        }
+        return paysScript && derivations.contains { entry in
+            multisig.keys.contains(entry.publicKey) && keyring.extendedKey(origin: entry.origin)?.publicKey == entry.publicKey
         }
     }
 
@@ -425,8 +441,16 @@ public enum PSBTSigner {
         for (i, prevout) in prevouts.enumerated() {
             guard let prevout = prevout else { continue }
             inputTypes.append(ScriptType.classify(prevout.scriptPubKey))
-            if !psbt.isFinalized(i), signingKey(psbt: psbt, index: i, prevout: prevout, keyring: keyring) != nil {
+            guard !psbt.isFinalized(i) else { continue }
+            let hasScriptTree = psbt.value(psbt.inputMaps[i], type: PSBT.inTapMerkleRoot) != nil
+            if !hasScriptTree, signingKey(psbt: psbt, index: i, prevout: prevout, keyring: keyring) != nil {
                 signable += 1
+            } else {
+                // Multisig / script path: try on a scratch copy.
+                var scratch = psbt
+                if (try? signAdvanced(&scratch, index: i, prevouts: prevouts, keyring: keyring, auxRand: nil)) == true {
+                    signable += 1
+                }
             }
         }
         let allKnown = prevouts.allSatisfy { $0 != nil }
@@ -456,8 +480,15 @@ public enum PSBTSigner {
 
         var signed = 0
         for i in 0..<count where !psbt.isFinalized(i) {
-            guard let prevout = prevouts[i],
-                  let key = signingKey(psbt: psbt, index: i, prevout: prevout, keyring: keyring) else { continue }
+            guard let prevout = prevouts[i] else { continue }
+            let hasScriptTree = psbt.value(psbt.inputMaps[i], type: PSBT.inTapMerkleRoot) != nil
+            // Multisig, Taproot script path and script-tree key path (AdvancedSigning.swift).
+            guard !hasScriptTree, let key = signingKey(psbt: psbt, index: i, prevout: prevout, keyring: keyring) else {
+                if try signAdvanced(&psbt, index: i, prevouts: prevouts, keyring: keyring, auxRand: auxRand) {
+                    signed += 1
+                }
+                continue
+            }
 
             let sighash = psbt.sighashType(i)
             var taprootHashType: UInt8 = 0x00
@@ -469,9 +500,6 @@ public enum PSBTSigner {
             case .p2tr:
                 guard sighash == nil || sighash == 0 || sighash == 1 else {
                     throw TransactionError.unsupportedInput("sighash \(sighash ?? 0) en la entrada #\(i)")
-                }
-                guard psbt.value(psbt.inputMaps[i], type: PSBT.inTapMerkleRoot) == nil else {
-                    throw TransactionError.unsupportedInput("Taproot con árbol de scripts en la entrada #\(i)")
                 }
                 taprootHashType = UInt8(sighash ?? 0)
             default:

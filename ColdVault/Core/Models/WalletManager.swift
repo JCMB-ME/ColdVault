@@ -394,11 +394,16 @@ public final class WalletManager: ObservableObject {
         }
     }
 
-    /// Gap-limit scan of every account; updates the used / shown indexes.
-    private func scanAddresses(_ record: StoredWalletRecord) async throws -> AddressScanResult {
+    /// A full gap-limit discovery runs once a day (and on demand); otherwise only the
+    /// addresses that hold coins and the next unused ones are queried.
+    static let fullScanInterval: TimeInterval = 24 * 60 * 60
+
+    /// Scans every account and updates the used / shown indexes.
+    private func scanAddresses(_ record: StoredWalletRecord, forceFull: Bool = false) async throws -> AddressScanResult {
         let isTestnet = record.isTestnet
+        let full = forceFull || record.lastFullAddressScan.map { Date().timeIntervalSince($0) > WalletManager.fullScanInterval } ?? true
         let result = try await AddressScanner.scan(derivers: derivers(for: record),
-                                                   previous: indexes(for: record)) { address in
+                                                   previous: indexes(for: record), full: full) { address in
             try await BlockchainService.shared.fetchAddressActivity(address: address, isTestnet: isTestnet)
         }
         guard var current = activeRecord, current.primaryAddress == record.primaryAddress,
@@ -407,11 +412,24 @@ public final class WalletManager: ObservableObject {
         for tracked in result.tracked { map[tracked.scriptPubKey] = tracked }
         trackedByScript = map
         fundedAddresses = result.funded
-        if indexes(for: current) != result.indexes {
+        if indexes(for: current) != result.indexes || full {
             current.addressIndexes = result.indexes
+            if full { current.lastFullAddressScan = Date() }
             saveMetadata(current)
         }
         return result
+    }
+
+    /// Full gap-limit rescan (Settings), e.g. after using the same seed in another wallet.
+    public func rescanAddresses() async throws {
+        guard let record = activeRecord, usesAddressRotation else { return }
+        guard !isAirGapped else { throw BlockchainError.airGapped }
+        isLoadingBalance = true
+        defer { isLoadingBalance = false }
+        let result = try await scanAddresses(record, forceFull: true)
+        balanceSats = result.balance
+        balanceError = nil
+        lastBalanceUpdate = Date()
     }
 
     /// Fresh change address: same account type as the recipient when it is SegWit or

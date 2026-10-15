@@ -104,11 +104,17 @@ public struct AddressIndexes: Codable, Equatable {
     public var receiveShown: UInt32
     /// Change addresses known to be used: change goes to this index.
     public var changeUsed: UInt32
+    /// Indexes that held coins at the last scan (re-checked by quick scans).
+    public var receiveFunded: [UInt32]?
+    public var changeFunded: [UInt32]?
 
-    public init(receiveUsed: UInt32 = 0, receiveShown: UInt32 = 0, changeUsed: UInt32 = 0) {
+    public init(receiveUsed: UInt32 = 0, receiveShown: UInt32 = 0, changeUsed: UInt32 = 0,
+                receiveFunded: [UInt32]? = nil, changeFunded: [UInt32]? = nil) {
         self.receiveUsed = receiveUsed
         self.receiveShown = receiveShown
         self.changeUsed = changeUsed
+        self.receiveFunded = receiveFunded
+        self.changeFunded = changeFunded
     }
 }
 
@@ -135,23 +141,72 @@ public enum AddressScanner {
     /// BIP-44 gap limit for receive addresses; change is only ever used in order.
     public static let receiveGap = 20
     public static let changeGap = 10
+    /// Addresses looked at past the known frontier in a quick scan.
+    public static let quickGap = 3
     static let batchSize = 10
     static let maxIndex = 100_000
 
-    public static func scan(derivers: [AccountDeriver], previous: [AddressIndexes],
+    /// - full: BIP-44 gap-limit discovery of every account (restores, daily check).
+    /// - quick: only addresses known to hold coins plus a few past the first unused
+    ///   receive / change index (and every receive address shown to the user). This is
+    ///   ~18 requests for a fresh wallet instead of ~90; used-but-empty addresses that
+    ///   are paid again are picked up by the next full scan.
+    public static func scan(derivers: [AccountDeriver], previous: [AddressIndexes], full: Bool = true,
                             fetch: @escaping @Sendable (String) async throws -> AddressActivity) async throws -> AddressScanResult {
         var result = AddressScanResult(balance: 0, indexes: [], tracked: [], funded: [])
         var total: Int64 = 0
+
+        func query(_ addresses: [TrackedAddress]) async throws -> [AddressActivity] {
+            var activity = [AddressActivity]()
+            var start = 0
+            while start < addresses.count {
+                let batch = Array(addresses[start..<min(start + batchSize, addresses.count)])
+                let values = try await withThrowingTaskGroup(of: (Int, AddressActivity).self,
+                                                             returning: [AddressActivity].self) { group in
+                    for (offset, tracked) in batch.enumerated() {
+                        let address = tracked.address
+                        group.addTask { (offset, try await fetch(address)) }
+                    }
+                    var ordered = [AddressActivity?](repeating: nil, count: batch.count)
+                    for try await (offset, value) in group { ordered[offset] = value }
+                    return ordered.compactMap { $0 }
+                }
+                guard values.count == batch.count else { throw BlockchainError.invalidResponse }
+                activity += values
+                start += batchSize
+            }
+            return activity
+        }
+
         for deriver in derivers {
             let old = deriver.accountIndex < previous.count ? previous[deriver.accountIndex] : AddressIndexes()
-            var used = [UInt32](repeating: 0, count: 2)
+            var state = AddressIndexes()
             for chain: UInt32 in [0, 1] {
-                let gap = chain == 0 ? receiveGap : changeGap
-                // Always look at least at everything shown before, so a payment to a
+                let gap = full ? (chain == 0 ? receiveGap : changeGap) : quickGap
+                let knownUsed = Int(chain == 0 ? old.receiveUsed : old.changeUsed)
+                // Always look at every receive address shown before, so a payment to a
                 // shown-but-later address is never missed.
-                let floor = chain == 0 ? Int(old.receiveShown) + 1 : Int(old.changeUsed) + 1
-                var lastUsed = -1
-                var index = 0
+                let floor = chain == 0 ? Int(old.receiveShown) + 1 : knownUsed + 1
+                var lastUsed = full ? -1 : knownUsed - 1
+                var funded = [UInt32]()
+
+                // Quick scan: addresses below the frontier that held coins last time.
+                var index = full ? 0 : knownUsed
+                if !full {
+                    let known = (chain == 0 ? old.receiveFunded : old.changeFunded) ?? []
+                    let below = Array(Set(known.filter { Int($0) < knownUsed })).sorted()
+                    let tracked = try below.map { i -> TrackedAddress in
+                        guard let t = deriver.address(chain: chain, index: i) else { throw WalletError.derivationFailed }
+                        return t
+                    }
+                    for (t, info) in zip(tracked, try await query(tracked)) {
+                        result.tracked.append(t)
+                        total += info.balance
+                        if info.balance > 0 { result.funded.append(t); funded.append(t.index) }
+                    }
+                }
+
+                // Frontier: extend while used addresses keep appearing within the gap.
                 while index < max(lastUsed + 1 + gap, floor), index < maxIndex {
                     let end = min(max(lastUsed + 1 + gap, floor), index + batchSize)
                     var pending = [TrackedAddress]()
@@ -161,31 +216,26 @@ public enum AddressScanner {
                         }
                         pending.append(tracked)
                     }
-                    let batch = pending
-                    let activity = try await withThrowingTaskGroup(of: (Int, AddressActivity).self,
-                                                                   returning: [AddressActivity].self) { group in
-                        for (offset, tracked) in batch.enumerated() {
-                            let address = tracked.address
-                            group.addTask { (offset, try await fetch(address)) }
-                        }
-                        var ordered = [AddressActivity?](repeating: nil, count: batch.count)
-                        for try await (offset, value) in group { ordered[offset] = value }
-                        return ordered.compactMap { $0 }
-                    }
-                    guard activity.count == batch.count else { throw BlockchainError.invalidResponse }
-                    for (tracked, info) in zip(batch, activity) {
+                    for (tracked, info) in zip(pending, try await query(pending)) {
                         result.tracked.append(tracked)
-                        if info.used { lastUsed = Int(tracked.index) }
+                        if info.used { lastUsed = max(lastUsed, Int(tracked.index)) }
                         total += info.balance
-                        if info.balance > 0 { result.funded.append(tracked) }
+                        if info.balance > 0 { result.funded.append(tracked); funded.append(tracked.index) }
                     }
                     index = end
                 }
-                used[Int(chain)] = UInt32(lastUsed + 1)
+
+                let used = UInt32(max(lastUsed + 1, full ? 0 : knownUsed))
+                if chain == 0 {
+                    state.receiveUsed = used
+                    state.receiveShown = max(old.receiveShown, used)
+                    state.receiveFunded = funded
+                } else {
+                    state.changeUsed = used
+                    state.changeFunded = funded
+                }
             }
-            result.indexes.append(AddressIndexes(receiveUsed: used[0],
-                                                 receiveShown: max(old.receiveShown, used[0]),
-                                                 changeUsed: used[1]))
+            result.indexes.append(state)
         }
         result.balance = UInt64(max(total, 0))
         return result

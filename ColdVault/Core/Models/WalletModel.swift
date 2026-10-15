@@ -27,6 +27,8 @@ public struct StoredWalletRecord: Codable {
     public var accounts: [WalletAccount]?
     /// Next unused receive / change index per account (same order as `accounts`).
     public var addressIndexes: [AddressIndexes]?
+    /// Last BIP-44 gap-limit scan; quick scans run in between (see AddressScanner).
+    public var lastFullAddressScan: Date?
 
     public init(
         type: WalletSecurityType,

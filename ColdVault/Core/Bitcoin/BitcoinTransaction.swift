@@ -443,8 +443,12 @@ public struct Transaction {
 
     /// BIP-341 key-path signature hash for SIGHASH_DEFAULT (0x00) or SIGHASH_ALL (0x01).
     /// Needs every spent output, because Taproot commits to all amounts and scripts.
-    public func taprootSighash(inputIndex: Int, prevouts: [TxOutput], hashType: UInt8 = 0x00) -> Data? {
+    /// BIP-341 signature hash (SIGHASH_DEFAULT / ALL). With `leafHash` it is the BIP-342
+    /// script-path variant (ext_flag 1: tapleaf hash, key version 0, no OP_CODESEPARATOR).
+    public func taprootSighash(inputIndex: Int, prevouts: [TxOutput], hashType: UInt8 = 0x00,
+                               leafHash: Data? = nil) -> Data? {
         guard hashType == 0x00 || hashType == 0x01,
+              leafHash == nil || leafHash?.count == 32,
               prevouts.count == inputs.count,
               inputIndex >= 0, inputIndex < inputs.count else { return nil }
 
@@ -469,8 +473,13 @@ public struct Transaction {
         m.append(BitcoinHash.sha256(scripts))
         m.append(BitcoinHash.sha256(sequences))
         m.append(BitcoinHash.sha256(outs))
-        m.append(0x00) // spend type: key path, no annex
+        m.append(leafHash == nil ? 0x00 : 0x02) // spend type: ext_flag * 2, no annex
         m.appendUInt32(UInt32(inputIndex))
+        if let leafHash = leafHash {
+            m.append(leafHash)
+            m.append(0x00)                     // key_version
+            m.appendUInt32(0xffff_ffff)        // codesep_pos: none
+        }
         return Secp256k1.taggedHash("TapSighash", m)
     }
 }

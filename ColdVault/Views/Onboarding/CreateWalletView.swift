@@ -16,6 +16,7 @@ public struct CreateWalletView: View {
 
     @State private var wordCountSelection: Int = 12
     @State private var words: [String] = []
+    @State private var generationID: Int = 0
     @State private var isCreating: Bool = false
     @State private var errorMessage: String?
     @State private var noticeMessage: String?
@@ -280,17 +281,26 @@ public struct CreateWalletView: View {
         verificationIndices = []
         verificationInputs = []
         words = []
+        generationID += 1
+        let id = generationID
 
-        // Refuse to show a phrase if the hand-written crypto fails its known-answer test.
-        guard CryptoSelfTest.passes() else {
-            errorMessage = WalletError.cryptoSelfTestFailed.localizedDescription
-            return
-        }
-        do {
-            let mnemonic = try BIP39.generateMnemonic(wordCount: count)
-            self.words = mnemonic.components(separatedBy: " ")
-        } catch {
-            self.errorMessage = error.localizedDescription
+        // The known-answer self-test and the entropy draw run off the main thread so
+        // the UI never stalls; a phrase is shown only if the self-test passes.
+        Task {
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<[String], Error> in
+                guard CryptoSelfTest.passes() else { return .failure(WalletError.cryptoSelfTestFailed) }
+                do {
+                    return .success(try BIP39.generateMnemonic(wordCount: count).components(separatedBy: " "))
+                } catch {
+                    return .failure(error)
+                }
+            }.value
+            // Ignore a result superseded by a newer request (e.g. 12 → 24 words).
+            guard id == generationID else { return }
+            switch result {
+            case .success(let generated): words = generated
+            case .failure(let error): errorMessage = error.localizedDescription
+            }
         }
     }
 
