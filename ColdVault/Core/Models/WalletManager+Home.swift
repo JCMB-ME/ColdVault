@@ -662,6 +662,7 @@ extension WalletManager {
             for deriver in derivers(for: record) {
                 let state = current[deriver.accountIndex]
                 if let receive = deriver.address(chain: 0, index: state.receiveShown) { scripts.append(receive.scriptPubKey) }
+                if fixedAddress, let first = deriver.address(chain: 0, index: 0) { scripts.append(first.scriptPubKey) }
                 if let change = deriver.address(chain: 1, index: state.changeUsed) { scripts.append(change.scriptPubKey) }
             }
             scripts += fundedAddresses.map { $0.scriptPubKey }

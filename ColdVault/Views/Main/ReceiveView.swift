@@ -247,12 +247,15 @@ public struct ReceiveView: View {
                 Text(path)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(Palette.secondary)
-                Text(t("A new address is shown after each payment. Old addresses keep working.",
-                       "Tras cada pago se muestra una dirección nueva. Las anteriores siguen funcionando."))
+                Text(walletManager.fixedAddress
+                     ? t("This account always uses this address. You can change it in Settings › Fixed address.",
+                         "Esta cuenta usa siempre esta dirección. Puedes cambiarlo en Ajustes › Dirección fija.")
+                     : t("A new address is shown after each payment. Old addresses keep working.",
+                         "Tras cada pago se muestra una dirección nueva. Las anteriores siguen funcionando."))
                     .font(.system(size: 11))
                     .foregroundColor(Palette.secondary)
                     .multilineTextAlignment(.center)
-                if let accountIndex = entry.accountIndex {
+                if let accountIndex = entry.accountIndex, !walletManager.fixedAddress {
                     Button(action: {
                         walletManager.advanceReceiveAddress(accountIndex: accountIndex)
                         copied = false

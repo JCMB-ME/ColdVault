@@ -97,6 +97,11 @@ public final class WalletManager: ObservableObject {
     }
     /// The dots above the balance (which wallet / account) always shown (on) or only
     /// for a moment while switching (off).
+    /// One address per account (like Phantom / Xverse): receiving always shows it and
+    /// change goes back to it. Off: a new address after each payment (more privacy).
+    @Published public var fixedAddress: Bool {
+        didSet { UserDefaults.standard.set(fixedAddress, forKey: "fixedAddress") }
+    }
     /// Balance decimals get smaller one by one (on) or all digits share one size (off).
     @Published public var progressiveDecimals: Bool {
         didSet { UserDefaults.standard.set(progressiveDecimals, forKey: "progressiveDecimals") }
@@ -173,6 +178,7 @@ public final class WalletManager: ObservableObject {
         self.languageChoice = savedLanguage
         self.appLanguage = WalletManager.language(for: savedLanguage)
         self.progressiveDecimals = defaults.object(forKey: "progressiveDecimals") as? Bool ?? true
+        self.fixedAddress = defaults.object(forKey: "fixedAddress") as? Bool ?? true
         let savedDecimals = defaults.object(forKey: "displayDecimals") as? Int ?? -1
         self.displayDecimals = savedDecimals >= 0 ? savedDecimals : nil
         self.liquidGlass = defaults.bool(forKey: "liquidGlass")
@@ -240,11 +246,14 @@ public final class WalletManager: ObservableObject {
             let current = indexes(for: record)
             return derivers(for: record).compactMap { deriver in
                 let state = current[deriver.accountIndex]
-                guard let tracked = deriver.address(chain: 0, index: state.receiveShown) else { return nil }
+                // Fixed address: always the account's first one (…/0/0).
+                let shown: UInt32 = fixedAddress ? 0 : state.receiveShown
+                guard let tracked = deriver.address(chain: 0, index: shown) else { return nil }
                 return ReceiveAddress(address: tracked.address, label: deriver.account.label,
-                                      path: deriver.account.pathString(chain: 0, index: state.receiveShown),
+                                      path: deriver.account.pathString(chain: 0, index: shown),
                                       accountIndex: deriver.accountIndex,
-                                      canAdvance: state.receiveShown + 1 < state.receiveUsed + UInt32(AddressScanner.receiveGap))
+                                      canAdvance: !fixedAddress
+                                          && state.receiveShown + 1 < state.receiveUsed + UInt32(AddressScanner.receiveGap))
             }
         }
         if record.type == .watchOnly {
@@ -538,8 +547,10 @@ public final class WalletManager: ObservableObject {
         let preferred = all.first { $0.account.type == recipientType && (recipientType == .p2tr || recipientType == .p2wpkh) }
             ?? all.first { $0.account.type == .p2wpkh }
             ?? all.first
+        // Fixed address: the change comes back to the same address you receive on.
         guard let deriver = preferred,
-              let tracked = deriver.address(chain: 1, index: current[deriver.accountIndex].changeUsed) else {
+              let tracked = fixedAddress ? deriver.address(chain: 0, index: 0)
+                                         : deriver.address(chain: 1, index: current[deriver.accountIndex].changeUsed) else {
             throw WalletError.derivationFailed
         }
         trackedByScript[tracked.scriptPubKey] = tracked

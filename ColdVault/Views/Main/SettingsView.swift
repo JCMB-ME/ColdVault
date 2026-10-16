@@ -149,7 +149,16 @@ public struct SettingsView: View {
                     }
                 }
 
-                SettingsSection(header: t("Wallet", "Billetera"), footer: nil) {
+                SettingsSection(header: t("Wallet", "Billetera"),
+                                footer: walletManager.isEthereum ? nil
+                                    : t("Fixed address: each account always receives on the same address and change returns to it. Off: a new address for every payment (more privacy). Your coins are safe either way.",
+                                        "Dirección fija: cada cuenta recibe siempre en la misma dirección y el cambio vuelve a ella. Desactivada: una dirección nueva en cada cobro (más privacidad). Tus fondos están seguros en ambos casos.")) {
+                    if !walletManager.isEthereum {
+                        SettingsRow(title: t("Fixed address", "Dirección fija"), icon: "pin") {
+                            Toggle("", isOn: $walletManager.fixedAddress).labelsHidden()
+                        }
+                        SettingsDivider(inset: 60)
+                    }
                     Menu {
                         Picker("", selection: $walletManager.displayUnit) {
                             ForEach(DisplayUnit.allCases) { unit in Text(unit.rawValue).tag(unit) }
