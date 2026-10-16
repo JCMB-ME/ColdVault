@@ -19,7 +19,7 @@ public enum BumpError: LocalizedError {
     case nothingToSpend
 
     public var errorDescription: String? {
-        let english = WalletManager.deviceLanguage == .english
+        let english = !(Locale.preferredLanguages.first ?? "").lowercased().hasPrefix("es")
         switch self {
         case .alreadyConfirmed:
             return english ? "This transaction is already confirmed." : "Esta transacción ya está confirmada."
