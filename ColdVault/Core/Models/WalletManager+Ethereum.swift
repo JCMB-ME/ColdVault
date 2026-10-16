@@ -24,7 +24,7 @@ public struct EthereumSendPlan {
 
 extension WalletManager {
 
-    static let weiPerGwei: UInt64 = 1_000_000_000
+    nonisolated static let weiPerGwei: UInt64 = 1_000_000_000
 
     public var isEthereum: Bool { activeRecord?.coinKind == .ethereum }
     public var activeCoin: CoinKind { activeRecord?.coinKind ?? .bitcoin }
@@ -57,7 +57,7 @@ extension WalletManager {
         coin == .ethereum ? "ETH" : displayUnit.rawValue
     }
 
-    static func gwei(_ wei: UInt256) -> UInt64 {
+    nonisolated static func gwei(_ wei: UInt256) -> UInt64 {
         let value = wei.quotientAndRemainder(dividingBy: weiPerGwei).quotient
         return value < UInt256(UInt64.max) ? value.low64 : UInt64.max
     }
@@ -65,13 +65,13 @@ extension WalletManager {
     // MARK: - Keys and addresses
 
     /// The account's 0x address (EIP-55) for a phrase or a hex private key.
-    static func ethereumAddress(secret: WalletSecret, account: UInt32) throws -> String {
+    nonisolated static func ethereumAddress(secret: WalletSecret, account: UInt32) throws -> String {
         let key = try ethereumKey(secret: secret, account: account)
         guard let address = EthereumKeys.address(privateKey: key) else { throw WalletError.derivationFailed }
         return EthereumAddress.checksummed(address)
     }
 
-    static func ethereumKey(secret: WalletSecret, account: UInt32) throws -> Data {
+    nonisolated static func ethereumKey(secret: WalletSecret, account: UInt32) throws -> Data {
         if let mnemonic = secret.mnemonic {
             let seed = try BIP39.mnemonicToSeed(mnemonic: mnemonic, passphrase: secret.passphrase ?? "")
             guard let key = EthereumKeys.privateKey(seed: seed, index: account) else { throw WalletError.derivationFailed }
