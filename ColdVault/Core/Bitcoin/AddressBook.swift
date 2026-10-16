@@ -193,8 +193,9 @@ public enum AddressScanner {
                 // Quick scan: addresses below the frontier that held coins last time.
                 var index = full ? 0 : knownUsed
                 if !full {
-                    let known = (chain == 0 ? old.receiveFunded : old.changeFunded) ?? []
-                    let below = Array(Set(known.filter { Int($0) < knownUsed })).sorted()
+                    // Every used address, not only the ones that held coins last time: an
+                    // address that was emptied can be paid again (a reused or fixed address).
+                    let below = Array(0..<UInt32(min(knownUsed, maxIndex)))
                     let tracked = try below.map { i -> TrackedAddress in
                         guard let t = deriver.address(chain: chain, index: i) else { throw WalletError.derivationFailed }
                         return t

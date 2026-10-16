@@ -109,7 +109,7 @@ final class RotationAndURTests: XCTestCase {
         }
         XCTAssertEqual(again.indexes[0].receiveShown, 30)
 
-        // Quick scan: only funded addresses plus a few past the frontier.
+        // Quick scan: every used address plus a few past the frontier.
         let counter = RequestCounter()
         let quick = try await AddressScanner.scan(derivers: d, previous: result.indexes, full: false) { address in
             counter.increment()
@@ -118,10 +118,19 @@ final class RotationAndURTests: XCTestCase {
         XCTAssertEqual(quick.balance, 6_700)
         XCTAssertEqual(quick.indexes.map { $0.receiveUsed }, result.indexes.map { $0.receiveUsed })
         XCTAssertEqual(quick.indexes.map { $0.changeUsed }, result.indexes.map { $0.changeUsed })
-        // account 0: receive 20 (funded, below frontier) + 21..23, change 0 + 1..3 = 8;
-        // account 1: receive 2 + 3..5, change 0..2 = 7; account 2: 0..2 twice = 6 → 21.
-        XCTAssertEqual(counter.value, 21)
-        XCTAssertLessThan(counter.value, result.tracked.count / 3)
+        // account 0: receive 0..20 + 21..23, change 0 + 1..3 = 28;
+        // account 1: receive 0..2 + 3..5, change 0..2 = 9; account 2: 0..2 twice = 6 → 43.
+        XCTAssertEqual(counter.value, 43)
+        XCTAssertLessThan(counter.value, result.tracked.count / 2)
+
+        // An emptied address paid again (reused / fixed address) is found by the quick scan.
+        var reused = used
+        reused[segwit.address(chain: 0, index: 0)!.address] = 3_000
+        let reusedSnapshot = reused
+        let afterReuse = try await AddressScanner.scan(derivers: d, previous: result.indexes, full: false) { address in
+            AddressActivity(used: reusedSnapshot[address] != nil, balance: reusedSnapshot[address] ?? 0)
+        }
+        XCTAssertEqual(afterReuse.balance, 9_700)
 
         // A payment to the next fresh address is found by the quick scan too.
         var paid = used
