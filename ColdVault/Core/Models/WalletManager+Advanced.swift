@@ -247,6 +247,59 @@ extension WalletManager {
     }
 
     /// Address of a coin, for the coin list.
+    /// One address of the account on screen with what it holds (Settings › Addresses).
+    public struct AddressEntry: Identifiable {
+        public var id: String { address }
+        public let address: String
+        /// "m/84'/1'/0'/1/3", nil for single-key wallets.
+        public let path: String?
+        public let typeLabel: String
+        public let isChange: Bool
+        public let balance: UInt64
+        public let pending: Bool
+    }
+
+    /// Every address this account has used (receive and change), with its balance
+    /// (the sum of its coins, checked like before any payment).
+    public func addressOverview() async throws -> [AddressEntry] {
+        let coins = try await spendableCoins()
+        guard let record = activeRecord else { return [] }
+        var balance = [Data: UInt64]()
+        var pending = Set<Data>()
+        for coin in coins {
+            balance[coin.scriptPubKey, default: 0] += coin.value
+            if !coin.confirmed { pending.insert(coin.scriptPubKey) }
+        }
+        var entries = [AddressEntry]()
+        if usesAddressRotation {
+            let current = indexes(for: record)
+            for deriver in derivers(for: record) {
+                let state = current[deriver.accountIndex]
+                for chain: UInt32 in [0, 1] {
+                    // The first receive address is always listed (it is the fixed one).
+                    let used = chain == 0 ? max(state.receiveUsed, 1) : state.changeUsed
+                    for index in 0..<min(used, 1_000) {
+                        guard let tracked = deriver.address(chain: chain, index: index) else { continue }
+                        entries.append(AddressEntry(address: tracked.address,
+                                                    path: deriver.account.pathString(chain: chain, index: index),
+                                                    typeLabel: deriver.account.label, isChange: chain == 1,
+                                                    balance: balance[tracked.scriptPubKey] ?? 0,
+                                                    pending: pending.contains(tracked.scriptPubKey)))
+                    }
+                }
+            }
+        } else {
+            for address in staticAddresses {
+                guard let decoded = BitcoinAddress.decode(address) else { continue }
+                entries.append(AddressEntry(address: address, path: nil,
+                                            typeLabel: AddressFormat(scriptType: decoded.type)?.rawValue ?? "",
+                                            isChange: false, balance: balance[decoded.scriptPubKey] ?? 0,
+                                            pending: pending.contains(decoded.scriptPubKey)))
+            }
+        }
+        return entries
+    }
+
     public func address(of coin: SpendableCoin) -> String? {
         let tracked = trackedByScript[coin.scriptPubKey]
         if let tracked { return tracked.address }

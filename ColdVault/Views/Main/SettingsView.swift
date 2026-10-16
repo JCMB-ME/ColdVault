@@ -41,6 +41,7 @@ public struct SettingsView: View {
     @State private var showSignPSBT = false
     @State private var showInheritance = false
     @State private var showDuress = false
+    @State private var showAddressList = false
     @ObservedObject private var lightning = LightningManager.shared
     @State private var showBreezKey = false
     @State private var breezKeyDraft = ""
@@ -559,16 +560,27 @@ public struct SettingsView: View {
             DuressSetupView().environmentObject(walletManager)
         }
 
-        if walletManager.usesAddressRotation {
+        if !walletManager.isEthereum {
             SettingsSection(header: t("Addresses", "Direcciones"),
-                            footer: t("Full gap-limit search, done automatically once a day. Use it after using this seed in another wallet.",
-                                      "Búsqueda completa con gap limit; se hace sola una vez al día. Úsala si usaste esta semilla en otra billetera.")) {
+                            footer: walletManager.usesAddressRotation
+                                ? t("See addresses: every receive and change address of this account, with its balance and path. Rescan: full gap-limit search, done automatically once a day.",
+                                    "Ver direcciones: todas las direcciones de recibir y de cambio de esta cuenta, con su saldo y su ruta. Volver a escanear: búsqueda completa; se hace sola una vez al día.")
+                                : nil) {
+                Button { showAddressList = true } label: {
+                    SettingsRow(title: t("See addresses", "Ver direcciones"), chevron: true, icon: "list.bullet.rectangle")
+                }
+                if walletManager.usesAddressRotation {
+                SettingsDivider(inset: 60)
                 Button(action: rescanAddresses) {
                     SettingsRow(title: t("Rescan addresses", "Volver a escanear"), icon: "arrow.clockwise") {
                         if isRescanning { ProgressView() } else { Chevron() }
                     }
                 }
                 .disabled(isRescanning)
+                }
+            }
+            .sheet(isPresented: $showAddressList) {
+                AddressListView().environmentObject(walletManager)
             }
         }
 
