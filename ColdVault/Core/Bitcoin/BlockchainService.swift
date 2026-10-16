@@ -363,34 +363,29 @@ public final class BlockchainService {
         return points.sorted { $0.date < $1.date }
     }
 
-    /// Live BTC price in every currency (Coinbase spot exchange rates: one request,
-    /// updated continuously, direct BTC/MXN, BTC/JPY, BTC/CNY, BTC/USD quotes).
-    public func fetchSpotPrices() async throws -> [String: Double] {
-        guard let url = URL(string: "https://api.coinbase.com/v2/exchange-rates?currency=BTC") else {
+    /// BTC/USD from Kraken's public ticker: only used if mempool.space is down.
+    public func fetchKrakenUSD() async throws -> Double {
+        guard let url = URL(string: "https://api.kraken.com/0/public/Ticker?pair=XBTUSD") else {
             throw BlockchainError.invalidResponse
         }
         let data = try await get(url: url)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let payload = object["data"] as? [String: Any],
-              let rates = payload["rates"] as? [String: Any] else { throw BlockchainError.invalidResponse }
-        var result = [String: Double]()
-        for code in FiatCurrency.supported {
-            if let text = rates[code] as? String, let value = Double(text), value > 0 { result[code] = value }
-        }
-        guard result["USD"] != nil else { throw BlockchainError.invalidResponse }
-        return result
+              let result = object["result"] as? [String: Any],
+              let pair = result.values.first as? [String: Any],
+              let last = (pair["c"] as? [Any])?.first as? String,
+              let price = Double(last), price > 0 else { throw BlockchainError.invalidResponse }
+        return price
     }
 
-    /// All four app currencies, from the live spot quotes or, if unavailable, from
-    /// mempool.space prices × daily FX rates.
+    /// All four app currencies: mempool.space prices (the same public, open-source
+    /// service as the rest of the app), × daily FX rates for MXN and CNY; Kraken's
+    /// BTC/USD if mempool.space can't be reached.
     public func fetchFiatPrices() async throws -> [String: Double] {
-        if let spot = try? await fetchSpotPrices(), FiatCurrency.supported.allSatisfy({ spot[$0] != nil }) {
-            return spot
-        }
-        let prices = try await fetchPrices()
+        var prices = (try? await fetchPrices()) ?? [:]
+        if prices["USD"] == nil { prices["USD"] = try await fetchKrakenUSD() }
         guard let usd = prices["USD"] else { throw BlockchainError.invalidResponse }
         var result = ["USD": usd]
-        let rates = try? await fetchUSDExchangeRates()
+        let rates = try? await cachedUSDExchangeRates()
         for code in FiatCurrency.supported where code != "USD" {
             if let direct = prices[code] {
                 result[code] = direct
@@ -399,6 +394,19 @@ public final class BlockchainService {
             }
         }
         return result
+    }
+
+    private var fxCache: (rates: [String: Double], fetched: Date)?
+
+    /// The FX rates change once a day: fetched at most every 6 hours.
+    private func cachedUSDExchangeRates() async throws -> [String: Double] {
+        lock.lock()
+        let cached = fxCache
+        lock.unlock()
+        if let cached = cached, Date().timeIntervalSince(cached.fetched) < 6 * 3_600 { return cached.rates }
+        let rates = try await fetchUSDExchangeRates()
+        lock.lock(); fxCache = (rates, Date()); lock.unlock()
+        return rates
     }
 
     /// USD → other currencies (open.er-api.com, free, updated daily). Used for MXN and CNY,

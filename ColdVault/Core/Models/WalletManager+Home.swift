@@ -221,20 +221,10 @@ extension WalletManager {
 
     func refreshMarketData(force: Bool) async {
         let currency = fiatCurrency
-        if let spot = try? await BlockchainService.shared.fetchSpotPrices(),
-           let usd = spot["USD"], let price = spot[currency] {
+        // mempool.space (MXN, CNY: USD price × FX rate); Kraken as fallback.
+        if let prices = try? await BlockchainService.shared.fetchFiatPrices(), let usd = prices["USD"] {
             usdPrice = usd
-            fiatPrice = price
-        } else if let prices = try? await BlockchainService.shared.fetchPrices(), let usd = prices["USD"] {
-            usdPrice = usd
-            if currency == "USD" {
-                fiatPrice = usd
-            } else if let direct = prices[currency] {
-                fiatPrice = direct                                     // JPY comes from mempool.space
-            } else if let rates = try? await BlockchainService.shared.fetchUSDExchangeRates(),
-                      let rate = rates[currency] {
-                fiatPrice = usd * rate                                 // MXN, CNY: USD price × FX rate
-            }
+            if let price = prices[currency] { fiatPrice = price }
         }
         guard homeShowPriceChart else { return }
         // The full history (~1.5 MB) is downloaded at most every 12 hours and kept on

@@ -23,6 +23,9 @@ public struct CreateWalletView: View {
     @State private var noticeMessage: String?
     /// The words stay hidden until tapped (nobody behind you sees them by surprise).
     @State private var wordsRevealed: Bool = false
+    /// Dice: the phrase comes from your own rolls instead of the iPhone's generator.
+    @State private var showDice = false
+    @State private var diceRollCount: Int?
 
     // Backup verification: the user must type back 3 randomly chosen words
     @State private var isVerifying: Bool = false
@@ -109,6 +112,8 @@ public struct CreateWalletView: View {
 
             lengthSelector
 
+            diceButton
+
             ZStack {
                 if wordsRevealed && !words.isEmpty {
                     SeedWordsGrid(words: words)
@@ -173,6 +178,65 @@ public struct CreateWalletView: View {
         }
         .padding(4)
         .background(Capsule().fill(SettingsStyle.groupFill))
+    }
+
+    /// Generate the phrase from dice rolls (or back to the iPhone's generator).
+    @ViewBuilder
+    private var diceButton: some View {
+        if let count = diceRollCount {
+            HStack(spacing: 10) {
+                Label(t("From \(count) dice rolls", "Con \(count) tiradas de dado"), systemImage: "dice.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                Button(t("Use the iPhone", "Usar el iPhone")) {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(CreateWalletView.stepAnimation) {
+                        wordsRevealed = false
+                        generateWords(count: wordCountSelection)
+                    }
+                }
+                .font(.system(size: 13, weight: .semibold))
+            }
+            .transition(.opacity)
+        } else {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showDice = true
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "dice")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text(t("Generate with dice", "Generar con dados"))
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundColor(Color(uiColor: .label))
+                .padding(.horizontal, 18)
+                .frame(height: 38)
+                .background(Capsule().fill(SettingsStyle.groupFill))
+            }
+            .buttonStyle(.plain)
+            .sheet(isPresented: $showDice) {
+                DiceEntropyView(wordCount: wordCountSelection) { rolls in
+                    useDice(rolls)
+                }
+                .environmentObject(walletManager)
+            }
+        }
+    }
+
+    private func useDice(_ rolls: [Int]) {
+        guard let phrase = try? BIP39.mnemonicFromDiceRolls(rolls, wordCount: wordCountSelection) else {
+            errorMessage = t("Couldn't create the phrase from those rolls.", "No se pudo crear la frase con esas tiradas.")
+            return
+        }
+        generationID += 1                       // a pending random phrase must not replace it
+        errorMessage = nil
+        noticeMessage = nil
+        withAnimation(CreateWalletView.stepAnimation) {
+            words = phrase.components(separatedBy: " ")
+            wordsRevealed = false
+            diceRollCount = rolls.count
+        }
     }
 
     /// Placeholder cells with a "tap to show" hint; tap reveals the words one by one.
@@ -343,6 +407,7 @@ public struct CreateWalletView: View {
     private func generateWords(count: Int) {
         errorMessage = nil
         noticeMessage = nil
+        diceRollCount = nil
         isVerifying = false
         verificationIndices = []
         verificationInputs = []

@@ -312,20 +312,13 @@ struct SheetHeader<Accessory: View>: View {
     }
 
     var body: some View {
-        ZStack {
-            VStack(spacing: 8) {
-                Text(title)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(Color(uiColor: .label))
-                accessory
-            }
-            if let onClose = onClose {
-                HStack {
-                    Spacer()
-                    SheetCloseButton(floating: true, action: onClose)
-                }
-                .padding(.trailing, 14)
-            }
+        // No close button: every sheet closes by swiping down (`onClose` is kept so
+        // callers don't change).
+        VStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(Color(uiColor: .label))
+            accessory
         }
         .padding(.top, 18)
         .padding(.bottom, 10)

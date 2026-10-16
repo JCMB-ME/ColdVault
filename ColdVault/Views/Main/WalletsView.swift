@@ -65,15 +65,22 @@ struct WalletsView: View {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(walletManager.format(sats: total))
                                 .font(.system(size: 30, weight: .bold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
                                 .foregroundColor(Color(uiColor: .label))
                                 .modifier(RollingDigits())
                             Text(walletManager.displayUnit.rawValue)
                                 .font(.system(size: 15, weight: .medium))
                                 .foregroundColor(Palette.secondary)
                         }
-                        // Mainnet and testnet coins are never added together.
+                        // Mainnet, testnet and watch-only coins are never added together.
                         if !totalIsTestnet, let testnet = sum(testnet: true) {
                             Text("Testnet4: \(walletManager.format(sats: testnet)) \(walletManager.displayUnit.rawValue)")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(Palette.secondary)
+                        }
+                        if let watched = watchOnlySum {
+                            Text(t("Watch-only: ", "Observación: ") + "\(walletManager.format(sats: watched)) \(walletManager.displayUnit.rawValue)")
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundColor(Palette.secondary)
                         }
@@ -210,20 +217,29 @@ struct WalletsView: View {
         }
     }
 
-    /// Sum of every mainnet account (known balances), shown with more than one account;
-    /// with only testnet accounts, the testnet sum.
+    /// Sum of the mainnet accounts of the wallets you own (watch-only ones are only
+    /// watched, not yours: shown apart); with only testnet accounts, the testnet sum.
     private var totalBalance: UInt64? {
         guard walletManager.library.flatMap({ $0.bundle.accounts }).count > 1 else { return nil }
-        return sum(testnet: totalIsTestnet)
+        return sum(testnet: totalIsTestnet) ?? (watchOnlySum == nil ? nil : 0)
     }
+
+    private var ownAccounts: [AccountSlot] { keyWallets.flatMap { $0.bundle.accounts } }
 
     private var totalIsTestnet: Bool {
-        !walletManager.library.flatMap { $0.bundle.accounts }.contains { !$0.record.isTestnet }
+        !ownAccounts.isEmpty && !ownAccounts.contains { !$0.record.isTestnet }
     }
 
-    /// Known balances of every account on one network (nil if there are none).
+    /// Known balances of every own account on one network (nil if there are none).
     private func sum(testnet: Bool) -> UInt64? {
-        let accounts = walletManager.library.flatMap { $0.bundle.accounts }.filter { $0.record.isTestnet == testnet }
+        let accounts = ownAccounts.filter { $0.record.isTestnet == testnet }
+        guard !accounts.isEmpty else { return nil }
+        return accounts.compactMap { walletManager.cachedBalance(of: $0.record) }.reduce(0, +)
+    }
+
+    /// Watch-only wallets together (nil if there are none).
+    private var watchOnlySum: UInt64? {
+        let accounts = watchWallets.flatMap { $0.bundle.accounts }
         guard !accounts.isEmpty else { return nil }
         return accounts.compactMap { walletManager.cachedBalance(of: $0.record) }.reduce(0, +)
     }
@@ -298,14 +314,7 @@ struct WalletsView: View {
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     if let sats = walletManager.cachedBalance(of: account.record) {
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Text(walletManager.format(sats: sats))
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundColor(Color(uiColor: .label))
-                            Text(walletManager.displayUnit.rawValue)
-                                .font(.system(size: 11))
-                                .foregroundColor(Palette.secondary)
-                        }
+                        amountLabel(sats)
                     }
                 }
                 .contentShape(Rectangle())
@@ -337,6 +346,21 @@ struct WalletsView: View {
         )
     }
 
+    /// A balance on a single line: it shrinks to fit instead of wrapping (iPhone mini).
+    private func amountLabel(_ sats: UInt64) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(walletManager.format(sats: sats))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(Color(uiColor: .label))
+            Text(walletManager.displayUnit.rawValue)
+                .font(.system(size: 11))
+                .foregroundColor(Palette.secondary)
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.6)
+        .layoutPriority(1)
+    }
+
     // MARK: - One wallet
 
     private func isSeedWallet(_ wallet: LibraryWallet) -> Bool {
@@ -364,10 +388,18 @@ struct WalletsView: View {
                     WalletAvatar(wallet: wallet, images: walletManager.walletImages, size: 46, highlighted: isActive)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(wallet.bundle.name)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(Color(uiColor: .label))
-                        .lineLimit(1)
+                    // The coin of the wallet (bitcoin today; more coins later).
+                    HStack(spacing: 6) {
+                        Text(wallet.bundle.name)
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(Color(uiColor: .label))
+                            .lineLimit(1)
+                        Image("BitcoinLogo")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 17, height: 17)
+                            .accessibilityLabel(Text("Bitcoin"))
+                    }
                     if !subtitle(wallet).isEmpty {
                         Text(subtitle(wallet))
                             .font(.system(size: 13))
@@ -494,14 +526,7 @@ struct WalletsView: View {
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 if let sats = walletManager.cachedBalance(of: account.record) {
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(walletManager.format(sats: sats))
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(Color(uiColor: .label))
-                        Text(walletManager.displayUnit.rawValue)
-                            .font(.system(size: 11))
-                            .foregroundColor(Palette.secondary)
-                    }
+                    amountLabel(sats)
                 }
             }
             .padding(.horizontal, 10)

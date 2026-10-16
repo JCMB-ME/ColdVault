@@ -79,6 +79,29 @@ public enum BIP39 {
         return mnemonic
     }
 
+    // MARK: - Dice
+
+    /// Rolls of a fair die for the phrase's full entropy (each roll ≈ 2.585 bits):
+    /// 50 for 12 words (128 bits), 99 for 24 words (256 bits).
+    public static func requiredDiceRolls(wordCount: Int) -> Int { wordCount == 24 ? 99 : 50 }
+
+    /// A phrase from dice rolls alone, verifiable on any offline computer and the same
+    /// as Coldcard's: entropy = SHA-256 of the rolls written as the digits "1"–"6";
+    /// the first 16 bytes for 12 words, all 32 for 24. More rolls than required are fine.
+    public static func mnemonicFromDiceRolls(_ rolls: [Int], wordCount: Int) throws -> String {
+        guard wordCount == 12 || wordCount == 24 else { throw BIP39Error.invalidWordCount }
+        guard rolls.count >= requiredDiceRolls(wordCount: wordCount),
+              rolls.allSatisfy({ (1...6).contains($0) }) else { throw BIP39Error.entropyGenerationFailed }
+        var digits = Data(rolls.map { UInt8(48 + $0) })
+        defer { digits.resetBytes(in: 0..<digits.count) }
+        var digest = Data(SHA256.hash(data: digits))
+        defer { digest.resetBytes(in: 0..<digest.count) }
+        guard let mnemonic = entropyToMnemonic(Data(digest.prefix(wordCount == 24 ? 32 : 16))) else {
+            throw BIP39Error.entropyGenerationFailed
+        }
+        return mnemonic
+    }
+
     // MARK: - Entropy to Mnemonic
     public static func entropyToMnemonic(_ entropy: Data) -> String? {
         let entBits = entropy.count * 8

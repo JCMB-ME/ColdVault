@@ -129,6 +129,10 @@ public struct SettingsView: View {
                         Toggle("", isOn: $walletManager.homeShowCalculator).labelsHidden()
                     }
                     SettingsDivider(inset: 60)
+                    SettingsRow(title: t("Account dots", "Puntos de cuentas"), icon: "ellipsis") {
+                        Toggle("", isOn: $walletManager.alwaysShowAccountDots).labelsHidden()
+                    }
+                    SettingsDivider(inset: 60)
                     SettingsRow(title: t("Swipe button", "Botón deslizable"), icon: "hand.draw") {
                         Toggle("", isOn: $walletManager.swipeActionButton).labelsHidden()
                     }
@@ -305,11 +309,6 @@ public struct SettingsView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 40)
                     .buttonStyle(.plain)
-                }
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    SheetCloseButton { route = nil }
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -788,11 +787,6 @@ private struct DescriptorExportView: View {
             }
             .navigationTitle(lang == .english ? "Watch-only export" : "Exportar observación")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
-                }
-            }
         }
     }
 }
@@ -888,11 +882,6 @@ struct BackupDetailView: View {
         }
         .navigationTitle(t("Backup", "Respaldo"))
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                SheetCloseButton(action: onClose)
-            }
-        }
         .sheet(isPresented: $showDescriptors, onDismiss: { descriptors = [] }) {
             DescriptorExportView(descriptors: descriptors, lang: lang)
         }

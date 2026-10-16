@@ -233,7 +233,7 @@ public struct DashboardView: View {
         .overlay(alignment: .top) {
             accountDots
                 .offset(y: -22)
-                .opacity(showAccountDots ? 1 : 0)
+                .opacity(showAccountDots || walletManager.alwaysShowAccountDots ? 1 : 0)
                 .allowsHitTesting(false)
         }
         .accessibilityAddTraits(.isButton)
@@ -584,12 +584,12 @@ struct HomeExtrasView: View {
             if walletManager.homeShowContacts && !walletManager.contacts.isEmpty && !walletManager.isWatchOnly {
                 contactsRow
             }
-            if walletManager.homeShowTransactions {
-                transactions
-            }
             if walletManager.homeShowCalculator {
                 CalculatorCard()
                     .environmentObject(walletManager)
+            }
+            if walletManager.homeShowTransactions {
+                transactions
             }
             if walletManager.homeShowPriceChart {
                 MinimalPriceChart()
@@ -749,11 +749,6 @@ struct TransactionHistoryView: View {
             }
             .navigationTitle(lang == .english ? "Transactions" : "Transacciones")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
-                }
-            }
         }
         .presentationDetents([.large])
     }

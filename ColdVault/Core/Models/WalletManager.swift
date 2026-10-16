@@ -88,6 +88,11 @@ public final class WalletManager: ObservableObject {
     @Published public var homeShowCalculator: Bool {
         didSet { saveHomeOption(homeShowCalculator, "homeShowCalculator") }
     }
+    /// The dots above the balance (which wallet / account) always shown (on) or only
+    /// for a moment while switching (off).
+    @Published public var alwaysShowAccountDots: Bool {
+        didSet { UserDefaults.standard.set(alwaysShowAccountDots, forKey: "alwaysShowAccountDots") }
+    }
     /// One Receive/Send pill switched by swiping (on) or two separate buttons (off).
     @Published public var swipeActionButton: Bool {
         didSet { UserDefaults.standard.set(swipeActionButton, forKey: "swipeActionButton") }
@@ -143,6 +148,7 @@ public final class WalletManager: ObservableObject {
         self.homeTransactionCount = defaults.object(forKey: "homeTransactionCount") as? Int ?? 10
         self.homeShowCalculator = defaults.bool(forKey: "homeShowCalculator")
         self.swipeActionButton = defaults.bool(forKey: "swipeActionButton")
+        self.alwaysShowAccountDots = defaults.object(forKey: "alwaysShowAccountDots") as? Bool ?? true
         let savedCurrency = defaults.string(forKey: "fiatCurrency") ?? FiatCurrency.deviceDefault
         self.fiatCurrency = FiatCurrency.supported.contains(savedCurrency) ? savedCurrency : "USD"
         loadContacts()
