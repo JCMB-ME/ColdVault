@@ -97,6 +97,17 @@ public final class WalletManager: ObservableObject {
     }
     /// The dots above the balance (which wallet / account) always shown (on) or only
     /// for a moment while switching (off).
+    /// Balance decimals get smaller one by one (on) or all digits share one size (off).
+    @Published public var progressiveDecimals: Bool {
+        didSet { UserDefaults.standard.set(progressiveDecimals, forKey: "progressiveDecimals") }
+    }
+    /// "system", "en" or "es".
+    @Published public var languageChoice: String {
+        didSet {
+            UserDefaults.standard.set(languageChoice, forKey: "languageChoice")
+            appLanguage = WalletManager.language(for: languageChoice)
+        }
+    }
     @Published public var alwaysShowAccountDots: Bool {
         didSet { UserDefaults.standard.set(alwaysShowAccountDots, forKey: "alwaysShowAccountDots") }
     }
@@ -114,6 +125,10 @@ public final class WalletManager: ObservableObject {
     @Published public internal(set) var fiatPrice: Double? { didSet { scheduleWidgetUpdate() } }
     /// Price of one ETH in the chosen currency (Ethereum wallets).
     @Published public internal(set) var ethFiatPrice: Double?
+    var ethUsdPrice: Double?
+    /// ETH/USD history (Kraken: weekly, daily, then hourly closes), oldest first.
+    @Published public internal(set) var ethPriceHistory: [PricePoint] = []
+    var lastEthHistoryFetch: Date?
     /// Full BTC/USD history (hourly recently, daily further back), oldest first.
     @Published public internal(set) var priceHistory: [PricePoint] = []
     var usdPrice: Double?
@@ -130,11 +145,19 @@ public final class WalletManager: ObservableObject {
         if value { Task { await refreshHomeData() } }
     }
 
-    /// Follows the device language; there is no in-app language picker.
+    /// The iPhone's language unless a language is chosen in Settings.
     @Published public private(set) var appLanguage: AppLanguage
 
     static var deviceLanguage: AppLanguage {
         (Locale.preferredLanguages.first ?? "").lowercased().hasPrefix("es") ? .spanish : .english
+    }
+
+    static func language(for choice: String) -> AppLanguage {
+        switch choice {
+        case "en": return .english
+        case "es": return .spanish
+        default: return deviceLanguage
+        }
     }
 
     public init() {
@@ -145,8 +168,11 @@ public final class WalletManager: ObservableObject {
         let savedUnit = UserDefaults.standard.string(forKey: "displayUnit") ?? DisplayUnit.btc.rawValue
         self.displayUnit = DisplayUnit(rawValue: savedUnit) ?? .btc
         // The app always speaks the iPhone's language (Spanish for any "es-*", else English).
-        self.appLanguage = WalletManager.deviceLanguage
         let defaults = UserDefaults.standard
+        let savedLanguage = defaults.string(forKey: "languageChoice") ?? "system"
+        self.languageChoice = savedLanguage
+        self.appLanguage = WalletManager.language(for: savedLanguage)
+        self.progressiveDecimals = defaults.object(forKey: "progressiveDecimals") as? Bool ?? true
         let savedDecimals = defaults.object(forKey: "displayDecimals") as? Int ?? -1
         self.displayDecimals = savedDecimals >= 0 ? savedDecimals : nil
         self.liquidGlass = defaults.bool(forKey: "liquidGlass")
@@ -886,7 +912,8 @@ public final class WalletManager: ObservableObject {
     }
 
     // MARK: - Formatted Balance Display
-    public var formattedBalance: String { format(units: balanceSats, coin: activeCoin) }
+    /// What can be spent now: received coins still waiting for a confirmation are shown apart.
+    public var formattedBalance: String { format(units: availableSats, coin: activeCoin) }
 
     /// Exact sats → "0.00000000" string (no floating point).
     nonisolated public static func formatBTC(_ sats: UInt64) -> String {

@@ -174,9 +174,23 @@ extension WalletManager {
             return WalletManager.currencyFormatter(fiatCurrency, fractionDigits: nil).string(from: NSNumber(value: value))
         }
         guard homeShowFiat, let price = fiatPrice else { return nil }
-        let value = Double(balanceSats) / 100_000_000 * price
+        let value = Double(availableSats) / 100_000_000 * price
         return WalletManager.currencyFormatter(fiatCurrency, fractionDigits: nil).string(from: NSNumber(value: value))
     }
+
+    /// Bitcoin received by this wallet but not confirmed yet (your own change is not
+    /// counted: it is part of a transaction you sent).
+    public var pendingIncomingSats: UInt64 {
+        guard !isEthereum else { return 0 }
+        let pending = transactions.reduce(UInt64(0)) { total, tx in
+            tx.confirmed || tx.net <= 0 ? total : total + UInt64(tx.net)
+        }
+        // A list from another wallet (still switching) never makes the balance negative.
+        return pending <= balanceSats ? pending : 0
+    }
+
+    /// The balance without coins still waiting for their first confirmation.
+    public var availableSats: UInt64 { balanceSats - pendingIncomingSats }
 
     // Formatters are expensive to create: one per configuration, reused on every render.
     static let groupingFormatter: NumberFormatter = {
@@ -216,11 +230,12 @@ extension WalletManager {
 
     public func refreshHomeData(force: Bool = false) async {
         guard activeRecord != nil else { return }
-        if isEthereum && homeShowFiat { await refreshEthereumPrice() }
+        if isEthereum && (homeShowFiat || homeShowPriceChart || homeShowCalculator) { await refreshEthereumPrice() }
         if homeShowFiat || homeShowPriceChart || homeShowCalculator {
             await refreshMarketData(force: force)
         }
-        if homeShowTransactions {
+        // Bitcoin always loads its history: it tells what is still pending.
+        if homeShowTransactions || !isEthereum {
             await refreshTransactions()
         }
     }
@@ -233,6 +248,15 @@ extension WalletManager {
             if let price = prices[currency] { fiatPrice = price }
         }
         guard homeShowPriceChart else { return }
+        if isEthereum {
+            let staleEth = lastEthHistoryFetch.map { Date().timeIntervalSince($0) > 12 * 3_600 } ?? true
+            if staleEth || ethPriceHistory.isEmpty,
+               let history = try? await BlockchainService.shared.fetchKrakenHistory(pair: "ETHUSD") {
+                ethPriceHistory = history
+                lastEthHistoryFetch = Date()
+            }
+            return
+        }
         // The full history (~1.5 MB) is downloaded at most every 12 hours and kept on
         // disk; in between, each refresh only appends the current price.
         if priceHistory.isEmpty, let cached = WalletManager.loadPriceHistoryCache() {
@@ -254,11 +278,15 @@ extension WalletManager {
     /// OHLC candles for a period in the chosen currency: 1D → 1 h, 1W → 4 h, 1M → 1 day,
     /// 6M → 5 days, 1Y → 1 week, All → 1 month. Built from the price history.
     public func priceCandles(_ period: PricePeriod) -> [PriceCandle] {
-        guard !priceHistory.isEmpty else { return [] }
+        // The coin of the wallet on screen.
+        let history = isEthereum ? ethPriceHistory : priceHistory
+        let usd = isEthereum ? ethUsdPrice : usdPrice
+        let fiat = isEthereum ? ethFiatPrice : fiatPrice
+        guard !history.isEmpty else { return [] }
         // Built once per data change (the chart re-renders on every published change).
-        let key = "\(period.rawValue)-\(priceHistory.count)-\(priceHistory.last?.date.timeIntervalSince1970 ?? 0)-\(usdPrice ?? 0)-\(fiatPrice ?? 0)"
+        let key = "\(isEthereum)-\(period.rawValue)-\(history.count)-\(history.last?.date.timeIntervalSince1970 ?? 0)-\(usd ?? 0)-\(fiat ?? 0)"
         if let cached = WalletManager.candleCache[key] { return cached }
-        let candles = buildCandles(period)
+        let candles = buildCandles(period, history: history, usdPrice: usd, fiatPrice: fiat)
         if WalletManager.candleCache.count > 12 { WalletManager.candleCache.removeAll() }
         WalletManager.candleCache[key] = candles
         return candles
@@ -266,7 +294,8 @@ extension WalletManager {
 
     private static var candleCache: [String: [PriceCandle]] = [:]
 
-    private func buildCandles(_ period: PricePeriod) -> [PriceCandle] {
+    private func buildCandles(_ period: PricePeriod, history priceHistory: [PricePoint],
+                              usdPrice: Double?, fiatPrice: Double?) -> [PriceCandle] {
         let factor = (fiatPrice != nil && usdPrice != nil && usdPrice! > 0) ? fiatPrice! / usdPrice! : 1
         let bucket: TimeInterval
         switch period {
@@ -388,7 +417,8 @@ extension WalletManager {
         for address in addresses.suffix(60) {
             // A failed request must never look like "no transactions": keep the list
             // already on screen and try again on the next refresh.
-            guard let txs = try? await BlockchainService.shared.fetchTransactions(address: address, isTestnet: isTestnet) else { return }
+            guard let txs = try? await BlockchainService.shared.fetchTransactions(address: address, isTestnet: isTestnet,
+                                                                                 maxPages: 8) else { return }
             for tx in txs { byTxid[tx.txid] = tx }
         }
         guard activeRecord?.primaryAddress == record.primaryAddress else { return }

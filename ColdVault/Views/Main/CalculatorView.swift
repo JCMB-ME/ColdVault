@@ -14,14 +14,17 @@ struct CalculatorView: View {
     @EnvironmentObject var walletManager: WalletManager
     @Environment(\.presentationMode) var presentationMode
 
-    static let units = ["BTC", "sats", "USD", "MXN", "JPY", "CNY"]
+    static let units = ["BTC", "sats", "ETH", "USD", "MXN", "JPY", "CNY"]
+    private static let crypto: Set<String> = ["BTC", "sats", "ETH"]
 
     /// Two rows, like the iPhone calculator's converter: type in the top one, the
     /// bottom one shows the result. ↑↓ swaps them; tap a code to pick another unit.
     @State private var input: String = "1"
     @State private var unit: String = "BTC"
     @State private var target: String = "USD"
+    /// Price of 1 BTC / 1 ETH in each currency.
     @State private var prices: [String: Double] = [:]
+    @State private var ethPrices: [String: Double] = [:]
     @State private var updated: Date?
     @State private var isLoading = false
     @State private var failed = false
@@ -55,7 +58,11 @@ struct CalculatorView: View {
         .presentationDragIndicator(.visible)
         .onAppear {
             target = walletManager.fiatCurrency
+            if walletManager.isEthereum { unit = "ETH" }
             if let price = walletManager.fiatPrice { prices[walletManager.fiatCurrency] = price }
+            if let usd = walletManager.usdPrice { prices["USD"] = usd }
+            if let price = walletManager.ethFiatPrice { ethPrices[walletManager.fiatCurrency] = price }
+            if let usd = walletManager.ethUsdPrice { ethPrices["USD"] = usd }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { focused = true }
         }
         .task {
@@ -80,7 +87,7 @@ struct CalculatorView: View {
                 TextField("0", text: $input)
                     .font(.system(size: 36, weight: .semibold))
                     .multilineTextAlignment(.trailing)
-                    .keyboardType(unit == "sats" ? .numberPad : .decimalPad)
+                    .keyboardType(unit == "sats" || unit == "JPY" ? .numberPad : .decimalPad)
                     .focused($focused)
                     .lineLimit(1)
                     .minimumScaleFactor(0.4)
@@ -151,20 +158,17 @@ struct CalculatorView: View {
                 Button {
                     onPick(item)
                 } label: {
+                    let title = (flag(item).map { "\($0) " } ?? "") + "\(item) · \(name(item))"
                     if item == selection {
-                        Label("\(item) · \(name(item))", systemImage: "checkmark")
+                        Label(title, systemImage: "checkmark")
                     } else {
-                        Text("\(item) · \(name(item))")
+                        Text(title)
                     }
                 }
             }
         } label: {
             HStack(spacing: 10) {
-                Text(symbol(selection))
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundColor(Color(uiColor: .label))
-                    .frame(width: 38, height: 38)
-                    .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+                unitIcon(selection)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 3) {
                         Text(selection)
@@ -184,9 +188,44 @@ struct CalculatorView: View {
         }
     }
 
+    /// Bitcoin and Ethereum logos in colour, the country flag for each currency.
+    @ViewBuilder
+    private func unitIcon(_ item: String) -> some View {
+        switch item {
+        case "BTC":
+            BitcoinLogo(size: 38)
+        case "ETH":
+            CoinLogo(coin: .ethereum, size: 24)
+                .frame(width: 38, height: 38)
+                .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+        case "sats":
+            Text("s")
+                .font(.system(size: 17, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .frame(width: 38, height: 38)
+                .background(Circle().fill(Color.orange))
+        default:
+            Text(flag(item) ?? item)
+                .font(.system(size: 24))
+                .frame(width: 38, height: 38)
+                .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+        }
+    }
+
+    private func flag(_ item: String) -> String? {
+        switch item {
+        case "USD": return "🇺🇸"
+        case "MXN": return "🇲🇽"
+        case "JPY": return "🇯🇵"
+        case "CNY": return "🇨🇳"
+        default: return nil
+        }
+    }
+
     private func name(_ item: String) -> String {
         switch item {
         case "BTC": return "Bitcoin"
+        case "ETH": return "Ethereum"
         case "sats": return "Satoshis"
         case "USD": return t("US dollar", "Dólar estadounidense")
         case "MXN": return t("Mexican peso", "Peso mexicano")
@@ -196,72 +235,70 @@ struct CalculatorView: View {
         }
     }
 
+    /// "1 BTC = $…" (or ETH) for the currency on screen.
     @ViewBuilder
     private var priceFooter: some View {
+        let code = [target, unit].first { !CalculatorView.crypto.contains($0) } ?? walletManager.fiatCurrency
+        let coin = [unit, target].first { $0 == "ETH" } ?? ([unit, target].contains { $0 == "BTC" || $0 == "sats" }
+                                                            ? "BTC" : (walletManager.isEthereum ? "ETH" : "BTC"))
+        let price = coin == "ETH" ? ethPrices[code] : prices[code]
         VStack(spacing: 6) {
-            let code = target == "BTC" || target == "sats" ? (unit == "BTC" || unit == "sats" ? walletManager.fiatCurrency : unit) : target
-            if let price = prices[code] {
-                Text("1 BTC = \(format(price, unit: code))")
+            if let price {
+                Text("1 \(coin) = \(format(price, unit: code))")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Color(uiColor: .label))
                     .modifier(RollingDigits())
                     .animation(.spring(response: 0.35, dampingFraction: 0.85), value: price)
-            }
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(failed ? Color.orange : Color.green)
-                    .frame(width: 6, height: 6)
-                    .opacity(isLoading ? 0.3 : 1)
-                    .animation(.easeInOut(duration: 0.4), value: isLoading)
-                Text(statusText)
-                    .foregroundColor(Palette.secondary)
+            } else if failed {
+                Text(t("Couldn't load prices", "No se pudieron cargar los precios"))
+                    .font(.system(size: 12))
+                    .foregroundColor(.orange)
             }
         }
-        .font(.system(size: 12))
         .padding(.horizontal, 24)
-    }
-
-    private var statusText: String {
-        if failed && prices.isEmpty { return t("Couldn't load prices", "No se pudieron cargar los precios") }
-        guard let updated = updated else { return t("Loading live prices…", "Cargando precios en vivo…") }
-        return t("Live price · updated ", "Precio en vivo · actualizado ")
-            + updated.formatted(date: .omitted, time: .standard)
     }
 
     // MARK: - Math
 
-    /// The typed amount in BTC.
-    private var amountInBTC: Double? {
+    /// The typed number.
+    private var typedValue: Double? {
         let separator = Locale.current.decimalSeparator ?? "."
         let normalized = input.trimmingCharacters(in: .whitespaces)
             .replacingOccurrences(of: separator, with: ".")
             .replacingOccurrences(of: ",", with: ".")
         guard let value = Double(normalized), value >= 0 else { return nil }
-        switch unit {
-        case "BTC": return value
-        case "sats": return value / 100_000_000
+        return value
+    }
+
+    /// Value of one unit in US dollars (every conversion goes through USD).
+    private func usdPerUnit(_ item: String) -> Double? {
+        switch item {
+        case "BTC": return prices["USD"]
+        case "sats": return prices["USD"].map { $0 / 100_000_000 }
+        case "ETH": return ethPrices["USD"]
         default:
-            guard let price = prices[unit], price > 0 else { return nil }
-            return value / price
+            guard let usd = prices["USD"], let local = prices[item], local > 0 else { return nil }
+            return usd / local
         }
     }
 
     private func converted(to item: String) -> Double? {
-        guard let btc = amountInBTC else { return nil }
-        switch item {
-        case "BTC": return btc
-        case "sats": return (btc * 100_000_000).rounded()
-        default: return prices[item].map { btc * $0 }
+        guard let value = typedValue else { return nil }
+        if item == unit { return value }
+        // BTC ↔ sats exactly, without prices.
+        switch (unit, item) {
+        case ("BTC", "sats"): return (value * 100_000_000).rounded()
+        case ("sats", "BTC"): return value / 100_000_000
+        default: break
         }
-    }
-
-    private func symbol(_ item: String) -> String {
-        switch item {
-        case "USD", "MXN": return "$"
-        case "JPY", "CNY": return "¥"
-        case "BTC": return "₿"
-        default: return "s"
-        }
+        // A coin straight to a currency when its quote is there.
+        if unit == "ETH", let price = ethPrices[item] { return value * price }
+        if item == "ETH", let price = ethPrices[unit], price > 0 { return value / price }
+        if unit == "BTC", let price = prices[item] { return value * price }
+        if item == "BTC", let price = prices[unit], price > 0 { return value / price }
+        guard let from = usdPerUnit(unit), let to = usdPerUnit(item), to > 0 else { return nil }
+        let result = value * from / to
+        return item == "sats" ? result.rounded() : result
     }
 
     private static let btcFormatter: NumberFormatter = {
@@ -281,7 +318,7 @@ struct CalculatorView: View {
 
     private func format(_ value: Double, unit item: String) -> String {
         switch item {
-        case "BTC": return CalculatorView.btcFormatter.string(from: NSNumber(value: value)) ?? "\(value)"
+        case "BTC", "ETH": return CalculatorView.btcFormatter.string(from: NSNumber(value: value)) ?? "\(value)"
         case "sats": return CalculatorView.satsFormatter.string(from: NSNumber(value: value)) ?? "\(Int64(value))"
         default:
             let formatter = NumberFormatter()
@@ -299,7 +336,7 @@ struct CalculatorView: View {
         let text: String
         switch item {
         case "sats": text = String(Int64(value.rounded()))
-        case "BTC":
+        case "BTC", "ETH":
             text = String(format: "%.8f", value)
                 .replacingOccurrences(of: "0+$", with: "", options: .regularExpression)
                 .replacingOccurrences(of: "\\.$", with: "", options: .regularExpression)
@@ -337,8 +374,12 @@ struct CalculatorView: View {
     private func loadPrices() async {
         isLoading = true
         defer { isLoading = false }
-        if let fresh = try? await BlockchainService.shared.fetchFiatPrices(), !fresh.isEmpty {
-            prices = fresh
+        async let btcCall = try? BlockchainService.shared.fetchFiatPrices()
+        async let ethCall = try? BlockchainService.shared.fetchSpotPrices(base: "ETH")
+        let (btc, eth) = await (btcCall, ethCall)
+        if let eth, !eth.isEmpty { ethPrices = eth }
+        if let btc, !btc.isEmpty {
+            prices = btc
             updated = Date()
             failed = false
         } else {
@@ -369,7 +410,7 @@ struct CalculatorCard: View {
                     Text(lang == .english ? "Calculator" : "Calculadora")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
-                    Text("BTC · sats · USD · MXN · JPY · CNY")
+                    Text(walletManager.isEthereum ? "ETH · USD · MXN · JPY · CNY" : "BTC · sats · USD · MXN · JPY · CNY")
                         .font(.system(size: 12))
                         .foregroundColor(Palette.secondary)
                         .lineLimit(1)

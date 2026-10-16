@@ -140,6 +140,10 @@ public struct SettingsView: View {
                         Toggle("", isOn: $walletManager.alwaysShowAccountDots).labelsHidden()
                     }
                     SettingsDivider(inset: 60)
+                    SettingsRow(title: t("Decreasing decimals", "Decimales decrecientes"), icon: "textformat.size") {
+                        Toggle("", isOn: $walletManager.progressiveDecimals).labelsHidden()
+                    }
+                    SettingsDivider(inset: 60)
                     SettingsRow(title: t("Swipe button", "Botón deslizable"), icon: "hand.draw") {
                         Toggle("", isOn: $walletManager.swipeActionButton).labelsHidden()
                     }
@@ -292,6 +296,17 @@ public struct SettingsView: View {
                                     icon: "circle.lefthalf.filled")
                     }
                     SettingsDivider(inset: 60)
+                    Menu {
+                        ForEach(["system", "es", "en"], id: \.self) { choice in
+                            Button { walletManager.languageChoice = choice } label: {
+                                menuLabel(languageName(choice), selected: walletManager.languageChoice == choice)
+                            }
+                        }
+                    } label: {
+                        SettingsRow(title: t("Language", "Idioma"), value: languageName(walletManager.languageChoice),
+                                    chevron: true, icon: "globe")
+                    }
+                    SettingsDivider(inset: 60)
                     SettingsRow(title: "Liquid Glass", icon: "drop") {
                         Toggle("", isOn: $walletManager.liquidGlass).labelsHidden()
                     }
@@ -356,6 +371,14 @@ public struct SettingsView: View {
 
     private var transactionCountName: String {
         walletManager.homeTransactionCount == 0 ? t("All", "Todas") : "\(walletManager.homeTransactionCount)"
+    }
+
+    private func languageName(_ choice: String) -> String {
+        switch choice {
+        case "es": return "Español"
+        case "en": return "English"
+        default: return t("iPhone language", "Idioma del iPhone")
+        }
     }
 
     @ViewBuilder
@@ -439,10 +462,14 @@ public struct SettingsView: View {
                     HStack(spacing: 12) {
                         WalletAvatar(wallet: wallet, images: walletManager.walletImages, size: 44)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(wallet.bundle.name)
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(Color(uiColor: .label))
-                                .lineLimit(1)
+                            // The coin tells the wallets apart.
+                            HStack(spacing: 6) {
+                                Text(wallet.bundle.name)
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(Color(uiColor: .label))
+                                    .lineLimit(1)
+                                CoinLogo(coin: wallet.bundle.accounts.first?.record.coinKind ?? .bitcoin, size: 16)
+                            }
                             Text(backupSubtitle(wallet))
                                 .font(.system(size: 13))
                                 .foregroundColor(Palette.secondary)

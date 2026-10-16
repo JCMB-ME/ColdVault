@@ -224,7 +224,10 @@ extension WalletManager {
 
     /// Live ETH price in the chosen currency.
     func refreshEthereumPrice() async {
-        if let price = await EthereumRPC(isTestnet: false).price(currency: fiatCurrency) {
+        if let prices = try? await BlockchainService.shared.fetchSpotPrices(base: "ETH") {
+            ethUsdPrice = prices["USD"]
+            if let price = prices[fiatCurrency] { ethFiatPrice = price }
+        } else if let price = await EthereumRPC(isTestnet: false).price(currency: fiatCurrency) {
             ethFiatPrice = price
         }
     }

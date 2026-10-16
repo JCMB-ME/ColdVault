@@ -205,19 +205,25 @@ public struct DashboardView: View {
         }
     }
 
-    /// BTC with more than 2 decimals: the whole part and the first 2 decimals keep the
-    /// big size (as with 2 decimals), the rest is small, the size of the fiat value.
+    /// "Decreasing decimals" (Settings): the whole part keeps the big size and each
+    /// decimal is a little smaller than the one before, so all of them fit. Off: every
+    /// digit has the same size (the line shrinks as a whole when it is long).
     private var balanceText: Text {
         let text = walletManager.formattedBalance
         let separator = Locale.current.decimalSeparator ?? "."
         let big = Font.system(size: 64, weight: .bold, design: .default)
-        guard walletManager.isEthereum || walletManager.displayUnit == .btc, let range = text.range(of: separator),
-              text.distance(from: range.upperBound, to: text.endIndex) > 2 else {
+        guard walletManager.progressiveDecimals,
+              walletManager.isEthereum || walletManager.displayUnit == .btc,
+              let range = text.range(of: separator) else {
             return Text(text).font(big)
         }
-        let split = text.index(range.upperBound, offsetBy: 2)
-        return Text(text[..<split]).font(big)
-            + Text(text[split...]).font(.system(size: 17, weight: .semibold, design: .default))
+        var result = Text(text[..<range.upperBound]).font(big)
+        var size: CGFloat = 64
+        for character in text[range.upperBound...] {
+            size = max(13, size * 0.84)
+            result = result + Text(String(character)).font(.system(size: size, weight: .bold, design: .default))
+        }
+        return result
     }
 
     private var balanceDisplay: some View {
@@ -393,6 +399,25 @@ public struct DashboardView: View {
 
     private var belowBalance: some View {
         VStack(spacing: 14) {
+            // Received but not confirmed yet: not part of the balance until it is.
+            if walletManager.pendingIncomingSats > 0 {
+                HStack(spacing: 6) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(t("Pending", "Pendiente") + " +"
+                         + walletManager.format(units: walletManager.pendingIncomingSats, coin: walletManager.activeCoin)
+                         + " " + walletManager.unitLabel(walletManager.activeCoin))
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                .foregroundColor(.orange)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(Color.orange.opacity(0.12)))
+                .transition(.opacity.combined(with: .scale))
+            }
+
             if let fiat = walletManager.formattedFiatBalance {
                 Text("≈ \(fiat)")
                     .font(.system(size: 17, weight: .medium))
@@ -743,16 +768,23 @@ struct TransactionCard: View {
                     Text(timeText)
                         .font(.system(size: 13))
                         .foregroundColor(Palette.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
-                Spacer()
+                Spacer(minLength: 8)
+                // Always one line: the amount shrinks a little instead of wrapping.
                 VStack(alignment: .trailing, spacing: 3) {
                     Text("\(received ? "+" : "−")\(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin))")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
                     Text(walletManager.unitLabel(walletManager.activeCoin))
                         .font(.system(size: 12))
                         .foregroundColor(Palette.secondary)
+                        .lineLimit(1)
                 }
+                .layoutPriority(1)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
@@ -812,7 +844,8 @@ struct MinimalPriceChart: View {
     var body: some View {
         let candles = walletManager.priceCandles(period)
         VStack(spacing: 6) {
-            Text(t("Bitcoin price · ", "Precio de Bitcoin · ") + period.title(lang))
+            Text((walletManager.isEthereum ? t("Ethereum price · ", "Precio de Ethereum · ")
+                                           : t("Bitcoin price · ", "Precio de Bitcoin · ")) + period.title(lang))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(Palette.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)

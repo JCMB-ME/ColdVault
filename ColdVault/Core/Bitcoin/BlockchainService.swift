@@ -207,6 +207,9 @@ public final class BlockchainService {
     /// Full history of a set of scripts through Electrum: histories, raw transactions and
     /// block times, all pipelined. Net amounts come from our outputs minus our spent
     /// outputs (every funding transaction of ours is in the same history).
+    /// The most transactions a history shows.
+    static let historyLimit = 300
+
     public func electrumWalletTransactions(scripts: [Data], ownScripts: Set<Data>, isTestnet: Bool) async throws -> [WalletTransaction] {
         let client = ElectrumClient.client(isTestnet: isTestnet)
         // Block times are cached by height: keep the two networks apart.
@@ -222,6 +225,15 @@ public final class BlockchainService {
                     heights[txid.lowercased()] = height
                 }
             }
+        }
+
+        // Very busy addresses (e.g. Satoshi's) have tens of thousands of transactions:
+        // only the newest ones are downloaded.
+        if heights.count > BlockchainService.historyLimit {
+            let newest = heights.sorted { lhs, rhs in
+                (lhs.value <= 0 ? Int.max : lhs.value) > (rhs.value <= 0 ? Int.max : rhs.value)
+            }.prefix(BlockchainService.historyLimit)
+            heights = Dictionary(uniqueKeysWithValues: newest.map { ($0.key, $0.value) })
         }
 
         var transactions = [String: Transaction]()
@@ -377,8 +389,9 @@ public final class BlockchainService {
     /// Live BTC price in every currency (Coinbase spot exchange rates: one request,
     /// updated continuously, direct BTC/MXN, BTC/JPY, BTC/CNY, BTC/USD quotes).
     /// Rate limits are per IP, i.e. per iPhone.
-    public func fetchSpotPrices() async throws -> [String: Double] {
-        guard let url = URL(string: "https://api.coinbase.com/v2/exchange-rates?currency=BTC") else {
+    public func fetchSpotPrices(base: String = "BTC") async throws -> [String: Double] {
+        guard base == "BTC" || base == "ETH",
+              let url = URL(string: "https://api.coinbase.com/v2/exchange-rates?currency=\(base)") else {
             throw BlockchainError.invalidResponse
         }
         let data = try await get(url: url)
@@ -391,6 +404,32 @@ public final class BlockchainService {
         }
         guard result["USD"] != nil else { throw BlockchainError.invalidResponse }
         return result
+    }
+
+    /// Price history from Kraken's public candles: weekly (all time), daily (~2 years)
+    /// and hourly (~30 days) closes merged, oldest first.
+    public func fetchKrakenHistory(pair: String) async throws -> [PricePoint] {
+        guard pair.allSatisfy({ $0.isASCII && $0.isLetter }) else { throw BlockchainError.invalidResponse }
+        var merged = [PricePoint]()
+        for interval in [10_080, 1_440, 60] {
+            guard let url = URL(string: "https://api.kraken.com/0/public/OHLC?pair=\(pair)&interval=\(interval)") else { continue }
+            let data = try await get(url: url)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let result = object["result"] as? [String: Any],
+                  let rows = result.first(where: { $0.key != "last" })?.value as? [[Any]] else {
+                throw BlockchainError.invalidResponse
+            }
+            let points = rows.compactMap { row -> PricePoint? in
+                guard row.count > 4, let time = (row[0] as? NSNumber)?.doubleValue,
+                      let text = row[4] as? String, let close = Double(text), close > 0 else { return nil }
+                return PricePoint(date: Date(timeIntervalSince1970: time), price: close)
+            }
+            // Finer candles replace the coarser ones where they overlap.
+            if let start = points.first?.date { merged.removeAll { $0.date >= start } }
+            merged += points
+        }
+        guard !merged.isEmpty else { throw BlockchainError.invalidResponse }
+        return merged
     }
 
     /// BTC/USD from Kraken's public ticker: only used if Coinbase and mempool.space are down.

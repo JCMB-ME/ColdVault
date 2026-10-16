@@ -294,6 +294,47 @@ struct WalletsView: View {
         .background(Capsule().fill(SettingsStyle.groupFill))
     }
 
+    // MARK: - Folding cards
+
+    /// Folded cards (wallet slots, plus "watch-<coin>"), remembered between launches.
+    @AppStorage("collapsedWalletCards") private var collapsedRaw = ""
+
+    private var collapsedKeys: Set<String> {
+        Set(collapsedRaw.split(separator: "\n").map(String.init))
+    }
+
+    private func toggleCollapsed(_ key: String) {
+        var keys = collapsedKeys
+        if keys.contains(key) { keys.remove(key) } else { keys.insert(key) }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) {
+            collapsedRaw = keys.sorted().joined(separator: "\n")
+        }
+    }
+
+    private func collapseButton(_ collapsed: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Palette.secondary)
+                .rotationEffect(.degrees(collapsed ? -90 : 0))
+                .frame(width: 32, height: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(collapsed ? t("Expand", "Expandir") : t("Collapse", "Contraer")))
+    }
+
+    /// Sum of the wallet's accounts (nil until every balance is known).
+    private func walletTotal(_ wallet: LibraryWallet) -> UInt64? {
+        var total: UInt64 = 0
+        for account in wallet.bundle.accounts {
+            guard let sats = walletManager.cachedBalance(of: account.record) else { return nil }
+            total += sats
+        }
+        return total
+    }
+
     private func isWatchOnly(_ wallet: LibraryWallet) -> Bool {
         wallet.bundle.accounts.first?.record.type == .watchOnly
     }
@@ -302,6 +343,8 @@ struct WalletsView: View {
 
     private var watchOnlyCard: some View {
         let wallets = watchWallets
+        let key = "watch-\(coin.rawValue)"
+        let collapsed = collapsedKeys.contains(key)
         return VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Image(systemName: "eye")
@@ -318,22 +361,29 @@ struct WalletsView: View {
                         .font(.system(size: 13))
                         .foregroundColor(Palette.secondary)
                 }
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { toggleCollapsed(key) }
+                collapseButton(collapsed) { toggleCollapsed(key) }
             }
             .padding(.horizontal, 14)
             .padding(.top, 14)
-            .padding(.bottom, 10)
+            .padding(.bottom, collapsed ? 14 : 10)
 
-            VStack(spacing: 4) {
-                ForEach(wallets) { wallet in
-                    ForEach(Array(wallet.bundle.accounts.enumerated()), id: \.element.id) { index, account in
-                        watchRow(wallet: wallet, index: index, account: account)
+            if !collapsed {
+                VStack(spacing: 4) {
+                    ForEach(wallets) { wallet in
+                        ForEach(Array(wallet.bundle.accounts.enumerated()), id: \.element.id) { index, account in
+                            watchRow(wallet: wallet, index: index, account: account)
+                        }
                     }
                 }
+                .padding(.horizontal, 4)
+                .padding(.bottom, 8)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .padding(.horizontal, 4)
-            .padding(.bottom, 8)
         }
+        .clipped()
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -416,9 +466,7 @@ struct WalletsView: View {
                 .font(.system(size: 16, weight: selected ? .semibold : .regular))
                 .foregroundColor(Color(uiColor: .label))
                 .lineLimit(1)
-            if logo {
-                CoinLogo(coin: coin, size: 14)
-            }
+
         }
     }
 
@@ -456,6 +504,7 @@ struct WalletsView: View {
 
     private func walletCard(_ wallet: LibraryWallet) -> some View {
         let isActive = wallet.slot == walletManager.activeSlot
+        let collapsed = collapsedKeys.contains(wallet.slot)
 
         return VStack(spacing: 0) {
             // Header: avatar, name and type, options.
@@ -464,22 +513,25 @@ struct WalletsView: View {
                     WalletAvatar(wallet: wallet, images: walletManager.walletImages, size: 46, highlighted: isActive)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    // The coin of the wallet (bitcoin today; more coins later).
-                    HStack(spacing: 6) {
-                        Text(wallet.bundle.name)
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(Color(uiColor: .label))
-                            .lineLimit(1)
-                        CoinLogo(coin: coin, size: 17)
-                    }
-                    if !subtitle(wallet).isEmpty {
+                    Text(wallet.bundle.name)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                        .lineLimit(1)
+                    if collapsed, let total = walletTotal(wallet) {
+                        // Folded: the wallet's total instead of its accounts.
+                        amountLabel(total)
+                            .transition(.opacity)
+                    } else if !subtitle(wallet).isEmpty {
                         Text(subtitle(wallet))
                             .font(.system(size: 13))
                             .foregroundColor(Palette.secondary)
                             .lineLimit(1)
                     }
                 }
-                Spacer(minLength: 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { toggleCollapsed(wallet.slot) }
+                collapseButton(collapsed) { toggleCollapsed(wallet.slot) }
                 Menu {
                     Button {
                         renameText = wallet.bundle.name
@@ -530,9 +582,10 @@ struct WalletsView: View {
             }
             .padding(.horizontal, 14)
             .padding(.top, 14)
-            .padding(.bottom, 10)
+            .padding(.bottom, collapsed ? 14 : 10)
 
             // Accounts
+            if !collapsed {
             VStack(spacing: 4) {
                 ForEach(Array(wallet.bundle.accounts.enumerated()), id: \.element.id) { index, account in
                     accountRow(wallet: wallet, index: index, account: account,
@@ -572,7 +625,10 @@ struct WalletsView: View {
             }
             .padding(.horizontal, 4)
             .padding(.bottom, 8)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
+        .clipped()
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
