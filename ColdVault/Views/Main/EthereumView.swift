@@ -215,7 +215,7 @@ struct EthereumView: View {
                     .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
                 }
                 SlideToConfirm(title: t("Slide to send", "Desliza para enviar"), isLoading: isWorking) { send(plan) }
-                Button(t("Edit", "Editar")) { plan = nil }
+                Button(t("Edit", "Editar")) { self.plan = nil }
                     .font(.system(size: 14, weight: .semibold))
                     .disabled(isWorking)
             } else {
