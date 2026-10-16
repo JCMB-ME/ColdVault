@@ -347,6 +347,20 @@ struct BitcoinLogo: View {
     }
 }
 
+/// The logo of a wallet's coin.
+struct CoinLogo: View {
+    let coin: CoinKind
+    var size: CGFloat = 17
+
+    var body: some View {
+        Image(coin == .ethereum ? "EthereumLogo" : "BitcoinLogo")
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .accessibilityLabel(Text(coin == .ethereum ? "Ethereum" : "Bitcoin"))
+    }
+}
+
 /// Icon in a small circle at the start of a settings / card row.
 struct RowIcon: View {
     let systemName: String

@@ -167,7 +167,12 @@ extension WalletManager {
     }
 
     public var formattedFiatBalance: String? {
-        // Testnet coins have no price; they are shown at the bitcoin price anyway.
+        // Testnet coins have no price; they are shown at the real price anyway.
+        if isEthereum {
+            guard homeShowFiat, let price = ethFiatPrice else { return nil }
+            let value = Double(balanceSats) / 1_000_000_000 * price
+            return WalletManager.currencyFormatter(fiatCurrency, fractionDigits: nil).string(from: NSNumber(value: value))
+        }
         guard homeShowFiat, let price = fiatPrice else { return nil }
         let value = Double(balanceSats) / 100_000_000 * price
         return WalletManager.currencyFormatter(fiatCurrency, fractionDigits: nil).string(from: NSNumber(value: value))
@@ -211,6 +216,7 @@ extension WalletManager {
 
     public func refreshHomeData(force: Bool = false) async {
         guard activeRecord != nil else { return }
+        if isEthereum && homeShowFiat { await refreshEthereumPrice() }
         if homeShowFiat || homeShowPriceChart || homeShowCalculator {
             await refreshMarketData(force: force)
         }
@@ -331,6 +337,10 @@ extension WalletManager {
     /// Full transaction history of every used address (newest first).
     func refreshTransactions() async {
         guard let record = activeRecord else { return }
+        if record.coinKind == .ethereum {
+            await refreshEthereumTransactions()
+            return
+        }
         let isTestnet = record.isTestnet
         var addresses = [String]()
         var ownScripts = Set<Data>()
@@ -440,12 +450,16 @@ extension WalletManager {
             throw NSError(domain: "ColdVault", code: 400, userInfo: [NSLocalizedDescriptionKey:
                 appLanguage == .english ? "Enter a name." : "Escribe un nombre."])
         }
-        guard let decoded = BitcoinAddress.decode(address), decoded.type != .unknown else {
-            throw WalletError.invalidRecipient
-        }
         var cleaned = contact
         cleaned.name = name
-        cleaned.address = decoded.type == .p2pkh || decoded.type == .p2sh ? address : address.lowercased()
+        if let ether = EthereumAddress.parse(address) {
+            cleaned.address = EthereumAddress.checksummed(ether)
+        } else {
+            guard let decoded = BitcoinAddress.decode(address), decoded.type != .unknown else {
+                throw WalletError.invalidRecipient
+            }
+            cleaned.address = decoded.type == .p2pkh || decoded.type == .p2sh ? address : address.lowercased()
+        }
         cleaned.note = contact.note.trimmingCharacters(in: .whitespacesAndNewlines)
         if let index = contacts.firstIndex(where: { $0.id == contact.id }) {
             contacts[index] = cleaned
@@ -486,7 +500,8 @@ extension WalletManager {
     /// Writes what the widget shows into the shared App Group container (public
     /// display data only: no keys, no addresses) and asks WidgetKit to redraw.
     func publishWidget() {
-        guard let defaults = UserDefaults(suiteName: WalletManager.widgetSuite) else { return }
+        // The widget shows bitcoin: an Ethereum wallet on screen leaves it as it was.
+        guard !isEthereum, let defaults = UserDefaults(suiteName: WalletManager.widgetSuite) else { return }
         defaults.set(hasWallet, forKey: "widget.hasWallet")
         defaults.set(formattedBalance, forKey: "widget.balance")
         defaults.set(displayUnit.rawValue, forKey: "widget.unit")
@@ -610,7 +625,7 @@ extension WalletManager {
     /// Subscribes to the addresses that can receive or hold coins right now; the
     /// server then pushes a notification when any of them changes.
     func subscribeForPush() async {
-        guard let record = activeRecord else { return }
+        guard let record = activeRecord, record.coinKind == .bitcoin else { return }
         var scripts = [Data]()
         if usesAddressRotation {
             let current = indexes(for: record)

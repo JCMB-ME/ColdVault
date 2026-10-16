@@ -119,17 +119,24 @@ public struct DashboardView: View {
                 showBalancePage()
             }
         }
+        // Each coin has its own Receive / Send screens (same look).
         .sheet(isPresented: $showReceiveSheet) {
-            ReceiveView()
-                .environmentObject(walletManager)
+            Group {
+                if walletManager.isEthereum { EthReceiveView() } else { ReceiveView() }
+            }
+            .environmentObject(walletManager)
         }
         .sheet(isPresented: $showSendSheet) {
-            SendView()
-                .environmentObject(walletManager)
+            Group {
+                if walletManager.isEthereum { EthSendView() } else { SendView() }
+            }
+            .environmentObject(walletManager)
         }
         .sheet(item: $sendRecipient) { recipient in
-            SendView(recipient: recipient.address)
-                .environmentObject(walletManager)
+            Group {
+                if walletManager.isEthereum { EthSendView(recipient: recipient.address) } else { SendView(recipient: recipient.address) }
+            }
+            .environmentObject(walletManager)
         }
         .sheet(isPresented: $showHistory) {
             TransactionHistoryView()
@@ -204,7 +211,7 @@ public struct DashboardView: View {
         let text = walletManager.formattedBalance
         let separator = Locale.current.decimalSeparator ?? "."
         let big = Font.system(size: 64, weight: .bold, design: .default)
-        guard walletManager.displayUnit == .btc, let range = text.range(of: separator),
+        guard walletManager.isEthereum || walletManager.displayUnit == .btc, let range = text.range(of: separator),
               text.distance(from: range.upperBound, to: text.endIndex) > 2 else {
             return Text(text).font(big)
         }
@@ -222,11 +229,11 @@ public struct DashboardView: View {
                 .modifier(RollingDigits())
 
             // The unit slides up and is replaced from below.
-            Text(walletManager.displayUnit.rawValue)
+            Text(walletManager.unitLabel(walletManager.activeCoin))
                 .font(.system(size: 22, weight: .medium, design: .default))
                 .foregroundColor(Palette.secondary)
                 .fixedSize()
-                .id(walletManager.displayUnit)
+                .id(walletManager.unitLabel(walletManager.activeCoin))
                 .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
                                         removal: .move(edge: .top).combined(with: .opacity)))
         }
@@ -261,9 +268,14 @@ public struct DashboardView: View {
         let account: Int
     }
 
-    /// Every account of every wallet, in the order of the Wallets page.
+    /// Wallets of the coin on screen (bitcoin and Ethereum are never mixed).
+    private var sameCoinWallets: [LibraryWallet] {
+        walletManager.visibleLibrary.filter { $0.bundle.accounts.first?.record.coinKind == walletManager.activeCoin }
+    }
+
+    /// Every account of every wallet of this coin, in the order of the Wallets page.
     private var accountTargets: [AccountTarget] {
-        walletManager.visibleLibrary.flatMap { wallet in
+        sameCoinWallets.flatMap { wallet in
             wallet.bundle.accounts.indices.map { AccountTarget(slot: wallet.slot, account: $0) }
         }
     }
@@ -365,7 +377,7 @@ public struct DashboardView: View {
     private var accountDots: some View {
         let current = currentTarget
         return HStack(spacing: 12) {
-            ForEach(walletManager.visibleLibrary) { wallet in
+            ForEach(sameCoinWallets) { wallet in
                 HStack(spacing: 5) {
                     ForEach(wallet.bundle.accounts.indices, id: \.self) { index in
                         let active = current == AccountTarget(slot: wallet.slot, account: index)
@@ -501,7 +513,7 @@ public struct DashboardView: View {
                         badge(icon: "eye", text: L10n.watchOnlyBadge(lang))
                     }
                     if walletManager.isTestnet {
-                        badge(icon: "testtube.2", text: "TESTNET4")
+                        badge(icon: "testtube.2", text: walletManager.isEthereum ? "SEPOLIA" : "TESTNET4")
                     }
                 }
             }
@@ -527,7 +539,7 @@ public struct DashboardView: View {
 
     /// With several wallets or accounts, which one is on screen.
     private var showsAccountName: Bool {
-        walletManager.visibleLibrary.count > 1 || (walletManager.activeWallet?.bundle.accounts.count ?? 0) > 1
+        sameCoinWallets.count > 1 || (walletManager.activeWallet?.bundle.accounts.count ?? 0) > 1
     }
 
     private func badge(icon: String?, text: String) -> some View {
@@ -555,6 +567,7 @@ public struct DashboardView: View {
     }
 
     private func toggleDisplayUnit() {
+        guard !walletManager.isEthereum else { return }          // ETH has one unit
         let generator = UIImpactFeedbackGenerator(style: .light)
         generator.impactOccurred()
         // Digits roll to the new value (iOS 17+) and the unit swaps with a spring.
@@ -595,7 +608,7 @@ struct HomeExtrasView: View {
     var body: some View {
         VStack(spacing: 28) {
             // Contacts first (tap to send; not on watch-only wallets), then the history.
-            if walletManager.homeShowContacts && !walletManager.contacts.isEmpty && !walletManager.isWatchOnly {
+            if walletManager.homeShowContacts && !coinContacts.isEmpty && !walletManager.isWatchOnly {
                 contactsRow
             }
             if walletManager.homeShowCalculator {
@@ -642,11 +655,16 @@ struct HomeExtrasView: View {
         walletManager.homeTransactionCount > 0 ? walletManager.homeTransactionCount : Int.max
     }
 
+    /// Contacts whose address belongs to the coin on screen.
+    private var coinContacts: [Contact] {
+        walletManager.contacts.filter { (EthereumAddress.parse($0.address) != nil) == walletManager.isEthereum }
+    }
+
     // MARK: Contacts (tap to send)
     private var contactsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 16) {
-                ForEach(walletManager.contacts) { contact in
+                ForEach(coinContacts) { contact in
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         onSendToContact(contact)
@@ -728,10 +746,10 @@ struct TransactionCard: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 3) {
-                    Text("\(received ? "+" : "−")\(walletManager.format(sats: UInt64(abs(transaction.net))))")
+                    Text("\(received ? "+" : "−")\(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin))")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
-                    Text(walletManager.displayUnit.rawValue)
+                    Text(walletManager.unitLabel(walletManager.activeCoin))
                         .font(.system(size: 12))
                         .foregroundColor(Palette.secondary)
                 }

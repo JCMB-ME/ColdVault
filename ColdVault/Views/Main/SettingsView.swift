@@ -207,7 +207,7 @@ public struct SettingsView: View {
                 SettingsSection(header: t("Tools", "Herramientas"),
                                 footer: t("Sign PSBT: cosign multisig or transactions made in Sparrow, Nunchuk or Electrum.",
                                           "Firmar PSBT: cofirma multisig o transacciones hechas en Sparrow, Nunchuk o Electrum.")) {
-                    if !walletManager.isWatchOnly {
+                    if !walletManager.isWatchOnly && !walletManager.isEthereum {
                         Button { showSignPSBT = true } label: {
                             SettingsRow(title: t("Sign PSBT", "Firmar PSBT"), chevron: true, icon: "signature")
                         }
@@ -306,7 +306,7 @@ public struct SettingsView: View {
                                     icon: "server.rack")
                     }
                     SettingsDivider(inset: 60)
-                    SettingsRow(title: "Testnet4", icon: "testtube.2") {
+                    SettingsRow(title: walletManager.isEthereum ? "Sepolia" : "Testnet4", icon: "testtube.2") {
                         if isSwitchingNetwork {
                             ProgressView()
                         } else {
@@ -956,7 +956,7 @@ struct BackupDetailView: View {
                             .transition(.opacity)
                     }
 
-                    if isPhraseWallet {
+                    if isPhraseWallet && wallet?.bundle.accounts.first?.record.coinKind != .ethereum {
                         SettingsSection(header: t("Watch-only", "Observación"),
                                         footer: t("Public keys only: lets another device see your balance and prepare transactions, never spend.",
                                                   "Solo claves públicas: permite a otro dispositivo ver tu saldo y preparar transacciones, nunca gastar.")) {

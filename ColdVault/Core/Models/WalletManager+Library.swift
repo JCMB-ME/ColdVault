@@ -221,6 +221,10 @@ extension WalletManager {
     /// Adds account n+1 to the selected seed-phrase wallet (needs Face ID to derive its
     /// keys) and selects it.
     public func addAccount(name: String?) async throws {
+        if isEthereum {
+            try await addEthereumAccount(name: name)
+            return
+        }
         guard let wallet = activeWallet, let record = activeRecord, canAddAccounts else {
             throw WalletError.unsupportedForWatchOnly
         }

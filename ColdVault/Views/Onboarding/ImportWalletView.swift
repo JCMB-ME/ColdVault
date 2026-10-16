@@ -26,7 +26,65 @@ public struct ImportWalletView: View {
     /// What the input is, worked out once per edit (not on every render).
     @State private var detection = Detection.empty
 
-    public init() {}
+    @State private var coin: CoinKind
+
+    public init(coin: CoinKind = .bitcoin) {
+        _coin = State(initialValue: coin)
+    }
+
+    /// Ethereum input: phrase, 64-hex private key or 0x address (watch-only).
+    private var ethKind: String? {
+        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if EthereumAddress.parse(text) != nil { return t("Ethereum address (watch-only)", "Dirección de Ethereum (solo observación)") }
+        if BIP39.validateMnemonic(text) { return t("Recovery phrase", "Frase de recuperación") }
+        let hex = text.lowercased().replacingOccurrences(of: "0x", with: "")
+        if hex.count == 64, let key = hex.hexDecoded, Secp256k1.isValidPrivateKey(key) { return t("Private key", "Clave privada") }
+        return nil
+    }
+
+    private var coinPicker: some View {
+        HStack(spacing: 4) {
+            ForEach(CoinKind.allCases) { item in
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { coin = item }
+                    errorMessage = nil
+                } label: {
+                    HStack(spacing: 7) {
+                        CoinLogo(coin: item, size: 18)
+                        Text(item == .bitcoin ? "Bitcoin" : "Ethereum")
+                            .font(.system(size: 14, weight: coin == item ? .semibold : .regular))
+                    }
+                    .foregroundColor(coin == item ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                    .frame(maxWidth: .infinity, minHeight: 40)
+                    .background(Capsule().fill(coin == item ? Color(uiColor: .label) : Color.clear))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(Capsule().fill(SettingsStyle.groupFill))
+    }
+
+    @ViewBuilder
+    private var ethDetectionCard: some View {
+        if !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            HStack(spacing: 12) {
+                Image(systemName: ethKind == nil ? "exclamationmark" : "checkmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(ethKind == nil ? Color.orange : Color.green))
+                Text(ethKind ?? t("Not a phrase, private key or Ethereum address.", "No es una frase, clave privada ni dirección de Ethereum."))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                Spacer()
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(SettingsStyle.groupFill))
+        }
+    }
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -57,6 +115,7 @@ public struct ImportWalletView: View {
     }
 
     private var isMnemonic: Bool {
+        if coin == .ethereum { return BIP39.validateMnemonic(inputText.trimmingCharacters(in: .whitespacesAndNewlines)) }
         if case .mnemonic = detection.payload { return true }
         return false
     }
@@ -79,10 +138,15 @@ public struct ImportWalletView: View {
                     }
                     .padding(.horizontal, 28)
 
+                    coinPicker
+                        .padding(.horizontal, 20)
+
                     inputCard
                         .padding(.horizontal, 20)
 
-                    detectionCard
+                    Group {
+                        if coin == .ethereum { ethDetectionCard } else { detectionCard }
+                    }
                         .padding(.horizontal, 20)
                         .animation(.spring(response: 0.45, dampingFraction: 0.82), value: detectionKey)
 
@@ -337,6 +401,7 @@ public struct ImportWalletView: View {
     // MARK: - Import
 
     private var canImport: Bool {
+        if coin == .ethereum { return ethKind != nil }
         if let descriptors = detection.descriptors {
             if case .success = descriptors { return true }
             return false
@@ -351,17 +416,22 @@ public struct ImportWalletView: View {
         isImporting = true
         errorMessage = nil
         let input = inputText
+        let chosenCoin = coin
         let isSecret: Bool
-        switch detection.payload {
-        case .mnemonic, .privateKey: isSecret = true
-        default: isSecret = false
+        if chosenCoin == .ethereum {
+            isSecret = EthereumAddress.parse(input.trimmingCharacters(in: .whitespacesAndNewlines)) == nil
+        } else {
+            switch detection.payload {
+            case .mnemonic, .privateKey: isSecret = true
+            default: isSecret = false
+            }
         }
         let phrase = usePassphrase && isMnemonic ? passphrase : ""
         let name = walletName.trimmingCharacters(in: .whitespacesAndNewlines)
 
         Task {
             do {
-                try await walletManager.importWallet(input: input, passphrase: phrase)
+                try await walletManager.importWallet(input: input, passphrase: phrase, coin: chosenCoin)
                 if !name.isEmpty {
                     walletManager.renameWallet(slot: walletManager.activeSlot, to: name)
                 }

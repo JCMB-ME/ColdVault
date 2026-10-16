@@ -29,7 +29,8 @@ struct WalletsView: View {
     @State private var iconSlot: IconTarget?
     /// The wallet being dragged to a new position.
     @State private var draggingSlot: String?
-    @State private var showEthereum = false
+    /// Which coin's wallets are listed (bitcoin and Ethereum are never mixed).
+    @State private var coin: CoinKind = .bitcoin
     @State private var showLightning = false
     @State private var deleteAccountTarget: AccountTarget?
 
@@ -59,30 +60,41 @@ struct WalletsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 SettingsTitle(text: t("Wallets", "Billeteras"))
 
+                coinSwitch
+
+                if keyWallets.isEmpty && watchWallets.isEmpty {
+                    Text(coin == .ethereum ? t("No Ethereum wallets yet.", "Aún no tienes billeteras de Ethereum.")
+                                           : t("No bitcoin wallets yet.", "Aún no tienes billeteras de bitcoin."))
+                        .font(.system(size: 14))
+                        .foregroundColor(Palette.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                }
+
                 if let total = totalBalance {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(totalIsTestnet ? "TOTAL · TESTNET4" : t("TOTAL", "TOTAL"))
+                        Text(totalIsTestnet ? "TOTAL · \(testnetName.uppercased())" : t("TOTAL", "TOTAL"))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(Palette.secondary)
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(walletManager.format(sats: total))
+                            Text(walletManager.format(units: total, coin: coin))
                                 .font(.system(size: 30, weight: .bold))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.5)
                                 .foregroundColor(Color(uiColor: .label))
                                 .modifier(RollingDigits())
-                            Text(walletManager.displayUnit.rawValue)
+                            Text(walletManager.unitLabel(coin))
                                 .font(.system(size: 15, weight: .medium))
                                 .foregroundColor(Palette.secondary)
                         }
                         // Mainnet, testnet and watch-only coins are never added together.
                         if !totalIsTestnet, let testnet = sum(testnet: true) {
-                            Text("Testnet4: \(walletManager.format(sats: testnet)) \(walletManager.displayUnit.rawValue)")
+                            Text("\(testnetName): \(walletManager.format(units: testnet, coin: coin)) \(walletManager.unitLabel(coin))")
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundColor(Palette.secondary)
                         }
                         if let watched = watchOnlySum {
-                            Text(t("Watch-only: ", "Observación: ") + "\(walletManager.format(sats: watched)) \(walletManager.displayUnit.rawValue)")
+                            Text(t("Watch-only: ", "Observación: ") + "\(walletManager.format(units: watched, coin: coin)) \(walletManager.unitLabel(coin))")
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundColor(Palette.secondary)
                         }
@@ -158,9 +170,7 @@ struct WalletsView: View {
         .sheet(isPresented: $showLightning) {
             LightningView().environmentObject(walletManager)
         }
-        .sheet(isPresented: $showEthereum) {
-            EthereumView().environmentObject(walletManager)
-        }
+        .onAppear { coin = walletManager.activeCoin }
         .sheet(item: $iconSlot) { target in
             WalletIconPicker(slot: target.slot).environmentObject(walletManager)
         }
@@ -173,10 +183,10 @@ struct WalletsView: View {
                    "Una frase semilla nueva, o una que ya tengas (o una clave privada / dirección de observación)."))
         }
         .sheet(isPresented: $showCreate) {
-            CreateWalletView().environmentObject(walletManager)
+            CreateWalletView(coin: coin).environmentObject(walletManager)
         }
         .sheet(isPresented: $showImport) {
-            ImportWalletView().environmentObject(walletManager)
+            ImportWalletView(coin: coin).environmentObject(walletManager)
         }
         .alert(t("Rename", "Renombrar"), isPresented: Binding(get: { renameTarget != nil },
                                                              set: { if !$0 { renameTarget = nil } })) {
@@ -228,7 +238,7 @@ struct WalletsView: View {
     /// Sum of the mainnet accounts of the wallets you own (watch-only ones are only
     /// watched, not yours: shown apart); with only testnet accounts, the testnet sum.
     private var totalBalance: UInt64? {
-        guard walletManager.visibleLibrary.flatMap({ $0.bundle.accounts }).count > 1 else { return nil }
+        guard (keyWallets + watchWallets).flatMap({ $0.bundle.accounts }).count > 1 else { return nil }
         return sum(testnet: totalIsTestnet) ?? (watchOnlySum == nil ? nil : 0)
     }
 
@@ -252,8 +262,37 @@ struct WalletsView: View {
         return accounts.compactMap { walletManager.cachedBalance(of: $0.record) }.reduce(0, +)
     }
 
-    private var keyWallets: [LibraryWallet] { walletManager.visibleLibrary.filter { !isWatchOnly($0) } }
-    private var watchWallets: [LibraryWallet] { walletManager.visibleLibrary.filter { isWatchOnly($0) } }
+    private var coinWallets: [LibraryWallet] {
+        walletManager.visibleLibrary.filter { ($0.bundle.accounts.first?.record.coinKind ?? .bitcoin) == coin }
+    }
+    private var keyWallets: [LibraryWallet] { coinWallets.filter { !isWatchOnly($0) } }
+    private var watchWallets: [LibraryWallet] { coinWallets.filter { isWatchOnly($0) } }
+    private var testnetName: String { coin == .ethereum ? "Sepolia" : "Testnet4" }
+
+    /// Bitcoin | Ethereum.
+    private var coinSwitch: some View {
+        HStack(spacing: 4) {
+            ForEach(CoinKind.allCases) { item in
+                Button {
+                    guard coin != item else { return }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { coin = item }
+                } label: {
+                    HStack(spacing: 7) {
+                        CoinLogo(coin: item, size: 18)
+                        Text(item == .bitcoin ? "Bitcoin" : "Ethereum")
+                            .font(.system(size: 14, weight: coin == item ? .semibold : .regular))
+                    }
+                    .foregroundColor(coin == item ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                    .frame(maxWidth: .infinity, minHeight: 40)
+                    .background(Capsule().fill(coin == item ? Color(uiColor: .label) : Color.clear))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(Capsule().fill(SettingsStyle.groupFill))
+    }
 
     private func isWatchOnly(_ wallet: LibraryWallet) -> Bool {
         wallet.bundle.accounts.first?.record.type == .watchOnly
@@ -378,7 +417,7 @@ struct WalletsView: View {
                 .foregroundColor(Color(uiColor: .label))
                 .lineLimit(1)
             if logo {
-                BitcoinLogo(size: 14)
+                CoinLogo(coin: coin, size: 14)
             }
         }
     }
@@ -386,10 +425,10 @@ struct WalletsView: View {
     /// A balance on a single line: it shrinks to fit instead of wrapping (iPhone mini).
     private func amountLabel(_ sats: UInt64) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(walletManager.format(sats: sats))
+            Text(walletManager.format(units: sats, coin: coin))
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(Color(uiColor: .label))
-            Text(walletManager.displayUnit.rawValue)
+            Text(walletManager.unitLabel(coin))
                 .font(.system(size: 11))
                 .foregroundColor(Palette.secondary)
         }
@@ -431,7 +470,7 @@ struct WalletsView: View {
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundColor(Color(uiColor: .label))
                             .lineLimit(1)
-                        BitcoinLogo(size: 17)
+                        CoinLogo(coin: coin, size: 17)
                     }
                     if !subtitle(wallet).isEmpty {
                         Text(subtitle(wallet))
@@ -527,9 +566,8 @@ struct WalletsView: View {
                     .disabled(addingAccountTo != nil)
                 }
 
-                if walletManager.supportsEthereum(wallet) {
+                if isSeedWallet(wallet) && coin == .bitcoin {
                     lightningRow(wallet)
-                    ethereumRow(wallet)
                 }
             }
             .padding(.horizontal, 4)
@@ -605,44 +643,6 @@ struct WalletsView: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(Palette.tertiary)
-            }
-            .padding(.horizontal, 10)
-            .frame(minHeight: 50)
-            .contentShape(Rectangle())
-        }
-    }
-
-    /// The wallet's Ethereum account (same recovery phrase), or "Add Ethereum".
-    private func ethereumRow(_ wallet: LibraryWallet) -> some View {
-        let address = walletManager.ethereumAddress(slot: wallet.slot)
-        let testnet = wallet.bundle.accounts.first?.record.isTestnet ?? false
-        return Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            if walletManager.activeSlot != wallet.slot { walletManager.selectWallet(slot: wallet.slot, account: nil) }
-            showEthereum = true
-        } label: {
-            HStack(spacing: 12) {
-                Image("EthereumLogo")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 32, height: 32)
-                    .opacity(address == nil ? 0.45 : 1)
-                Text(address == nil ? t("Add Ethereum", "Añadir Ethereum") : (testnet ? "Sepolia" : "Ethereum"))
-                    .font(.system(size: 15, weight: address == nil ? .medium : .regular))
-                    .foregroundColor(address == nil ? Palette.secondary : Color(uiColor: .label))
-                Spacer()
-                if address != nil, let wei = walletManager.cachedEthereumBalance(slot: wallet.slot, testnet: testnet) {
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(wei.formatted(decimals: 18, maxFraction: 6))
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(Color(uiColor: .label))
-                        Text("ETH")
-                            .font(.system(size: 11))
-                            .foregroundColor(Palette.secondary)
-                    }
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                }
             }
             .padding(.horizontal, 10)
             .frame(minHeight: 50)

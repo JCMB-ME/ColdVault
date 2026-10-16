@@ -31,7 +31,9 @@ struct TransactionDetailView: View {
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
     private var received: Bool { transaction.net >= 0 }
-    private var canSpeedUp: Bool { !transaction.confirmed && !walletManager.isWatchOnly && newTxid == nil }
+    private var canSpeedUp: Bool {
+        !transaction.confirmed && !walletManager.isWatchOnly && !walletManager.isEthereum && newTxid == nil
+    }
 
     var body: some View {
         ZStack {
@@ -67,6 +69,7 @@ struct TransactionDetailView: View {
         .onAppear { note = walletManager.label(for: transaction.txid) ?? "" }
         .onDisappear { walletManager.setLabel(note, for: transaction.txid) }
         .task {
+            guard !walletManager.isEthereum else { return }
             feeInfo = try? await walletManager.feeInfo(txid: transaction.txid)
             if let info = feeInfo { bumpRate = Int(info.feeRate.rounded(.down)) + 2 }
         }
@@ -85,12 +88,12 @@ struct TransactionDetailView: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(Palette.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("\(received ? "+" : "−")\(walletManager.format(sats: UInt64(abs(transaction.net))))")
+                Text("\(received ? "+" : "−")\(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin))")
                     .font(.system(size: 38, weight: .bold))
                     .foregroundColor(Color(uiColor: .label))
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
-                Text(walletManager.displayUnit.rawValue)
+                Text(walletManager.unitLabel(walletManager.activeCoin))
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(Palette.secondary)
             }
@@ -130,9 +133,11 @@ struct TransactionDetailView: View {
                 row(t("Date", "Fecha"), date.formatted(date: .abbreviated, time: .shortened))
                 SettingsDivider(inset: 16)
             }
-            row(t("Network fee", "Comisión"),
-                feeInfo.map { "\(SendView.satsText($0.fee)) sats · \(String(format: "%.1f", $0.feeRate)) sat/vB" } ?? "…")
-            SettingsDivider(inset: 16)
+            if !walletManager.isEthereum {
+                row(t("Network fee", "Comisión"),
+                    feeInfo.map { "\(SendView.satsText($0.fee)) sats · \(String(format: "%.1f", $0.feeRate)) sat/vB" } ?? "…")
+                SettingsDivider(inset: 16)
+            }
             Button {
                 SecurePasteboard.copy(transaction.txid)
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -285,9 +290,17 @@ struct TransactionDetailView: View {
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
     }
 
+    private var explorerURL: String {
+        let txid = newTxid ?? transaction.txid
+        if walletManager.isEthereum {
+            return "https://\(walletManager.isTestnet ? "sepolia." : "")etherscan.io/tx/\(txid)"
+        }
+        return "https://mempool.space/\(walletManager.isTestnet ? "testnet4/" : "")tx/\(txid)"
+    }
+
     private var explorerButton: some View {
         Group {
-            if let url = URL(string: "https://mempool.space/\(walletManager.isTestnet ? "testnet4/" : "")tx/\(newTxid ?? transaction.txid)") {
+            if let url = URL(string: explorerURL) {
                 Link(destination: url) {
                     Label(t("View in explorer", "Ver en el explorador"), systemImage: "safari")
                         .font(.system(size: 14, weight: .semibold))

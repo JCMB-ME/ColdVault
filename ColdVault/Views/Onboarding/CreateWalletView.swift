@@ -39,7 +39,13 @@ public struct CreateWalletView: View {
     @State private var passphrase: String = ""
     @State private var passphraseConfirm: String = ""
 
-    public init() {}
+    /// Bitcoin or Ethereum: always asked first (`coin` only highlights a choice).
+    @State private var coin: CoinKind?
+    private let suggested: CoinKind?
+
+    public init(coin: CoinKind? = nil) {
+        self.suggested = coin
+    }
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -52,7 +58,11 @@ public struct CreateWalletView: View {
 
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 24) {
-                    if isVerifying {
+                    if coin == nil {
+                        coinStep
+                            .transition(.asymmetric(insertion: .move(edge: .leading).combined(with: .opacity),
+                                                    removal: .move(edge: .leading).combined(with: .opacity)))
+                    } else if isVerifying {
                         verificationStep
                             .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
                                                     removal: .move(edge: .trailing).combined(with: .opacity)))
@@ -69,7 +79,7 @@ public struct CreateWalletView: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 SheetHeader(title: t("New wallet", "Nueva billetera"),
                             onClose: { presentationMode.wrappedValue.dismiss() }) {
-                    StepDots(count: 2, current: isVerifying ? 1 : 0)
+                    StepDots(count: 3, current: coin == nil ? 0 : (isVerifying ? 2 : 1))
                 }
             }
         }
@@ -92,6 +102,57 @@ public struct CreateWalletView: View {
             noticeMessage = t("Screenshot detected. That phrase was discarded and a new one was generated.",
                               "Se detectó una captura. Esa frase se descartó y se generó una nueva.")
         }
+    }
+
+    // MARK: - Step 0: the coin
+
+    private var coinStep: some View {
+        VStack(spacing: 22) {
+            VStack(spacing: 8) {
+                Text(t("Which wallet?", "¿Qué billetera?"))
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundColor(Color(uiColor: .label))
+                Text(t("Each wallet holds one coin. You can create more later.",
+                       "Cada billetera guarda una moneda. Puedes crear más después."))
+                    .font(.system(size: 14))
+                    .foregroundColor(Palette.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 28)
+            VStack(spacing: 12) {
+                coinCard(.bitcoin, title: "Bitcoin", detail: t("BTC · SegWit, Taproot, Lightning", "BTC · SegWit, Taproot, Lightning"))
+                coinCard(.ethereum, title: "Ethereum", detail: t("ETH · the same address as MetaMask", "ETH · la misma dirección que MetaMask"))
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+
+    private func coinCard(_ item: CoinKind, title: String, detail: String) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            withAnimation(CreateWalletView.stepAnimation) { coin = item }
+        } label: {
+            HStack(spacing: 16) {
+                CoinLogo(coin: item, size: 48)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 19, weight: .bold))
+                        .foregroundColor(Color(uiColor: .label))
+                    Text(detail)
+                        .font(.system(size: 13))
+                        .foregroundColor(Palette.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Palette.tertiary)
+            }
+            .padding(18)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color(uiColor: .label).opacity(suggested == item ? 0.25 : 0), lineWidth: 1.5))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Step 1: the words
@@ -473,7 +534,7 @@ public struct CreateWalletView: View {
 
         Task {
             do {
-                try await walletManager.importWallet(input: mnemonicString, passphrase: phrase)
+                try await walletManager.importWallet(input: mnemonicString, passphrase: phrase, coin: coin ?? .bitcoin)
                 if !name.isEmpty {
                     walletManager.renameWallet(slot: walletManager.activeSlot, to: name)
                 }

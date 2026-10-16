@@ -14,6 +14,13 @@ public enum WalletSecurityType: String, Codable {
     case watchOnly  = "Solo Observación (Watch-Only)"
 }
 
+/// The coin of a wallet. Bitcoin wallets made before Ethereum existed have none (nil).
+public enum CoinKind: String, Codable, CaseIterable, Identifiable {
+    case bitcoin, ethereum
+    public var id: String { rawValue }
+    public var symbol: String { self == .bitcoin ? "BTC" : "ETH" }
+}
+
 public struct StoredWalletRecord: Codable, Equatable {
     public let type: WalletSecurityType
     public var secretPayload: String // Empty for keyed wallets; address or descriptors if watch-only
@@ -31,6 +38,11 @@ public struct StoredWalletRecord: Codable, Equatable {
     public var lastFullAddressScan: Date?
     /// BIP-44 account number of this record (nil = 0, records made before accounts).
     public var accountNumber: UInt32?
+    /// nil = bitcoin. Ethereum records: primaryAddress is the account's 0x address
+    /// (m/44'/60'/0'/0/n), isTestnet means Sepolia.
+    public var coin: CoinKind?
+
+    public var coinKind: CoinKind { coin ?? .bitcoin }
 
     public init(
         type: WalletSecurityType,

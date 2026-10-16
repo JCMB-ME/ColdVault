@@ -112,6 +112,8 @@ public final class WalletManager: ObservableObject {
     }
 
     @Published public internal(set) var fiatPrice: Double? { didSet { scheduleWidgetUpdate() } }
+    /// Price of one ETH in the chosen currency (Ethereum wallets).
+    @Published public internal(set) var ethFiatPrice: Double?
     /// Full BTC/USD history (hourly recently, daily further back), oldest first.
     @Published public internal(set) var priceHistory: [PricePoint] = []
     var usdPrice: Double?
@@ -275,6 +277,7 @@ public final class WalletManager: ObservableObject {
     /// Whether this wallet can build transactions (watch-only P2SH/P2WSH cannot).
     public var canBuildTransactions: Bool {
         guard let record = activeRecord else { return false }
+        if record.coinKind == .ethereum { return record.type != .watchOnly }
         if usesAddressRotation { return !derivers(for: record).isEmpty }
         guard let decoded = BitcoinAddress.decode(record.primaryAddress) else { return false }
         return decoded.type.isSpendable
@@ -340,7 +343,11 @@ public final class WalletManager: ObservableObject {
     /// The network comes from the input itself when it encodes one (WIF, address);
     /// otherwise `isTestnet` (default mainnet) is used.
     @discardableResult
-    public func importWallet(input: String, passphrase: String = "", isTestnet requested: Bool? = nil) async throws -> StoredWalletRecord {
+    public func importWallet(input: String, passphrase: String = "", isTestnet requested: Bool? = nil,
+                             coin: CoinKind = .bitcoin) async throws -> StoredWalletRecord {
+        if coin == .ethereum {
+            return try await importEthereum(input: input, passphrase: passphrase, isTestnet: requested ?? false)
+        }
         // Watch-only HD wallet from output descriptors / zpub (public keys only).
         if let watch = try WatchOnlyDescriptorParser.parse(input) {
             let derivers = watch.accounts.enumerated().compactMap { index, account in
@@ -414,6 +421,10 @@ public final class WalletManager: ObservableObject {
     // MARK: - Refresh Balance (all addresses of the wallet)
     public func refreshBalance() async {
         guard let record = activeRecord else { return }
+        if record.coinKind == .ethereum {
+            await refreshEthereumBalance()
+            return
+        }
 
         isLoadingBalance = true
         defer { isLoadingBalance = false }
@@ -616,6 +627,10 @@ public final class WalletManager: ObservableObject {
     /// Re-derives the addresses for the other network. Needs the secret, so it asks for authentication.
     public func setNetwork(isTestnet: Bool) async throws {
         guard let record = activeRecord, record.isTestnet != isTestnet else { return }
+        if record.coinKind == .ethereum {
+            try setEthereumNetwork(isTestnet: isTestnet)
+            return
+        }
         guard record.type != .watchOnly else { throw WalletError.unsupportedForWatchOnly }
 
         var secret = try await loadSecret(reason: "Confirma para cambiar la red de la billetera")
@@ -871,7 +886,7 @@ public final class WalletManager: ObservableObject {
     }
 
     // MARK: - Formatted Balance Display
-    public var formattedBalance: String { format(sats: balanceSats) }
+    public var formattedBalance: String { format(units: balanceSats, coin: activeCoin) }
 
     /// Exact sats → "0.00000000" string (no floating point).
     nonisolated public static func formatBTC(_ sats: UInt64) -> String {

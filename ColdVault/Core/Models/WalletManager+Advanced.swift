@@ -330,10 +330,13 @@ extension WalletManager {
             text.contains(",") || text.contains("\"") || text.contains("\n")
                 ? "\"" + text.replacingOccurrences(of: "\"", with: "\"\"") + "\"" : text
         }
-        var lines = ["date,txid,amount_btc,confirmed,label"]
+        let ether = isEthereum
+        var lines = [ether ? "date,txid,amount_eth,confirmed,label" : "date,txid,amount_btc,confirmed,label"]
         for tx in transactions {
             let sign = tx.net < 0 ? "-" : ""
-            let amount = sign + WalletManager.formatBTC(UInt64(abs(tx.net)))
+            let magnitude = UInt64(abs(tx.net))
+            let amount = sign + (ether ? (UInt256(magnitude).multiplied(by: WalletManager.weiPerGwei) ?? .zero).formatted(decimals: 18, maxFraction: 9)
+                                       : WalletManager.formatBTC(magnitude))
             let date = tx.date.map { formatter.string(from: $0) } ?? ""
             lines.append([date, tx.txid, amount, tx.confirmed ? "yes" : "no", field(label(for: tx.txid) ?? "")].joined(separator: ","))
         }
