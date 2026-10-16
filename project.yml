@@ -16,10 +16,9 @@ settings:
 packages:
   CSecp256k1:
     path: Vendor/CSecp256k1
-  # Embedded Tor client (Onion Browser's), pinned to a commit of its SPM branch.
-  TorFramework:
-    url: https://github.com/iCepa/Tor.framework
-    revision: 82c67a715f99bce48abb03d5b84cda5213af79d4
+  # Embedded Tor (official iCepa build, checksum-pinned) + C shim. See Vendor/TorLocal.
+  TorLocal:
+    path: Vendor/TorLocal
 
 targets:
   ColdVault:
@@ -31,8 +30,8 @@ targets:
     dependencies:
       - package: CSecp256k1
         product: CSecp256k1
-      - package: TorFramework
-        product: CTor
+      - package: TorLocal
+        product: TorLocal
       - target: ColdVaultWidget
     entitlements:
       path: ColdVault/ColdVault.entitlements

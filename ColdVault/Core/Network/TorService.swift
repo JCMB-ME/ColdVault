@@ -2,8 +2,8 @@
 //  TorService.swift
 //  ColdVault
 //
-//  Optional Tor (Settings › Server › Use Tor): an embedded Tor client (iCepa
-//  Tor.framework, the one Onion Browser uses) runs inside the app and every
+//  Optional Tor (Settings › Server › Use Tor): an embedded Tor client (the iCepa
+//  build Onion Browser uses, Vendor/TorLocal) runs inside the app and every
 //  connection — Electrum, mempool.space, prices, Ethereum nodes — goes through its
 //  SOCKS proxy, so servers never see your IP. Needs iOS 17 (system SOCKS support
 //  for URLSession and Network connections). While Tor is on but not ready yet,
@@ -12,7 +12,7 @@
 
 import Foundation
 import Network
-import CTor
+import TorLocal
 
 enum TorProxy {
     static let port: UInt16 = 39050
@@ -54,7 +54,7 @@ final class TorService: ObservableObject {
     enum Status: Equatable { case off, connecting, ready, failed }
     @Published private(set) var status: Status = .off
 
-    private var thread: TorThread?
+    private var thread: Thread?
 
     /// Starts Tor once per launch (Tor can't be restarted inside a process; turning it
     /// off just stops using it).
@@ -67,14 +67,22 @@ final class TorService: ObservableObject {
             guard let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
                 .appendingPathComponent("tor", isDirectory: true) else { return }
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let tor = TorThread(arguments: [
+            let arguments = [
                 "--ignore-missing-torrc",
                 "--DataDirectory", folder.path,
                 "--SocksPort", "127.0.0.1:\(TorProxy.port)",
                 "--ClientOnly", "1",
                 "--AvoidDiskWrites", "1",
                 "--Log", "err stderr"
-            ])
+            ]
+            let tor = Thread {
+                let copies = arguments.map { strdup($0) }
+                defer { copies.forEach { free($0) } }
+                let pointers = copies.map { UnsafePointer($0) }
+                _ = coldvault_tor_run(Int32(pointers.count), pointers)
+            }
+            tor.name = "Tor"
+            tor.stackSize = 4 << 20
             tor.start()
             thread = tor
         }
