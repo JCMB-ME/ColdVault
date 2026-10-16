@@ -3,7 +3,7 @@
 //  ColdVault
 //
 //  Live converter between bitcoin (BTC, sats) and the app's four currencies (USD,
-//  MXN, JPY, CNY). Type an amount in any unit and every other unit updates at once.
+//  MXN, JPY, CNY): two rows, like the iPhone calculator's converter.
 //  Prices are live BTC spot quotes in each currency (one request, refreshed every
 //  15 s while open), with mempool.space × FX rates as fallback.
 //
@@ -14,15 +14,19 @@ struct CalculatorView: View {
     @EnvironmentObject var walletManager: WalletManager
     @Environment(\.presentationMode) var presentationMode
 
-    static let units = ["USD", "MXN", "JPY", "CNY", "BTC", "sats"]
+    static let units = ["BTC", "sats", "USD", "MXN", "JPY", "CNY"]
 
-    @State private var input: String = "100"
-    @State private var unit: String = "USD"
+    /// Two rows, like the iPhone calculator's converter: type in the top one, the
+    /// bottom one shows the result. ↑↓ swaps them; tap a code to pick another unit.
+    @State private var input: String = "1"
+    @State private var unit: String = "BTC"
+    @State private var target: String = "USD"
     @State private var prices: [String: Double] = [:]
     @State private var updated: Date?
     @State private var isLoading = false
     @State private var failed = false
-    @State private var copied: String?
+    @State private var copied = false
+    @State private var swapTurns: Double = 0
     @FocusState private var focused: Bool
 
     private var lang: AppLanguage { walletManager.appLanguage }
@@ -33,26 +37,24 @@ struct CalculatorView: View {
             GlassAmbientBackground()
                 .onTapGesture { focused = false }
 
-            VStack(spacing: 0) {
-                SheetHeader(title: t("Calculator", "Calculadora"), onClose: { presentationMode.wrappedValue.dismiss() })
 
                 ScrollView(showsIndicators: false) {
-                    VStack(spacing: 24) {
-                        amountField
-                        unitSelector
-                        results
+                    VStack(spacing: 22) {
+                        converter
                         priceFooter
                     }
                     .padding(.top, 20)
                     .padding(.bottom, 32)
                 }
                 .scrollDismissesKeyboard(.interactively)
-            }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    SheetHeader(title: t("Calculator", "Calculadora"), onClose: { presentationMode.wrappedValue.dismiss() })
+                }
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .onAppear {
-            unit = walletManager.fiatCurrency
+            target = walletManager.fiatCurrency
             if let price = walletManager.fiatPrice { prices[walletManager.fiatCurrency] = price }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { focused = true }
         }
@@ -67,140 +69,152 @@ struct CalculatorView: View {
 
     // MARK: - Pieces
 
-    private var amountField: some View {
-        VStack(spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+    private var converter: some View {
+        let result = converted(to: target)
+        let resultText = result.map { format($0, unit: target) } ?? "—"
+        return VStack(spacing: 0) {
+            // From: what you type.
+            HStack(spacing: 12) {
+                unitPicker(selection: unit) { select(unit: $0) }
+                Spacer(minLength: 8)
                 TextField("0", text: $input)
-                    .font(.system(size: 52, weight: .bold))
-                    .multilineTextAlignment(.center)
+                    .font(.system(size: 36, weight: .semibold))
+                    .multilineTextAlignment(.trailing)
                     .keyboardType(unit == "sats" ? .numberPad : .decimalPad)
                     .focused($focused)
-                    .fixedSize()
                     .lineLimit(1)
-                Text(unit)
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundColor(Palette.secondary)
-                    .id(unit)
-                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
-                                            removal: .move(edge: .top).combined(with: .opacity)))
+                    .minimumScaleFactor(0.4)
             }
-            .frame(maxWidth: .infinity)
-            .clipped()
-            .minimumScaleFactor(0.4)
-            .padding(.horizontal, 24)
-        }
-    }
+            .padding(.horizontal, 16)
+            .frame(height: 86)
 
-    /// Unit of the typed amount, as a capsule segmented control (like the fee selector).
-    private var unitSelector: some View {
-        HStack(spacing: 2) {
-            ForEach(CalculatorView.units, id: \.self) { item in
-                Button { select(unit: item) } label: {
-                    Text(item)
-                        .font(.system(size: 13, weight: unit == item ? .semibold : .regular))
-                        .foregroundColor(unit == item ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
-                        .frame(maxWidth: .infinity, minHeight: 34)
-                        .background(Capsule().fill(unit == item ? Color(uiColor: .label) : Color.clear))
+            // Swap button on the divider.
+            HStack(spacing: 12) {
+                Button(action: swap) {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(Color(uiColor: .systemBackground))
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(Color(uiColor: .label)))
+                        .rotationEffect(.degrees(swapTurns * 180))
+                }
+                .buttonStyle(.plain)
+                Rectangle()
+                    .fill(Color(uiColor: .separator).opacity(0.6))
+                    .frame(height: 1)
+            }
+            .padding(.horizontal, 16)
+
+            // To: the result (tap to copy).
+            HStack(spacing: 12) {
+                unitPicker(selection: target) { item in
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                        if item == unit { unit = target }
+                        target = item
+                    }
+                }
+                Spacer(minLength: 8)
+                Button {
+                    guard let value = result else { return }
+                    SecurePasteboard.copy(plain(value, unit: target))
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    withAnimation { copied = true }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { withAnimation { copied = false } }
+                } label: {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(resultText)
+                            .font(.system(size: 36, weight: .semibold))
+                            .foregroundColor(Palette.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.4)
+                            .modifier(RollingDigits())
+                            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: resultText)
+                        Text(copied ? t("Copied", "Copiado") : t("Tap to copy", "Toca para copiar"))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(copied ? .green : Palette.tertiary)
+                    }
                 }
                 .buttonStyle(.plain)
             }
+            .padding(.horizontal, 16)
+            .frame(height: 96)
         }
-        .padding(4)
-        .background(Capsule().fill(SettingsStyle.groupFill))
-        .padding(.horizontal, 20)
-    }
-
-    private var results: some View {
-        VStack(spacing: 4) {
-            ForEach(CalculatorView.units.filter { $0 != unit }, id: \.self) { item in
-                resultRow(item)
-                    .transition(.opacity)
-            }
-        }
-        .padding(6)
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
         .padding(.horizontal, 20)
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: unit)
     }
 
-    private func resultRow(_ item: String) -> some View {
-        let value = converted(to: item)
-        let text = value.map { format($0, unit: item) } ?? "—"
-        return Button {
-            // Tap a result to continue from it.
-            guard let value = value else { return }
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                input = plain(value, unit: item)
-                unit = item
+    /// Icon, code and name of a unit; tap to choose another.
+    private func unitPicker(selection: String, onPick: @escaping (String) -> Void) -> some View {
+        Menu {
+            ForEach(CalculatorView.units, id: \.self) { item in
+                Button {
+                    onPick(item)
+                } label: {
+                    if item == selection {
+                        Label("\(item) · \(name(item))", systemImage: "checkmark")
+                    } else {
+                        Text("\(item) · \(name(item))")
+                    }
+                }
             }
         } label: {
-            HStack(spacing: 12) {
-                Text(symbol(item))
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+            HStack(spacing: 10) {
+                Text(symbol(selection))
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundColor(Color(uiColor: .label))
-                    .frame(width: 36, height: 36)
+                    .frame(width: 38, height: 38)
                     .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(item)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(Palette.secondary)
-                    Text(text)
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundColor(Color(uiColor: .label))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.5)
-                        .modifier(RollingDigits())
-                        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: text)
-                }
-                Spacer(minLength: 8)
-                Image(systemName: copied == item ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(copied == item ? .green : Palette.tertiary)
-                    .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        guard let value = value else { return }
-                        SecurePasteboard.copy(plain(value, unit: item))
-                        UINotificationFeedbackGenerator().notificationOccurred(.success)
-                        withAnimation { copied = item }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            if copied == item { withAnimation { copied = nil } }
-                        }
+                    HStack(spacing: 3) {
+                        Text(selection)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(Color(uiColor: .label))
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(Palette.secondary)
                     }
+                    Text(name(selection))
+                        .font(.system(size: 11))
+                        .foregroundColor(Palette.secondary)
+                        .lineLimit(1)
+                }
             }
-            .padding(.horizontal, 10)
-            .frame(minHeight: 58)
-            .contentShape(Rectangle())
+            .fixedSize()
         }
-        .buttonStyle(.plain)
+    }
+
+    private func name(_ item: String) -> String {
+        switch item {
+        case "BTC": return "Bitcoin"
+        case "sats": return "Satoshis"
+        case "USD": return t("US dollar", "Dólar estadounidense")
+        case "MXN": return t("Mexican peso", "Peso mexicano")
+        case "JPY": return t("Japanese yen", "Yen japonés")
+        case "CNY": return t("Chinese yuan", "Yuan chino")
+        default: return item
+        }
     }
 
     @ViewBuilder
     private var priceFooter: some View {
         VStack(spacing: 6) {
-            if walletManager.isAirGapped {
-                Label(t("Offline (Air-Gap): prices can't be updated.", "Sin conexión (Air-Gap): no se pueden actualizar los precios."),
-                      systemImage: "wifi.slash")
+            let code = target == "BTC" || target == "sats" ? (unit == "BTC" || unit == "sats" ? walletManager.fiatCurrency : unit) : target
+            if let price = prices[code] {
+                Text("1 BTC = \(format(price, unit: code))")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                    .modifier(RollingDigits())
+                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: price)
+            }
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(failed ? Color.orange : Color.green)
+                    .frame(width: 6, height: 6)
+                    .opacity(isLoading ? 0.3 : 1)
+                    .animation(.easeInOut(duration: 0.4), value: isLoading)
+                Text(statusText)
                     .foregroundColor(Palette.secondary)
-            } else {
-                let code = walletManager.fiatCurrency
-                if let price = prices[code] {
-                    Text("1 BTC = \(format(price, unit: code))")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(Color(uiColor: .label))
-                        .modifier(RollingDigits())
-                        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: price)
-                }
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(failed ? Color.orange : Color.green)
-                        .frame(width: 6, height: 6)
-                        .opacity(isLoading ? 0.3 : 1)
-                        .animation(.easeInOut(duration: 0.4), value: isLoading)
-                    Text(statusText)
-                        .foregroundColor(Palette.secondary)
-                }
             }
         }
         .font(.system(size: 12))
@@ -297,6 +311,17 @@ struct CalculatorView: View {
 
     // MARK: - Actions
 
+    /// ↑↓: the result becomes what you type, in the other unit.
+    private func swap() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let value = converted(to: target)
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            swapTurns += 1
+            if let value = value { input = plain(value, unit: target) }
+            (unit, target) = (target, unit)
+        }
+    }
+
     private func select(unit item: String) {
         guard item != unit else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -304,12 +329,12 @@ struct CalculatorView: View {
         let value = converted(to: item)
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
             if let value = value { input = plain(value, unit: item) }
+            if item == target { target = unit }
             unit = item
         }
     }
 
     private func loadPrices() async {
-        guard !walletManager.isAirGapped else { return }
         isLoading = true
         defer { isLoading = false }
         if let fresh = try? await BlockchainService.shared.fetchFiatPrices(), !fresh.isEmpty {

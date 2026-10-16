@@ -167,7 +167,8 @@ extension WalletManager {
     }
 
     public var formattedFiatBalance: String? {
-        guard homeShowFiat, !isTestnet, let price = fiatPrice else { return nil }
+        // Testnet coins have no price; they are shown at the bitcoin price anyway.
+        guard homeShowFiat, let price = fiatPrice else { return nil }
         let value = Double(balanceSats) / 100_000_000 * price
         return WalletManager.currencyFormatter(fiatCurrency, fractionDigits: nil).string(from: NSNumber(value: value))
     }
@@ -209,8 +210,8 @@ extension WalletManager {
     }
 
     public func refreshHomeData(force: Bool = false) async {
-        guard activeRecord != nil, !isAirGapped else { return }
-        if (homeShowFiat || homeShowPriceChart || homeShowCalculator) && !isTestnet {
+        guard activeRecord != nil else { return }
+        if homeShowFiat || homeShowPriceChart || homeShowCalculator {
             await refreshMarketData(force: force)
         }
         if homeShowTransactions {
@@ -373,20 +374,21 @@ extension WalletManager {
         defer { isLoadingTransactions = false }
 
         // Electrum: every history, transaction and block time in a few round trips.
-        if !isTestnet {
-            let scripts = addresses.compactMap { BitcoinAddress.decode($0)?.scriptPubKey }
-            if let list = try? await BlockchainService.shared.electrumWalletTransactions(scripts: scripts, ownScripts: ownScripts) {
-                guard activeRecord?.primaryAddress == record.primaryAddress else { return }
-                transactions = WalletManager.sorted(list)
-                return
-            }
-            // Your own node is down: keep what we have rather than asking public servers.
-            if BlockchainService.shared.usesOwnServer { return }
+        let scripts = addresses.compactMap { BitcoinAddress.decode($0)?.scriptPubKey }
+        if let list = try? await BlockchainService.shared.electrumWalletTransactions(scripts: scripts, ownScripts: ownScripts,
+                                                                                   isTestnet: isTestnet) {
+            guard activeRecord?.primaryAddress == record.primaryAddress else { return }
+            transactions = WalletManager.sorted(list)
+            return
         }
+        // Your own node is down: keep what we have rather than asking public servers.
+        if !isTestnet && BlockchainService.shared.usesOwnServer { return }
 
         var byTxid = [String: EsploraTransaction]()
         for address in addresses.suffix(60) {
-            guard let txs = try? await BlockchainService.shared.fetchTransactions(address: address, isTestnet: isTestnet) else { continue }
+            // A failed request must never look like "no transactions": keep the list
+            // already on screen and try again on the next refresh.
+            guard let txs = try? await BlockchainService.shared.fetchTransactions(address: address, isTestnet: isTestnet) else { return }
             for tx in txs { byTxid[tx.txid] = tx }
         }
         guard activeRecord?.primaryAddress == record.primaryAddress else { return }
@@ -618,7 +620,7 @@ extension WalletManager {
     /// Subscribes to the addresses that can receive or hold coins right now; the
     /// server then pushes a notification when any of them changes.
     func subscribeForPush() async {
-        guard let record = activeRecord, !record.isTestnet, !isAirGapped else { return }
+        guard let record = activeRecord else { return }
         var scripts = [Data]()
         if usesAddressRotation {
             let current = indexes(for: record)
@@ -631,13 +633,15 @@ extension WalletManager {
         } else {
             scripts = receiveAddresses.compactMap { BitcoinAddress.decode($0)?.scriptPubKey }
         }
-        await ElectrumClient.shared.subscribe(scripts.map { ElectrumClient.scriptHash($0) })
+        await ElectrumClient.client(isTestnet: record.isTestnet).subscribe(scripts.map { ElectrumClient.scriptHash($0) })
     }
 
     func startPushUpdates() {
         Task {
-            await ElectrumClient.shared.setNotificationHandler { [weak self] _ in
-                Task { @MainActor in self?.handlePush() }
+            for client in [ElectrumClient.shared, ElectrumClient.testnet] {
+                await client.setNotificationHandler { [weak self] _ in
+                    Task { @MainActor in self?.handlePush() }
+                }
             }
         }
     }

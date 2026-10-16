@@ -40,19 +40,6 @@ public final class WalletManager: ObservableObject {
     var trackedByScript: [Data: TrackedAddress] = [:]
     var fundedAddresses: [TrackedAddress] = []
 
-    // Cold Wallet Settings
-    @Published public var isAirGapped: Bool {
-        didSet {
-            UserDefaults.standard.set(isAirGapped, forKey: "isAirGapped")
-            BlockchainService.shared.isNetworkBlocked = isAirGapped
-            if isAirGapped {
-                Task { await ElectrumClient.shared.disconnect() }
-            } else {
-                Task { await refreshAll() }
-            }
-        }
-    }
-
     @Published public var appTheme: AppTheme {
         didSet {
             UserDefaults.standard.set(appTheme.rawValue, forKey: "appTheme")
@@ -137,7 +124,7 @@ public final class WalletManager: ObservableObject {
     }
 
     public init() {
-        self.isAirGapped = UserDefaults.standard.bool(forKey: "isAirGapped")
+        UserDefaults.standard.removeObject(forKey: "isAirGapped")      // Air-Gap mode was removed
         let savedTheme = UserDefaults.standard.string(forKey: "appTheme") ?? AppTheme.system.rawValue
         self.appTheme = AppTheme(rawValue: savedTheme) ?? .system
         // BTC is the default unit; sats once the user picks it.
@@ -160,7 +147,6 @@ public final class WalletManager: ObservableObject {
         self.fiatCurrency = FiatCurrency.supported.contains(savedCurrency) ? savedCurrency : "USD"
         loadContacts()
 
-        BlockchainService.shared.isNetworkBlocked = isAirGapped
         startPushUpdates()
         loadStoredWallet()
     }
@@ -413,17 +399,22 @@ public final class WalletManager: ObservableObject {
     // MARK: - Refresh Balance (all addresses of the wallet)
     public func refreshBalance() async {
         guard let record = activeRecord else { return }
-        if isAirGapped {
-            // Keep completely radio-silent
-            return
-        }
 
         isLoadingBalance = true
         defer { isLoadingBalance = false }
 
         if usesAddressRotation {
             do {
-                let result = try await scanAddresses(record)
+                // One quiet retry first: a dropped connection is usually back a moment later.
+                let result: AddressScanResult
+                do {
+                    result = try await scanAddresses(record)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    result = try await scanAddresses(record)
+                }
                 self.balanceSats = result.balance
                 self.balanceError = nil
                 self.lastBalanceUpdate = Date()
@@ -478,7 +469,6 @@ public final class WalletManager: ObservableObject {
     /// Full gap-limit rescan (Settings), e.g. after using the same seed in another wallet.
     public func rescanAddresses() async throws {
         guard let record = activeRecord, usesAddressRotation else { return }
-        guard !isAirGapped else { throw BlockchainError.airGapped }
         isLoadingBalance = true
         defer { isLoadingBalance = false }
         let result = try await scanAddresses(record, forceFull: true)
@@ -668,7 +658,6 @@ public final class WalletManager: ObservableObject {
 
     public func spendableCoins() async throws -> [SpendableCoin] {
         guard let record = activeRecord else { return [] }
-        guard !isAirGapped else { throw BlockchainError.airGapped }
         var coins = [SpendableCoin]()
         if usesAddressRotation {
             let scan = try await scanAddresses(record)
@@ -752,7 +741,6 @@ public final class WalletManager: ObservableObject {
     /// Signs (after Face ID / passcode), verifies every signature and size, then broadcasts.
     public func signAndBroadcast(_ plan: TransactionPlan, recipient: String) async throws -> String {
         guard let record = activeRecord, record.type != .watchOnly else { throw WalletError.unsupportedForWatchOnly }
-        guard !isAirGapped else { throw BlockchainError.airGapped }
 
         let keyring = try await loadKeyring(reason: "Autoriza el envío de \(plan.amount) sats a \(recipient)")
         let tracked = trackedByScript

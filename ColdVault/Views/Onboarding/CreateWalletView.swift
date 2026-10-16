@@ -47,12 +47,6 @@ public struct CreateWalletView: View {
         ZStack {
             GlassAmbientBackground()
 
-            // Fixed title bar (title, step dots, close) above the scrolling content.
-            VStack(spacing: 0) {
-            SheetHeader(title: t("New wallet", "Nueva billetera"),
-                        onClose: { presentationMode.wrappedValue.dismiss() }) {
-                StepDots(count: 2, current: isVerifying ? 1 : 0)
-            }
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 24) {
                     if isVerifying {
@@ -69,6 +63,11 @@ public struct CreateWalletView: View {
                 .padding(.bottom, 32)
             }
             .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SheetHeader(title: t("New wallet", "Nueva billetera"),
+                            onClose: { presentationMode.wrappedValue.dismiss() }) {
+                    StepDots(count: 2, current: isVerifying ? 1 : 0)
+                }
             }
         }
         .presentationDetents([.large])

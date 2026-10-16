@@ -9,7 +9,7 @@
 //
 //  Only servers with a certificate that iOS validates are used, with failover; if
 //  none is reachable, BlockchainService falls back to the mempool.space HTTP API.
-//  Mainnet only (testnet4 uses mempool.space).
+//  One client for mainnet (`shared`) and one for testnet4 (`testnet`).
 //
 
 import Foundation
@@ -65,7 +65,17 @@ public struct ElectrumServerConfig: Codable, Equatable {
 }
 
 public actor ElectrumClient {
-    public static let shared = ElectrumClient()
+    public static let shared = ElectrumClient(testnet: false)
+    /// Testnet4 (public testnet4 servers; your own server is used for mainnet only).
+    public static let testnet = ElectrumClient(testnet: true)
+
+    public static func client(isTestnet: Bool) -> ElectrumClient { isTestnet ? testnet : shared }
+
+    let isTestnet: Bool
+
+    init(testnet: Bool) {
+        self.isTestnet = testnet
+    }
 
     struct Server {
         let host: String
@@ -77,6 +87,7 @@ public actor ElectrumClient {
 
     /// Your own server if configured, otherwise the public ones.
     private var servers: [Server] {
+        if isTestnet { return ElectrumClient.testnetServers }
         if let own = ElectrumServerConfig.current {
             return [Server(host: own.host, port: own.port, tls: own.useTLS, pin: own.pinnedFingerprint, custom: true)]
         }
@@ -95,6 +106,12 @@ public actor ElectrumClient {
         Server(host: "electrum.blockstream.info", port: 50002),
         Server(host: "electrum2.bluewallet.io", port: 443),
         Server(host: "electrum.diynodes.com", port: 50002)
+    ]
+
+    /// Public testnet4 servers with certificates iOS validates.
+    static let testnetServers = [
+        Server(host: "mempool.space", port: 40002),
+        Server(host: "blackie.c3-soft.com", port: 57010)
     ]
 
     static let requestTimeout: TimeInterval = 15
@@ -201,10 +218,6 @@ public actor ElectrumClient {
     // MARK: Connection
 
     private func ensureConnected() async throws {
-        guard !BlockchainService.shared.isNetworkBlocked else {
-            disconnect()
-            throw BlockchainError.airGapped
-        }
         if connection != nil { return }
         if let until = unavailableUntil, Date() < until { throw ElectrumError.unavailable }
         if let inFlight = connecting { return try await inFlight.value }

@@ -59,7 +59,7 @@ struct WalletsView: View {
 
                 if let total = totalBalance {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(t("TOTAL", "TOTAL"))
+                        Text(totalIsTestnet ? "TOTAL · TESTNET4" : t("TOTAL", "TOTAL"))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(Palette.secondary)
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -69,6 +69,12 @@ struct WalletsView: View {
                                 .modifier(RollingDigits())
                             Text(walletManager.displayUnit.rawValue)
                                 .font(.system(size: 15, weight: .medium))
+                                .foregroundColor(Palette.secondary)
+                        }
+                        // Mainnet and testnet coins are never added together.
+                        if !totalIsTestnet, let testnet = sum(testnet: true) {
+                            Text("Testnet4: \(walletManager.format(sats: testnet)) \(walletManager.displayUnit.rawValue)")
+                                .font(.system(size: 13, weight: .medium))
                                 .foregroundColor(Palette.secondary)
                         }
                     }
@@ -204,13 +210,22 @@ struct WalletsView: View {
         }
     }
 
-    /// Sum of every mainnet account (known balances), shown with more than one account.
+    /// Sum of every mainnet account (known balances), shown with more than one account;
+    /// with only testnet accounts, the testnet sum.
     private var totalBalance: UInt64? {
-        let accounts = walletManager.library.flatMap { $0.bundle.accounts }
-        guard accounts.count > 1 else { return nil }
-        return accounts.filter { !$0.record.isTestnet }
-            .compactMap { walletManager.cachedBalance(of: $0.record) }
-            .reduce(0, +)
+        guard walletManager.library.flatMap({ $0.bundle.accounts }).count > 1 else { return nil }
+        return sum(testnet: totalIsTestnet)
+    }
+
+    private var totalIsTestnet: Bool {
+        !walletManager.library.flatMap { $0.bundle.accounts }.contains { !$0.record.isTestnet }
+    }
+
+    /// Known balances of every account on one network (nil if there are none).
+    private func sum(testnet: Bool) -> UInt64? {
+        let accounts = walletManager.library.flatMap { $0.bundle.accounts }.filter { $0.record.isTestnet == testnet }
+        guard !accounts.isEmpty else { return nil }
+        return accounts.compactMap { walletManager.cachedBalance(of: $0.record) }.reduce(0, +)
     }
 
     private var keyWallets: [LibraryWallet] { walletManager.library.filter { !isWatchOnly($0) } }
@@ -331,14 +346,10 @@ struct WalletsView: View {
     private func subtitle(_ wallet: LibraryWallet) -> String {
         var parts: [String] = []
         switch wallet.bundle.accounts.first?.record.type {
-        case .mnemonic12: parts.append(t("12 words", "12 palabras"))
-        case .mnemonic24: parts.append(t("24 words", "24 palabras"))
         case .privateKey: parts.append(t("Private key", "Clave privada"))
         case .watchOnly: parts.append(t("Watch-only", "Observación"))
-        case nil: break
+        default: break
         }
-        let count = wallet.bundle.accounts.count
-        if count > 1 { parts.append(t("\(count) accounts", "\(count) cuentas")) }
         if wallet.bundle.accounts.first?.record.isTestnet == true { parts.append("Testnet4") }
         return parts.joined(separator: " · ")
     }
@@ -357,10 +368,12 @@ struct WalletsView: View {
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
                         .lineLimit(1)
-                    Text(subtitle(wallet))
-                        .font(.system(size: 13))
-                        .foregroundColor(Palette.secondary)
-                        .lineLimit(1)
+                    if !subtitle(wallet).isEmpty {
+                        Text(subtitle(wallet))
+                            .font(.system(size: 13))
+                            .foregroundColor(Palette.secondary)
+                            .lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 8)
                 Menu {
@@ -561,6 +574,8 @@ struct WalletIconPicker: View {
     let slot: String
 
     @State private var photoItem: PhotosPickerItem?
+    @State private var name = ""
+    @FocusState private var nameFocused: Bool
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -570,8 +585,6 @@ struct WalletIconPicker: View {
     var body: some View {
         ZStack {
             GlassAmbientBackground()
-            VStack(spacing: 0) {
-            SheetHeader(title: t("Picture", "Imagen"), onClose: { presentationMode.wrappedValue.dismiss() })
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 22) {
                     if let wallet = wallet {
@@ -586,9 +599,26 @@ struct WalletIconPicker: View {
                             }
                         }
                         .buttonStyle(.plain)
-                        Text(wallet.bundle.name)
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundColor(Color(uiColor: .label))
+                        // Tap the name to rename the wallet.
+                        HStack(spacing: 8) {
+                            TextField(t("Wallet name", "Nombre de la billetera"), text: $name)
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(Color(uiColor: .label))
+                                .multilineTextAlignment(.center)
+                                .submitLabel(.done)
+                                .focused($nameFocused)
+                                .onSubmit(saveName)
+                            if !nameFocused {
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(Palette.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 18)
+                        .frame(height: 48)
+                        .background(Capsule().fill(SettingsStyle.groupFill))
+                        .padding(.horizontal, 40)
+                        .onTapGesture { nameFocused = true }
                     }
 
                     HStack(spacing: 10) {
@@ -629,10 +659,17 @@ struct WalletIconPicker: View {
                 .padding(.top, 12)
                 .padding(.bottom, 32)
             }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SheetHeader(title: t("Edit", "Editar"), onClose: { presentationMode.wrappedValue.dismiss() })
             }
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+        .onAppear { name = wallet?.bundle.name ?? "" }
+        .onDisappear(perform: saveName)
+        .onChange(of: nameFocused) { focused in
+            if !focused { saveName() }
+        }
         .onChange(of: photoItem) { item in
             guard let item = item else { return }
             Task {
@@ -644,6 +681,12 @@ struct WalletIconPicker: View {
                 }
             }
         }
+    }
+
+    private func saveName() {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != wallet?.bundle.name else { return }
+        walletManager.renameWallet(slot: slot, to: String(trimmed.prefix(40)))
     }
 
     /// One icon choice; nil = the emoji or first letter of the name.

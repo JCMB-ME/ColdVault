@@ -2,14 +2,13 @@
 //  BlockchainService.swift
 //  ColdVault
 //
-//  Bitcoin blockchain data provider via the public Esplora / mempool.space API.
-//  When Air-Gap mode is on, every request is refused before touching the network.
+//  Bitcoin blockchain data: Electrum first (mainnet and testnet4), the public
+//  Esplora / mempool.space HTTP API as fallback.
 //
 
 import Foundation
 
 public enum BlockchainError: LocalizedError {
-    case airGapped
     case invalidAddress
     case http(Int, String)
     case invalidResponse
@@ -17,8 +16,6 @@ public enum BlockchainError: LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .airGapped:
-            return "Modo Air-Gap activo: ColdVault no se conecta a la red."
         case .invalidAddress:
             return "Dirección inválida para consultar en la red."
         case .http(let code, let body):
@@ -88,13 +85,6 @@ public final class BlockchainService {
     public static let shared = BlockchainService()
     private let session: URLSession
     private let lock = NSLock()
-    private var blocked = false
-
-    /// Set by WalletManager whenever Air-Gap mode changes (defense in depth).
-    public var isNetworkBlocked: Bool {
-        get { lock.lock(); defer { lock.unlock() }; return blocked }
-        set { lock.lock(); blocked = newValue; lock.unlock() }
-    }
 
     private init() {
         let config = URLSessionConfiguration.ephemeral // No caching on disk
@@ -113,7 +103,6 @@ public final class BlockchainService {
     }
 
     private func get(url: URL) async throws -> Data {
-        guard !isNetworkBlocked else { throw BlockchainError.airGapped }
         // Address scans send bursts of requests: back off and retry when rate limited.
         var attempt = 0
         while true {
@@ -122,7 +111,6 @@ public final class BlockchainService {
             if http.statusCode == 429 && attempt < 4 {
                 attempt += 1
                 try await Task.sleep(nanoseconds: UInt64(attempt) * 1_500_000_000)
-                guard !isNetworkBlocked else { throw BlockchainError.airGapped }
                 continue
             }
             guard http.statusCode == 200 else {
@@ -140,7 +128,7 @@ public final class BlockchainService {
         return address.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - Electrum (mainnet): one pipelined TLS connection, mempool.space as fallback
+    // MARK: - Electrum: one pipelined TLS connection per network, mempool.space as fallback
 
     /// With your own Electrum server nothing about your addresses goes to public
     /// services: no fallback to mempool.space for balances, coins, history or broadcast.
@@ -152,9 +140,12 @@ public final class BlockchainService {
         return decoded.scriptPubKey
     }
 
-    private func electrumActivity(_ address: String) async throws -> AddressActivity {
-        let hash = ElectrumClient.scriptHash(try scriptPubKey(address, isTestnet: false))
-        let results = try await ElectrumClient.shared.batch([
+    /// Your own server, when set, replaces the public mainnet servers entirely.
+    private func ownServerOnly(_ isTestnet: Bool) -> Bool { !isTestnet && usesOwnServer }
+
+    private func electrumActivity(_ address: String, isTestnet: Bool) async throws -> AddressActivity {
+        let hash = ElectrumClient.scriptHash(try scriptPubKey(address, isTestnet: isTestnet))
+        let results = try await ElectrumClient.client(isTestnet: isTestnet).batch([
             ("blockchain.scripthash.get_history", [hash]),
             ("blockchain.scripthash.get_balance", [hash])
         ])
@@ -166,9 +157,9 @@ public final class BlockchainService {
         return AddressActivity(used: !history.isEmpty, balance: confirmed + unconfirmed)
     }
 
-    private func electrumUTXOs(_ address: String) async throws -> [UTXO] {
-        let hash = ElectrumClient.scriptHash(try scriptPubKey(address, isTestnet: false))
-        guard let list = try await ElectrumClient.shared.request("blockchain.scripthash.listunspent", [hash]) as? [[String: Any]] else {
+    private func electrumUTXOs(_ address: String, isTestnet: Bool) async throws -> [UTXO] {
+        let hash = ElectrumClient.scriptHash(try scriptPubKey(address, isTestnet: isTestnet))
+        guard let list = try await ElectrumClient.client(isTestnet: isTestnet).request("blockchain.scripthash.listunspent", [hash]) as? [[String: Any]] else {
             throw ElectrumError.invalidResponse
         }
         return try list.map { item in
@@ -205,8 +196,10 @@ public final class BlockchainService {
     /// Full history of a set of scripts through Electrum: histories, raw transactions and
     /// block times, all pipelined. Net amounts come from our outputs minus our spent
     /// outputs (every funding transaction of ours is in the same history).
-    public func electrumWalletTransactions(scripts: [Data], ownScripts: Set<Data>) async throws -> [WalletTransaction] {
-        let client = ElectrumClient.shared
+    public func electrumWalletTransactions(scripts: [Data], ownScripts: Set<Data>, isTestnet: Bool) async throws -> [WalletTransaction] {
+        let client = ElectrumClient.client(isTestnet: isTestnet)
+        // Block times are cached by height: keep the two networks apart.
+        let timeKey: (Int) -> Int = { isTestnet ? -$0 : $0 }
         var heights = [String: Int]()
         for chunk in stride(from: 0, to: scripts.count, by: 100).map({ Array(scripts[$0..<min($0 + 100, scripts.count)]) }) {
             let histories = try await client.batch(chunk.map { ("blockchain.scripthash.get_history", [ElectrumClient.scriptHash($0)]) })
@@ -239,7 +232,7 @@ public final class BlockchainService {
         var times = [Int: Date]()
         var unknownHeights = [Int]()
         for height in confirmedHeights {
-            if let time = cachedTime(height) { times[height] = time } else { unknownHeights.append(height) }
+            if let time = cachedTime(timeKey(height)) { times[height] = time } else { unknownHeights.append(height) }
         }
         for chunk in stride(from: 0, to: unknownHeights.count, by: 100).map({ Array(unknownHeights[$0..<min($0 + 100, unknownHeights.count)]) }) {
             let headers = try await client.batch(chunk.map { ("blockchain.block.header", [$0]) })
@@ -249,7 +242,7 @@ public final class BlockchainService {
                 let timestamp = UInt32(b[68]) | UInt32(b[69]) << 8 | UInt32(b[70]) << 16 | UInt32(b[71]) << 24
                 let date = Date(timeIntervalSince1970: TimeInterval(timestamp))
                 times[height] = date
-                cache(time: date, height: height)
+                cache(time: date, height: timeKey(height))
             }
         }
 
@@ -274,10 +267,8 @@ public final class BlockchainService {
 
     // MARK: - Address activity: has it ever been used, and its balance (confirmed + mempool)
     public func fetchAddressActivity(address: String, isTestnet: Bool) async throws -> AddressActivity {
-        if !isTestnet {
-            if usesOwnServer { return try await electrumActivity(address) }
-            if let activity = try? await electrumActivity(address) { return activity }
-        }
+        if ownServerOnly(isTestnet) { return try await electrumActivity(address, isTestnet: false) }
+        if let activity = try? await electrumActivity(address, isTestnet: isTestnet) { return activity }
         let checked = try checkedAddress(address, isTestnet: isTestnet)
         let data = try await get("/address/\(checked)", isTestnet: isTestnet)
         let decoded = try JSONDecoder().decode(AddressResponse.self, from: data)
@@ -312,10 +303,8 @@ public final class BlockchainService {
 
     // MARK: - UTXOs
     public func fetchUTXOs(address: String, isTestnet: Bool) async throws -> [UTXO] {
-        if !isTestnet {
-            if usesOwnServer { return try await electrumUTXOs(address) }
-            if let utxos = try? await electrumUTXOs(address) { return utxos }
-        }
+        if ownServerOnly(isTestnet) { return try await electrumUTXOs(address, isTestnet: false) }
+        if let utxos = try? await electrumUTXOs(address, isTestnet: isTestnet) { return utxos }
         let checked = try checkedAddress(address, isTestnet: isTestnet)
         let data = try await get("/address/\(checked)/utxo", isTestnet: isTestnet)
         let utxos = try JSONDecoder().decode([UTXO].self, from: data)
@@ -328,11 +317,11 @@ public final class BlockchainService {
     // MARK: - Raw previous transaction (needed in PSBTs for legacy inputs)
     public func fetchRawTransaction(txid: String, isTestnet: Bool) async throws -> Transaction {
         guard txid.count == 64, txid.hexDecoded != nil else { throw BlockchainError.invalidResponse }
-        if !isTestnet, let hex = try? await ElectrumClient.shared.request("blockchain.transaction.get", [txid.lowercased()]) as? String,
+        if let hex = try? await ElectrumClient.client(isTestnet: isTestnet).request("blockchain.transaction.get", [txid.lowercased()]) as? String,
            let raw = hex.hexDecoded, let tx = try? Transaction.parse(raw), tx.txid == txid.lowercased() {
             return tx
         }
-        if !isTestnet && usesOwnServer { throw BlockchainError.invalidResponse }
+        if ownServerOnly(isTestnet) { throw BlockchainError.invalidResponse }
         let data = try await get("/tx/\(txid)/hex", isTestnet: isTestnet)
         guard let hex = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
               let raw = hex.hexDecoded else { throw BlockchainError.invalidResponse }
@@ -448,24 +437,21 @@ public final class BlockchainService {
     // MARK: - Broadcast
     @discardableResult
     public func broadcast(_ tx: Transaction, isTestnet: Bool) async throws -> String {
-        guard !isNetworkBlocked else { throw BlockchainError.airGapped }
-        if !isTestnet {
-            do {
-                let result = try await ElectrumClient.shared.request("blockchain.transaction.broadcast",
-                                                                     [tx.serialized().hexEncodedString])
-                guard let txid = (result as? String)?.lowercased(), txid == tx.txid else {
-                    throw BlockchainError.txidMismatch(expected: tx.txid, received: "\(result)")
-                }
-                return txid
-            } catch ElectrumError.server(let message) {
-                // The network rejected it (fee too low, already spent…): no point retrying.
-                throw BlockchainError.http(400, message)
-            } catch let error as BlockchainError {
-                throw error
-            } catch {
-                // Server unreachable: fall through to mempool.space (not with your own node).
-                if usesOwnServer { throw error }
+        do {
+            let result = try await ElectrumClient.client(isTestnet: isTestnet).request("blockchain.transaction.broadcast",
+                                                                 [tx.serialized().hexEncodedString])
+            guard let txid = (result as? String)?.lowercased(), txid == tx.txid else {
+                throw BlockchainError.txidMismatch(expected: tx.txid, received: "\(result)")
             }
+            return txid
+        } catch ElectrumError.server(let message) {
+            // The network rejected it (fee too low, already spent…): no point retrying.
+            throw BlockchainError.http(400, message)
+        } catch let error as BlockchainError {
+            throw error
+        } catch {
+            // Server unreachable: fall through to mempool.space (not with your own node).
+            if ownServerOnly(isTestnet) { throw error }
         }
         guard let url = URL(string: "\(baseURL(isTestnet: isTestnet))/tx") else { throw BlockchainError.invalidResponse }
 

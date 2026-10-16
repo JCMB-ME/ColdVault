@@ -65,9 +65,6 @@ public struct ImportWalletView: View {
         ZStack {
             GlassAmbientBackground()
 
-            // Fixed title bar above the scrolling content (text never runs under it).
-            VStack(spacing: 0) {
-            SheetHeader(title: L10n.importWalletTitle(lang), onClose: { presentationMode.wrappedValue.dismiss() })
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 22) {
                     VStack(spacing: 8) {
@@ -160,6 +157,8 @@ public struct ImportWalletView: View {
                 .padding(.bottom, 32)
             }
             .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SheetHeader(title: L10n.importWalletTitle(lang), onClose: { presentationMode.wrappedValue.dismiss() })
             }
         }
         .presentationDetents([.large])

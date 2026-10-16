@@ -210,16 +210,12 @@ public struct SettingsView: View {
                 }
 
                 SettingsSection(header: "Cold wallet",
-                                footer: t("Air-Gap cuts every network connection. Testnet re-derives your addresses (Face ID). Server: use your own node so public servers never see your addresses.",
-                                          "Air-Gap corta toda conexión a internet. Testnet vuelve a derivar tus direcciones (Face ID). Servidor: usa tu propio nodo para que los servidores públicos nunca vean tus direcciones.")) {
+                                footer: t("Testnet re-derives your addresses (Face ID). Server: use your own node so public servers never see your addresses.",
+                                          "Testnet vuelve a derivar tus direcciones (Face ID). Servidor: usa tu propio nodo para que los servidores públicos nunca vean tus direcciones.")) {
                     Button { route = .server } label: {
                         SettingsRow(title: t("Server", "Servidor"),
                                     value: ElectrumServerConfig.current?.host ?? t("Public", "Públicos"), chevron: true,
                                     icon: "server.rack")
-                    }
-                    SettingsDivider(inset: 60)
-                    SettingsRow(title: t("Air-Gap mode", "Modo Air-Gap"), icon: "airplane") {
-                        Toggle("", isOn: $walletManager.isAirGapped).labelsHidden()
                     }
                     SettingsDivider(inset: 60)
                     SettingsRow(title: "Testnet4", icon: "testtube.2") {
@@ -418,10 +414,8 @@ public struct SettingsView: View {
             TipRow(icon: "eye.slash",
                    text: t("The phrase is hidden while the screen is recorded or shared, and when you leave the app.",
                            "La frase se oculta si la pantalla se graba o comparte, y al salir de la app."))
-            TipRow(icon: walletManager.isAirGapped ? "airplane" : "network",
-                   text: walletManager.isAirGapped
-                       ? t("Air-Gap on: no network connection at all.", "Air-Gap activado: ninguna conexión a internet.")
-                       : t("Online: only public data (addresses, transactions) is sent, never keys.",
+            TipRow(icon: "network",
+                   text: t("Online: only public data (addresses, transactions) is sent, never keys.",
                            "En línea: solo se envían datos públicos (direcciones, transacciones), nunca claves."))
         }
         .padding(.horizontal, 4)
@@ -444,7 +438,7 @@ public struct SettingsView: View {
                         if isRescanning { ProgressView() } else { Chevron() }
                     }
                 }
-                .disabled(isRescanning || walletManager.isAirGapped)
+                .disabled(isRescanning)
             }
         }
 
@@ -1110,9 +1104,6 @@ struct ContactEditorView: View {
     var body: some View {
         ZStack {
             GlassAmbientBackground()
-            VStack(spacing: 0) {
-                SheetHeader(title: isNew ? t("New contact", "Nuevo contacto") : t("Edit contact", "Editar contacto"),
-                            onClose: { presentationMode.wrappedValue.dismiss() })
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 22) {
                         photoPicker
@@ -1181,7 +1172,10 @@ struct ContactEditorView: View {
                     .buttonStyle(.plain)
                 }
                 .scrollDismissesKeyboard(.interactively)
-            }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    SheetHeader(title: isNew ? t("New contact", "Nuevo contacto") : t("Edit contact", "Editar contacto"),
+                                onClose: { presentationMode.wrappedValue.dismiss() })
+                }
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)

@@ -485,8 +485,6 @@ public struct DashboardView: View {
                 HStack(spacing: 16) {
                     if isWatchOnly {
                         badge(icon: "eye", text: L10n.watchOnlyBadge(lang))
-                    } else if walletManager.isAirGapped {
-                        badge(icon: "snowflake", text: L10n.airGapBadge(lang))
                     }
                     if walletManager.isTestnet {
                         badge(icon: "testtube.2", text: "TESTNET4")
@@ -506,7 +504,7 @@ public struct DashboardView: View {
     }
 
     private var hasModeBadges: Bool {
-        isWatchOnly || walletManager.isAirGapped || walletManager.isTestnet
+        isWatchOnly || walletManager.isTestnet
     }
 
     private var hasBadges: Bool {
@@ -533,10 +531,7 @@ public struct DashboardView: View {
     @ViewBuilder
     private var balanceStatus: some View {
         Group {
-            if walletManager.isAirGapped {
-                Label(t("Offline — balance not updated", "Sin conexión — saldo no actualizado"), systemImage: "wifi.slash")
-                    .foregroundColor(Palette.secondary)
-            } else if walletManager.balanceError != nil {
+            if walletManager.balanceError != nil {
                 Label(t("Couldn't update balance — pull to retry", "No se pudo actualizar el saldo — desliza para reintentar"),
                       systemImage: "exclamationmark.triangle.fill")
                     .foregroundColor(.orange)
@@ -596,7 +591,7 @@ struct HomeExtrasView: View {
                 CalculatorCard()
                     .environmentObject(walletManager)
             }
-            if walletManager.homeShowPriceChart && !walletManager.isTestnet {
+            if walletManager.homeShowPriceChart {
                 MinimalPriceChart()
                     .environmentObject(walletManager)
             }
@@ -608,9 +603,7 @@ struct HomeExtrasView: View {
     @ViewBuilder
     private var transactions: some View {
         VStack(spacing: 10) {
-            if walletManager.isAirGapped {
-                note(t("Offline", "Sin conexión"))
-            } else if walletManager.transactions.isEmpty {
+            if walletManager.transactions.isEmpty {
                 note(walletManager.isLoadingTransactions ? t("Loading…", "Cargando…")
                                                          : t("No transactions yet", "Aún no hay transacciones"))
             } else {
@@ -789,12 +782,7 @@ struct MinimalPriceChart: View {
                 .foregroundColor(Palette.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
 
-            if walletManager.isAirGapped {
-                Text(t("Offline", "Sin conexión"))
-                    .font(.system(size: 14))
-                    .foregroundColor(Palette.secondary)
-                    .frame(height: 150)
-            } else if let first = candles.first, let last = candles.last, candles.count > 1 {
+            if let first = candles.first, let last = candles.last, candles.count > 1 {
                 let change = (last.close - first.open) / first.open * 100
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(money(last.close))

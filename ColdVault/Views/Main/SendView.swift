@@ -2,13 +2,11 @@
 //  SendView.swift
 //  ColdVault
 //
-//  Three real sending flows, all with a mandatory review screen:
-//   • Online wallet: fetch UTXOs → coin selection → review → Face ID → sign,
-//     verify every signature → broadcast → show txid.
+//  Two real sending flows, both with a mandatory review screen:
+//   • Wallet with keys: fetch UTXOs → coin selection → review → slide to authorize
+//     (Face ID) → sign, verify every signature → broadcast → show txid.
 //   • Watch-only: build the same transaction as an unsigned PSBT (QR) for a cold
 //     signer, then scan the signed result back and broadcast it.
-//   • Air-gap: scan a PSBT (from Sparrow, Electrum or ColdVault watch-only) →
-//     Face ID → review outputs and fee → sign → show the signed transaction as QR.
 //
 
 import SwiftUI
@@ -19,7 +17,7 @@ private enum FeeChoice: String, CaseIterable, Identifiable {
 }
 
 private enum ScanTarget: String, Identifiable {
-    case recipient, psbt, signedTransaction
+    case recipient, signedTransaction
     var id: String { rawValue }
 }
 
@@ -49,14 +47,6 @@ public struct SendView: View {
     @State private var unsignedPSBT: String?
     @State private var expectedUnsigned: Transaction?
 
-    // Air-gap
-    @State private var importedPSBT: PSBT?
-    @State private var keyring: WalletKeyring?
-    @State private var summary: PSBTSummary?
-    @State private var signedOutput: String?
-    @State private var signedPSBTData: Data?
-    @State private var signedIsFinal: Bool = false
-
     /// `recipient` pre-fills the destination (e.g. sending to a contact).
     public init(recipient: String? = nil) {
         _recipientAddress = State(initialValue: recipient ?? "")
@@ -64,8 +54,6 @@ public struct SendView: View {
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
-
-    private var isAirGapFlow: Bool { walletManager.isAirGapped && !walletManager.isWatchOnly }
 
     private var feeRate: UInt64 {
         let f = fees ?? RecommendedFees.fallback
@@ -124,6 +112,14 @@ public struct SendView: View {
         unit == .btc ? "\(SendView.btcText(sats)) BTC" : "\(SendView.satsText(sats)) sats"
     }
 
+    /// The amount at the current bitcoin price, when it is known.
+    private func fiatText(_ sats: UInt64) -> String? {
+        guard let price = walletManager.fiatPrice, price > 0 else { return nil }
+        let value = Double(sats) / 100_000_000 * price
+        return WalletManager.currencyFormatter(walletManager.fiatCurrency, fractionDigits: nil)
+            .string(from: NSNumber(value: value))
+    }
+
     /// Switches BTC ⇄ sats, converting what was typed.
     private func toggleAmountUnit() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -145,310 +141,453 @@ public struct SendView: View {
             && (fees != nil || feesUnavailable)
     }
 
+    private var trimmedRecipient: String { recipientAddress.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var recipientContact: Contact? {
+        walletManager.contacts.first { $0.address == trimmedRecipient }
+    }
+
     // MARK: - Body
     public var body: some View {
-        NavigationStack {
-            ZStack {
-                GlassAmbientBackground()
+        ZStack {
+            GlassAmbientBackground()
 
-                ScrollView {
-                    VStack(spacing: 20) {
-                        if isAirGapFlow {
-                            airGapContent
-                        } else if !walletManager.canBuildTransactions {
-                            infoCard(icon: "exclamationmark.triangle.fill", color: .orange,
-                                     title: t("Sending not available", "Envío no disponible"),
-                                     text: t("This watch-only address type (P2SH / P2WSH) needs its script to build transactions. Use the wallet that owns it.",
-                                             "Este tipo de dirección (P2SH / P2WSH) necesita su script para construir transacciones. Usa la billetera que la controla."))
-                        } else if let txid = broadcastTxId {
-                            successCard(txid: txid)
-                        } else if let psbt = unsignedPSBT {
-                            unsignedPSBTCard(psbt)
-                        } else if let plan = plan {
-                            reviewCard(plan)
-                        } else {
-                            sendForm
-                        }
-
-                        if let error = errorMessage {
-                            Text(error)
-                                .font(.system(size: 13))
-                                .foregroundColor(.red)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 20)
-                        }
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 16) {
+                    if !walletManager.canBuildTransactions {
+                        infoCard(icon: "exclamationmark.triangle.fill", color: .orange,
+                                 title: t("Sending not available", "Envío no disponible"),
+                                 text: t("This watch-only address type (P2SH / P2WSH) needs its script to build transactions. Use the wallet that owns it.",
+                                         "Este tipo de dirección (P2SH / P2WSH) necesita su script para construir transacciones. Usa la billetera que la controla."))
+                    } else if let txid = broadcastTxId {
+                        successCard(txid: txid)
+                    } else if let psbt = unsignedPSBT {
+                        unsignedPSBTCard(psbt)
+                    } else if let plan = plan {
+                        reviewCard(plan)
+                    } else {
+                        sendForm
                     }
-                    .padding(.vertical, 12)
+
+                    if let error = errorMessage {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.red)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 20)
+                    }
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 32)
+                .animation(.spring(response: 0.45, dampingFraction: 0.85), value: plan == nil)
             }
-            .navigationTitle(isAirGapFlow ? t("Sign Offline", "Firmar sin conexión") : L10n.sendBitcoin(lang))
-            .presentationDragIndicator(.visible)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    SheetCloseButton { presentationMode.wrappedValue.dismiss() }
-                }
+            .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SheetHeader(title: L10n.sendBitcoin(lang), onClose: { presentationMode.wrappedValue.dismiss() })
             }
-            .sheet(item: $scanTarget) { target in
-                QRScannerView { code in
-                    handleScan(code, target: target)
-                }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .sheet(item: $scanTarget) { target in
+            QRScannerView { code in
+                handleScan(code, target: target)
             }
-            .task {
-                await loadFees()
-            }
-            .onDisappear {
-                // Drop private keys as soon as the screen goes away.
-                keyring = nil
-            }
+        }
+        .task {
+            await loadFees()
         }
     }
 
     // MARK: - Form
     private var sendForm: some View {
-        VStack(spacing: 26) {
+        VStack(spacing: 16) {
             if walletManager.isWatchOnly {
                 Text(t("Watch-only: ColdVault creates an unsigned transaction (PSBT) for your cold device to sign.",
                        "Observación: ColdVault crea una transacción sin firmar (PSBT) para que la firme tu dispositivo frío."))
                     .font(.system(size: 12))
                     .foregroundColor(Palette.secondary)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+                    .padding(.horizontal, 12)
             }
+            amountCard
+            recipientCard
+            feeCard
+            PrimaryCapsuleButton(title: t("Review", "Revisar"), icon: "doc.text.magnifyingglass",
+                                 isLoading: isProcessing, enabled: canReview, action: review)
+                .disabled(!canReview)
+                .padding(.top, 4)
+        }
+    }
 
-            // Amount: large and centered, like the balance.
-            VStack(spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+    /// Amount: large and centered, like the balance; balance and MAX below.
+    private var amountCard: some View {
+        VStack(spacing: 14) {
+            VStack(spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     TextField("0", text: $amountString)
-                        .font(.system(size: 52, weight: .bold))
+                        .font(.system(size: 48, weight: .bold))
                         .multilineTextAlignment(.center)
                         .keyboardType(unit == .btc ? .decimalPad : .numberPad)
                         .fixedSize()
                         .disabled(sendAll)
-                        .opacity(sendAll ? 0.35 : 1)
+                        .opacity(sendAll ? 0.3 : 1)
                         .modifier(RollingDigits())
                     // Tap the unit to type the amount in BTC or in sats.
                     Button(action: toggleAmountUnit) {
                         HStack(spacing: 3) {
                             Text(unit.rawValue)
-                                .font(.system(size: 18, weight: .semibold))
+                                .font(.system(size: 17, weight: .semibold))
                                 .id(unit)
                                 .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
                                                         removal: .move(edge: .top).combined(with: .opacity)))
                             Image(systemName: "arrow.up.arrow.down")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.system(size: 10, weight: .bold))
                         }
                         .foregroundColor(Color(uiColor: .label))
                         .padding(.horizontal, 10)
                         .frame(height: 30)
-                        .background(Capsule().fill(SettingsStyle.groupFill))
+                        .background(Capsule().fill(Color(uiColor: .systemBackground).opacity(0.9)))
                         .clipped()
                     }
                     .buttonStyle(.plain)
                 }
                 .frame(maxWidth: .infinity)
+                .minimumScaleFactor(0.5)
 
-                if let sats = amountSats, !sendAll {
-                    Text("= " + (unit == .btc ? "\(SendView.satsText(sats)) sats" : "\(SendView.btcText(sats)) BTC"))
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Palette.secondary)
-                        .transition(.opacity)
+                Group {
+                    if sendAll {
+                        Text(t("Entire balance minus the network fee", "Todo el saldo menos la comisión de red"))
+                    } else if let sats = amountSats {
+                        Text(([unit == .btc ? "\(SendView.satsText(sats)) sats" : "\(SendView.btcText(sats)) BTC"]
+                              + [fiatText(sats)].compactMap { $0 }).joined(separator: " · "))
+                    } else {
+                        Text(t("Amount", "Monto"))
+                    }
                 }
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Palette.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            }
 
-                HStack(spacing: 10) {
-                    Text("\(L10n.balanceLabel(lang)): \(walletManager.formattedBalance) \(walletManager.displayUnit.rawValue)")
-                        .font(.system(size: 12))
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(L10n.balanceLabel(lang))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(Palette.secondary)
-                    Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    Text("\(walletManager.formattedBalance) \(walletManager.displayUnit.rawValue)")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                }
+                Spacer(minLength: 8)
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                         sendAll.toggle()
                         if sendAll { amountString = "" }
-                    } label: {
-                        Text(L10n.maxButton(lang))
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(sendAll ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 5)
-                            .background(Capsule().fill(sendAll ? Color(uiColor: .label) : SettingsStyle.groupFill))
                     }
-                    .buttonStyle(.plain)
+                } label: {
+                    Text(L10n.maxButton(lang))
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(sendAll ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                        .padding(.horizontal, 16)
+                        .frame(height: 34)
+                        .background(Capsule().fill(sendAll ? Color(uiColor: .label) : Color(uiColor: .systemBackground).opacity(0.9)))
                 }
-                if sendAll {
-                    Text(t("Sends the entire balance minus the network fee.", "Envía todo el saldo menos la comisión de red."))
-                        .font(.system(size: 12))
-                        .foregroundColor(Palette.secondary)
-                }
+                .buttonStyle(.plain)
             }
-            .padding(.top, 10)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
+        }
+        .padding(.top, 22)
+        .padding([.horizontal, .bottom], 10)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+    }
 
-            // Recipient
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 14) {
-                    TextField(L10n.recipientPlaceholder(lang), text: $recipientAddress)
-                        .font(.system(size: 15, design: .monospaced))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-                    Button(action: pasteRecipient) { Image(systemName: "doc.on.clipboard") }
-                    Button(action: { scanTarget = .recipient }) { Image(systemName: "qrcode.viewfinder") }
-                    if !walletManager.contacts.isEmpty {
-                        Menu {
-                            ForEach(walletManager.contacts) { contact in
-                                Button(contact.name) { recipientAddress = contact.address }
+    /// Recipient: address with paste / scan, and contacts one tap away.
+    private var recipientCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(t("To", "Para"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Palette.secondary)
+                .padding(.leading, 4)
+
+            HStack(spacing: 8) {
+                TextField(L10n.recipientPlaceholder(lang), text: $recipientAddress, axis: .vertical)
+                    .font(.system(size: 14, design: .monospaced))
+                    .lineLimit(1...3)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .padding(.leading, 14)
+                    .padding(.vertical, 12)
+                if recipientAddress.isEmpty {
+                    circleButton("doc.on.clipboard", action: pasteRecipient)
+                } else {
+                    circleButton("xmark") { recipientAddress = "" }
+                }
+                circleButton("qrcode.viewfinder") { scanTarget = .recipient }
+                    .padding(.trailing, 6)
+            }
+            .frame(minHeight: 52)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
+
+            if !recipientAddress.isEmpty && BitcoinAddress.decode(trimmedRecipient) == nil {
+                Text(t("Invalid address (checksum or format).", "Dirección inválida (checksum o formato)."))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.red)
+                    .padding(.leading, 4)
+            }
+
+            if !walletManager.contacts.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(walletManager.contacts) { contact in
+                            let selected = contact.address == trimmedRecipient
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                    recipientAddress = selected ? "" : contact.address
+                                }
+                            } label: {
+                                VStack(spacing: 5) {
+                                    ContactAvatar(contact: contact, size: 46)
+                                        .overlay(Circle().stroke(Color(uiColor: .label), lineWidth: selected ? 2.5 : 0).padding(-3))
+                                    Text(contact.name)
+                                        .font(.system(size: 11, weight: selected ? .semibold : .medium))
+                                        .foregroundColor(selected ? Color(uiColor: .label) : Palette.secondary)
+                                        .lineLimit(1)
+                                        .frame(width: 60)
+                                }
                             }
-                        } label: {
-                            Image(systemName: "person.crop.circle")
+                            .buttonStyle(.plain)
                         }
                     }
-                }
-                .foregroundColor(Color(uiColor: .label))
-                .padding(.horizontal, 16)
-                .frame(minHeight: 52)
-                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
-
-                if let name = walletManager.contactName(for: recipientAddress) {
-                    Label(name, systemImage: "person.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(Palette.secondary)
-                        .padding(.horizontal, 16)
-                }
-                if !recipientAddress.isEmpty && BitcoinAddress.decode(recipientAddress) == nil {
-                    Text(t("Invalid address (checksum or format).", "Dirección inválida (checksum o formato)."))
-                        .font(.system(size: 12))
-                        .foregroundColor(.red)
-                        .padding(.horizontal, 16)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
                 }
             }
-            .padding(.horizontal, 20)
-
-            // Fee
-            VStack(spacing: 10) {
-                Text(L10n.networkFee(lang).uppercased())
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(Palette.secondary)
-                HStack(spacing: 4) {
-                    feeButton(.economy, title: L10n.economy(lang))
-                    feeButton(.normal, title: L10n.normal(lang))
-                    feeButton(.fast, title: L10n.fast(lang))
-                    feeButton(.custom, title: t("Custom", "Manual"))
-                }
-                .padding(4)
-                .background(Capsule().fill(SettingsStyle.groupFill))
-                Text("\(feeRate) sat/vB")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(Palette.secondary)
-                if feeChoice == .custom {
-                    Stepper(value: $customFeeRate, in: 1...1000) {
-                        Text("\(customFeeRate) sat/vB")
-                            .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                    }
-                    .padding(.horizontal, 16)
-                    .frame(minHeight: 48)
-                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
-                }
-                if fees == nil && !feesUnavailable {
-                    ProgressView()
-                } else if feesUnavailable {
-                    Text(t("Could not load current fees. Check the rate before sending.",
-                           "No se pudieron cargar las comisiones actuales. Revisa la tasa antes de enviar."))
-                        .font(.system(size: 12))
-                        .foregroundColor(.orange)
-                        .multilineTextAlignment(.center)
-                }
-            }
-            .padding(.horizontal, 20)
-
-            Button(action: review) {
-                Group {
-                    if isProcessing {
-                        ProgressView().tint(Color(uiColor: .systemBackground))
-                    } else {
-                        Text(t("Review", "Revisar"))
-                            .font(.system(size: 16, weight: .semibold))
-                    }
-                }
-                .foregroundColor(Color(uiColor: .systemBackground))
-                .frame(maxWidth: .infinity)
-                .frame(height: 50)
-                .background(Capsule().fill(Color(uiColor: .label)))
-            }
-            .buttonStyle(.plain)
-            .opacity(canReview ? 1.0 : 0.35)
-            .disabled(!canReview)
-            .padding(.horizontal, 24)
         }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+    }
+
+    private var feeCard: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text(L10n.networkFee(lang))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Palette.secondary)
+                Spacer()
+                if fees == nil && !feesUnavailable {
+                    ProgressView().scaleEffect(0.8)
+                } else {
+                    Text("\(feeRate) sat/vB")
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundColor(Color(uiColor: .label))
+                        .modifier(RollingDigits())
+                        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: feeRate)
+                }
+            }
+            .padding(.horizontal, 4)
+
+            HStack(spacing: 4) {
+                feeButton(.economy, title: L10n.economy(lang))
+                feeButton(.normal, title: L10n.normal(lang))
+                feeButton(.fast, title: L10n.fast(lang))
+                feeButton(.custom, title: t("Custom", "Manual"))
+            }
+            .padding(4)
+            .background(Capsule().fill(Color(uiColor: .systemBackground).opacity(0.55)))
+
+            if feeChoice == .custom {
+                Stepper(value: $customFeeRate, in: 1...1000) {
+                    Text("\(customFeeRate) sat/vB")
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                }
+                .padding(.horizontal, 14)
+                .frame(minHeight: 46)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
+            }
+            if feesUnavailable {
+                Text(t("Could not load current fees. Check the rate before sending.",
+                       "No se pudieron cargar las comisiones actuales. Revisa la tasa antes de enviar."))
+                    .font(.system(size: 12))
+                    .foregroundColor(.orange)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+    }
+
+    private func circleButton(_ icon: String, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(Color(uiColor: .label))
+                .frame(width: 38, height: 38)
+                .background(Circle().fill(SettingsStyle.groupFill))
+        }
+        .buttonStyle(.plain)
     }
 
     private func feeButton(_ choice: FeeChoice, title: String) -> some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            feeChoice = choice
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { feeChoice = choice }
         } label: {
             Text(title)
                 .font(.system(size: 13, weight: feeChoice == choice ? .semibold : .regular))
                 .foregroundColor(feeChoice == choice ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity, minHeight: 34)
                 .background(Capsule().fill(feeChoice == choice ? Color(uiColor: .label) : Color.clear))
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Review (online / watch-only)
+    // MARK: - Review
     private func reviewCard(_ plan: TransactionPlan) -> some View {
         let highFee = plan.fee * 10 > plan.amount
-        return VStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(t("Review", "Revisión"))
-                    .font(.system(size: 18, weight: .bold))
-                reviewRow(t("To", "Destino"), recipientAddress.trimmingCharacters(in: .whitespacesAndNewlines), mono: true)
-                reviewRow(t("Amount", "Monto"), amountText(plan.amount))
-                reviewRow(t("Network fee", "Comisión"), "\(SendView.satsText(plan.fee)) sats · \(plan.feeRate) sat/vB · ~\(plan.estimatedVSize) vB")
-                if plan.change > 0 {
-                    reviewRow(t("Change (back to you)", "Cambio (vuelve a ti)"), amountText(plan.change))
+        let parts = amountText(plan.amount).split(separator: " ").map(String.init)
+        return VStack(spacing: 18) {
+            VStack(spacing: 20) {
+                // What leaves, big and centered.
+                VStack(spacing: 4) {
+                    Text(t("You're sending", "Vas a enviar"))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Palette.secondary)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(parts.first ?? "")
+                            .font(.system(size: 40, weight: .bold))
+                            .foregroundColor(Color(uiColor: .label))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                        Text(parts.last ?? "")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(Palette.secondary)
+                    }
+                    if let fiat = fiatText(plan.amount) {
+                        Text("≈ \(fiat)")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(Palette.secondary)
+                    }
                 }
-                reviewRow(t("Total debited", "Total descontado"), amountText(plan.totalSpent))
-                reviewRow(t("Inputs", "Entradas"), "\(plan.coins.count)")
-                Text(t("Replaceable (RBF) — you can bump the fee later from another wallet.",
-                       "Reemplazable (RBF): puedes subir la comisión después desde otra billetera."))
-                    .font(.system(size: 11))
-                    .foregroundColor(Palette.secondary)
+
+                // To whom.
+                VStack(spacing: 8) {
+                    if let contact = recipientContact {
+                        ContactAvatar(contact: contact, size: 48)
+                        Text(contact.name)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(Color(uiColor: .label))
+                    } else {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(Color(uiColor: .systemBackground))
+                            .frame(width: 48, height: 48)
+                            .background(Circle().fill(Color(uiColor: .label)))
+                    }
+                    Text(trimmedRecipient)
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundColor(recipientContact == nil ? Color(uiColor: .label) : Palette.secondary)
+                        .multilineTextAlignment(.center)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 12)
+                }
+
+                // Details.
+                VStack(spacing: 0) {
+                    detailRow(t("Network fee", "Comisión"), "\(SendView.satsText(plan.fee)) sats",
+                              detail: "\(plan.feeRate) sat/vB · ~\(plan.estimatedVSize) vB")
+                    if plan.change > 0 {
+                        SettingsDivider(inset: 14)
+                        detailRow(t("Change (back to you)", "Cambio (vuelve a ti)"), amountText(plan.change))
+                    }
+                    SettingsDivider(inset: 14)
+                    detailRow(t("Inputs", "Entradas"), "\(plan.coins.count)")
+                    SettingsDivider(inset: 14)
+                    detailRow(t("Total debited", "Total descontado"), amountText(plan.totalSpent), emphasized: true)
+                }
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
+
                 if highFee {
                     Label(t("The fee is more than 10% of the amount.", "La comisión supera el 10% del monto."),
                           systemImage: "exclamationmark.triangle.fill")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.orange)
+                        .multilineTextAlignment(.center)
                 }
+                Text(t("Replaceable (RBF): you can bump the fee later from another wallet.",
+                       "Reemplazable (RBF): puedes subir la comisión después desde otra billetera."))
+                    .font(.system(size: 11))
+                    .foregroundColor(Palette.secondary)
+                    .multilineTextAlignment(.center)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
-            .padding(.horizontal, 20)
-
-            Button(action: { confirm(plan) }) {
-                if isProcessing {
-                    ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white))
-                } else {
-                    HStack(spacing: 8) {
-                        Image(systemName: walletManager.isWatchOnly ? "qrcode" : "lock.shield.fill")
-                        Text(walletManager.isWatchOnly
-                             ? t("Create PSBT for signing", "Crear PSBT para firmar")
-                             : L10n.authorizeAndSend(lang))
-                            .font(.system(size: 17, weight: .semibold))
-                    }
-                }
-            }
-            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 22)
             .frame(maxWidth: .infinity)
-            .frame(height: 56)
-            .modifier(GlassPillModifier(isEmphasized: true))
-            .disabled(isProcessing)
-            .padding(.horizontal, 24)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
 
-            Button(t("Edit", "Editar")) {
-                self.plan = nil
-                errorMessage = nil
+            // Slide to authorize (Face ID follows); Edit: same style, smaller.
+            SlideToConfirm(title: walletManager.isWatchOnly
+                                ? t("Slide to create PSBT", "Desliza para crear PSBT")
+                                : t("Slide to send", "Desliza para enviar"),
+                           icon: walletManager.isWatchOnly ? "qrcode" : "arrow.right",
+                           isLoading: isProcessing) {
+                confirm(plan)
             }
+            .padding(.top, 4)
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                    self.plan = nil
+                    errorMessage = nil
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 12, weight: .bold))
+                    Text(t("Edit", "Editar"))
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundColor(Color(uiColor: .systemBackground))
+                .padding(.horizontal, 22)
+                .frame(height: 40)
+                .background(Capsule().fill(Color(uiColor: .label)))
+            }
+            .buttonStyle(.plain)
             .disabled(isProcessing)
+            .opacity(isProcessing ? 0.35 : 1)
         }
+    }
+
+    private func detailRow(_ title: String, _ value: String, detail: String? = nil, emphasized: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(title)
+                .font(.system(size: 14, weight: emphasized ? .semibold : .regular))
+                .foregroundColor(emphasized ? Color(uiColor: .label) : Palette.secondary)
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(value)
+                    .font(.system(size: 14, weight: emphasized ? .bold : .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                if let detail = detail {
+                    Text(detail)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(Palette.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
     }
 
     private func unsignedPSBTCard(_ psbt: String) -> some View {
@@ -456,26 +595,18 @@ public struct SendView: View {
             Text(t("Unsigned transaction (PSBT)", "Transacción sin firmar (PSBT)"))
                 .font(.system(size: 17, weight: .bold))
             AnimatedQRView(psbt: Data(base64Encoded: psbt) ?? Data(), size: 240)
-            Text(t("1. Scan this QR with your cold device (ColdVault in Air-Gap mode, Sparrow, Keystone…). Large transactions are shown as an animated QR: keep the camera on it until it completes.\n2. Then scan the signed transaction it shows.",
-                   "1. Escanea este QR con tu dispositivo frío (ColdVault en modo Air-Gap, Sparrow, Keystone…). Las transacciones grandes se muestran como QR animado: mantén la cámara sobre él hasta completarlo.\n2. Después escanea la transacción firmada que te muestre."))
+            Text(t("1. Scan this QR with your cold device (Sparrow, Keystone, Passport…). Large transactions are shown as an animated QR: keep the camera on it until it completes.\n2. Then scan the signed transaction it shows.",
+                   "1. Escanea este QR con tu dispositivo frío (Sparrow, Keystone, Passport…). Las transacciones grandes se muestran como QR animado: mantén la cámara sobre él hasta completarlo.\n2. Después escanea la transacción firmada que te muestre."))
                 .font(.system(size: 13))
                 .foregroundColor(Palette.secondary)
                 .multilineTextAlignment(.center)
             ShareLink(item: psbt) {
                 Label(L10n.share(lang), systemImage: "square.and.arrow.up")
             }
-            Button(action: { scanTarget = .signedTransaction }) {
-                if isProcessing {
-                    ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white))
-                } else {
-                    Label(t("Scan signed transaction", "Escanear transacción firmada"), systemImage: "qrcode.viewfinder")
-                        .font(.system(size: 16, weight: .semibold))
-                }
+            PrimaryCapsuleButton(title: t("Scan signed transaction", "Escanear transacción firmada"),
+                                 icon: "qrcode.viewfinder", isLoading: isProcessing) {
+                scanTarget = .signedTransaction
             }
-            .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .modifier(GlassPillModifier(isEmphasized: true))
             .disabled(isProcessing)
             Button(t("Paste signed transaction", "Pegar transacción firmada")) {
                 if let text = UIPasteboard.general.string {
@@ -485,192 +616,65 @@ public struct SendView: View {
             .disabled(isProcessing)
         }
         .padding(16)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
-        .padding(.horizontal, 20)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
     }
 
     private func successCard(txid: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 48))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundColor(.green)
-            Text(t("Transaction broadcast", "Transacción transmitida"))
-                .font(.system(size: 18, weight: .bold))
-            Text(txid)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(Palette.secondary)
-                .multilineTextAlignment(.center)
-                .textSelection(.enabled)
-            HStack(spacing: 16) {
-                Button(L10n.copy(lang)) { SecurePasteboard.copy(txid) }
-                if let url = URL(string: "https://mempool.space/\(walletManager.isTestnet ? "testnet4/" : "")tx/\(txid)") {
-                    Link(t("View in explorer", "Ver en explorador"), destination: url)
-                }
-            }
-            .font(.system(size: 14, weight: .semibold))
-            Button(t("Done", "Listo")) { presentationMode.wrappedValue.dismiss() }
-                .padding(.top, 6)
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.green.opacity(0.3), lineWidth: 1))
-        .padding(.horizontal, 20)
-    }
-
-    // MARK: - Air-gap signing
-    @ViewBuilder
-    private var airGapContent: some View {
-        if let output = signedOutput {
+        VStack(spacing: 16) {
             VStack(spacing: 14) {
-                Text(signedIsFinal
-                     ? t("Signed transaction", "Transacción firmada")
-                     : t("Partially signed PSBT", "PSBT parcialmente firmado"))
-                    .font(.system(size: 17, weight: .bold))
-                if let data = signedPSBTData {
-                    AnimatedQRView(psbt: data, size: 240)
-                } else {
-                    QRCodeView(string: output, size: 240)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 64, height: 64)
+                    .background(Circle().fill(Color.green))
+                Text(t("Transaction sent", "Transacción enviada"))
+                    .font(.system(size: 20, weight: .bold))
+                if let plan = plan {
+                    Text(amountText(plan.amount))
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(Palette.secondary)
                 }
-                Text(signedIsFinal
-                     ? t("Scan this QR with your online device (ColdVault watch-only, Sparrow…) to broadcast it.",
-                         "Escanea este QR con tu dispositivo conectado (ColdVault en observación, Sparrow…) para transmitirla.")
-                     : t("Other signatures are still needed. Return this PSBT to your coordinator.",
-                         "Aún faltan otras firmas. Devuelve este PSBT a tu coordinador."))
-                    .font(.system(size: 13))
+                Text(txid)
+                    .font(.system(size: 12, design: .monospaced))
                     .foregroundColor(Palette.secondary)
                     .multilineTextAlignment(.center)
-                ShareLink(item: output) {
-                    Label(L10n.share(lang), systemImage: "square.and.arrow.up")
-                }
-                Button(t("Done", "Listo")) { presentationMode.wrappedValue.dismiss() }
-            }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
-            .padding(.horizontal, 20)
-        } else if let psbt = importedPSBT, let summary = summary {
-            psbtReviewCard(psbt: psbt, summary: summary)
-        } else if let psbt = importedPSBT {
-            VStack(spacing: 12) {
-                Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 36))
-                    .foregroundColor(.blue)
-                Text(t("PSBT loaded: \(psbt.unsignedTx.inputs.count) inputs, \(psbt.unsignedTx.outputs.count) outputs",
-                       "PSBT cargado: \(psbt.unsignedTx.inputs.count) entradas, \(psbt.unsignedTx.outputs.count) salidas"))
-                    .font(.system(size: 15, weight: .semibold))
-                    .multilineTextAlignment(.center)
-                primaryButton(t("Unlock and review", "Desbloquear y revisar"), icon: "faceid") {
-                    unlockAndReview(psbt)
-                }
-                Button(t("Discard", "Descartar")) { resetAirGap() }
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
-            .padding(.horizontal, 20)
-        } else {
-            VStack(spacing: 16) {
-                infoCard(icon: "snowflake", color: .blue,
-                         title: t("Air-Gap signing", "Firma Air-Gap"),
-                         text: t("This device stays offline. Create the transaction on a watch-only wallet (ColdVault, Sparrow, Electrum), scan its PSBT here, review it and sign. Then scan the signed QR from the online device.",
-                                 "Este dispositivo permanece sin conexión. Crea la transacción en una billetera de observación (ColdVault, Sparrow, Electrum), escanea aquí su PSBT, revísalo y fírmalo. Luego escanea el QR firmado desde el dispositivo conectado."))
-                primaryButton(t("Scan PSBT", "Escanear PSBT"), icon: "qrcode.viewfinder") {
-                    scanTarget = .psbt
-                }
-                .padding(.horizontal, 24)
-                Button(t("Paste PSBT", "Pegar PSBT")) {
-                    if let text = UIPasteboard.general.string { loadPSBT(text) }
-                }
-            }
-        }
-    }
-
-    private func psbtReviewCard(psbt: PSBT, summary: PSBTSummary) -> some View {
-        let feeTooHigh: Bool = {
-            guard let fee = summary.fee else { return false }
-            return summary.externalTotal > 0 ? fee * 10 > summary.externalTotal : fee > 100_000
-        }()
-        return VStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(t("Review before signing", "Revisa antes de firmar"))
-                    .font(.system(size: 18, weight: .bold))
-                ForEach(summary.outputs) { output in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Text(output.isChange ? t("Change (yours)", "Cambio (tuyo)") : t("Sends to", "Envía a"))
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(output.isChange ? .green : Palette.secondary)
-                            Spacer()
-                            Text("\(output.value) sats")
-                                .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        }
-                        Text(output.address ?? t("Non-standard script", "Script no estándar"))
-                            .font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 8)
+                HStack(spacing: 10) {
+                    Button {
+                        SecurePasteboard.copy(txid)
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    } label: {
+                        Label(L10n.copy(lang), systemImage: "doc.on.doc")
+                            .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(Color(uiColor: .label))
+                            .padding(.horizontal, 16)
+                            .frame(height: 38)
+                            .background(Capsule().fill(Color(uiColor: .systemBackground).opacity(0.9)))
                     }
-                    Divider()
-                }
-                if let fee = summary.fee {
-                    let rate = summary.feeRate.map { String(format: "%.1f", $0) } ?? "?"
-                    reviewRow(t("Network fee", "Comisión"), "\(fee) sats · ~\(rate) sat/vB")
-                } else {
-                    Label(t("Fee unknown: the PSBT does not include the spent amounts.",
-                            "Comisión desconocida: el PSBT no incluye los montos gastados."),
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.orange)
-                }
-                reviewRow(t("Inputs signed by this wallet", "Entradas que firma esta billetera"),
-                          "\(summary.signableInputs) / \(summary.totalInputs)")
-                if feeTooHigh {
-                    Label(t("The fee is unusually high.", "La comisión es inusualmente alta."),
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.orange)
-                }
-                if summary.signableInputs == 0 {
-                    Text(t("None of the inputs belong to this wallet.", "Ninguna entrada pertenece a esta billetera."))
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.red)
+                    .buttonStyle(.plain)
+                    if let url = URL(string: "https://mempool.space/\(walletManager.isTestnet ? "testnet4/" : "")tx/\(txid)") {
+                        Link(destination: url) {
+                            Label(t("Explorer", "Explorador"), systemImage: "safari")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(Color(uiColor: .label))
+                                .padding(.horizontal, 16)
+                                .frame(height: 38)
+                                .background(Capsule().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+                        }
+                    }
                 }
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 26)
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
 
-            if summary.signableInputs > 0 {
-                primaryButton(t("Sign transaction", "Firmar transacción"), icon: "signature") {
-                    signImportedPSBT(psbt)
-                }
-                .padding(.horizontal, 24)
-            }
-            Button(t("Cancel", "Cancelar")) { resetAirGap() }
-                .disabled(isProcessing)
+            PrimaryCapsuleButton(title: t("Done", "Listo")) { presentationMode.wrappedValue.dismiss() }
         }
     }
 
     // MARK: - Small views
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 12, weight: .bold))
-            .foregroundColor(Palette.secondary)
-            .padding(.horizontal, 4)
-    }
-
-    private func reviewRow(_ title: String, _ value: String, mono: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(Palette.secondary)
-            Text(value)
-                .font(.system(size: 14, weight: .medium, design: mono ? .monospaced : .default))
-                .foregroundColor(Color(uiColor: .label))
-                .textSelection(.enabled)
-        }
-    }
-
     private func infoCard(icon: String, color: Color, title: String, text: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(title, systemImage: icon)
@@ -682,29 +686,12 @@ public struct SendView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
-        .padding(.horizontal, 20)
-    }
-
-    private func primaryButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            if isProcessing {
-                ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white))
-            } else {
-                Label(title, systemImage: icon)
-                    .font(.system(size: 17, weight: .semibold))
-            }
-        }
-        .foregroundColor(.white)
-        .frame(maxWidth: .infinity)
-        .frame(height: 54)
-        .modifier(GlassPillModifier(isEmphasized: true))
-        .disabled(isProcessing)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
     }
 
     // MARK: - Actions
     private func loadFees() async {
-        guard !isAirGapFlow, !walletManager.isAirGapped, fees == nil else { return }
+        guard fees == nil else { return }
         do {
             fees = try await walletManager.recommendedFees()
         } catch {
@@ -714,7 +701,6 @@ public struct SendView: View {
     }
 
     private func pasteRecipient() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         if let string = UIPasteboard.general.string {
             applyRecipient(string)
         }
@@ -738,8 +724,6 @@ public struct SendView: View {
         switch target {
         case .recipient:
             applyRecipient(code)
-        case .psbt:
-            loadPSBT(code)
         case .signedTransaction:
             broadcastSigned(code)
         }
@@ -748,12 +732,13 @@ public struct SendView: View {
     private func review() {
         errorMessage = nil
         isProcessing = true
-        let recipient = recipientAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        let recipient = trimmedRecipient
         let amount = sendAll ? nil : amountSats
         let rate = feeRate
         Task {
             do {
-                plan = try await walletManager.prepareSend(to: recipient, amount: amount, feeRate: rate)
+                let prepared = try await walletManager.prepareSend(to: recipient, amount: amount, feeRate: rate)
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { plan = prepared }
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -764,7 +749,7 @@ public struct SendView: View {
     private func confirm(_ plan: TransactionPlan) {
         errorMessage = nil
         isProcessing = true
-        let recipient = recipientAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        let recipient = trimmedRecipient
         Task {
             do {
                 if walletManager.isWatchOnly {
@@ -772,7 +757,8 @@ public struct SendView: View {
                     expectedUnsigned = plan.transaction
                     unsignedPSBT = psbt.base64
                 } else {
-                    broadcastTxId = try await walletManager.signAndBroadcast(plan, recipient: recipient)
+                    let txid = try await walletManager.signAndBroadcast(plan, recipient: recipient)
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { broadcastTxId = txid }
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                 }
             } catch {
@@ -798,66 +784,89 @@ public struct SendView: View {
             isProcessing = false
         }
     }
+}
 
-    private func loadPSBT(_ text: String) {
-        errorMessage = nil
-        do {
-            importedPSBT = try PSBT.parse(text: text)
-            summary = nil
-            keyring = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
+// MARK: - Slide to confirm
 
-    private func unlockAndReview(_ psbt: PSBT) {
-        errorMessage = nil
-        isProcessing = true
-        Task {
-            do {
-                let unlocked = try await walletManager.loadKeyring(reason: t("Unlock to review and sign the transaction",
-                                                                              "Desbloquea para revisar y firmar la transacción"))
-                keyring = unlocked
-                summary = await walletManager.summarize(psbt, keyring: unlocked)
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-            isProcessing = false
-        }
-    }
+/// Drag the knob from left to right to confirm; it springs back if released early
+/// or when the action fails (isLoading turns false again).
+struct SlideToConfirm: View {
+    let title: String
+    var icon: String = "arrow.right"
+    var isLoading = false
+    let onConfirm: () -> Void
 
-    private func signImportedPSBT(_ psbt: PSBT) {
-        guard let keyring = keyring else { return }
-        errorMessage = nil
-        isProcessing = true
-        Task {
-            do {
-                let result = try await walletManager.sign(psbt, keyring: keyring)
-                // Shown as a (possibly animated) UR QR; the finalized PSBT carries the
-                // complete transaction and every coordinator can extract and broadcast it.
-                signedPSBTData = result.psbt.serialized()
-                if let tx = result.transaction {
-                    signedOutput = tx.serialized().hexEncodedString
-                    signedIsFinal = true
-                } else {
-                    signedOutput = result.psbt.base64
-                    signedIsFinal = false
+    @State private var offset: CGFloat = 0
+    @State private var confirmed = false
+    private let knob: CGFloat = 52
+    private let inset: CGFloat = 4
+
+    var body: some View {
+        GeometryReader { geo in
+            let maxOffset = max(geo.size.width - knob - inset * 2, 1)
+            let progress = min(offset / maxOffset, 1)
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color(uiColor: .label))
+                // The track fills behind the knob as it moves.
+                Capsule()
+                    .fill(Color(uiColor: .systemBackground).opacity(0.14))
+                    .frame(width: offset + knob + inset * 2)
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 16, weight: .semibold))
+                    Image(systemName: "chevron.right.2")
+                        .font(.system(size: 12, weight: .bold))
+                        .opacity(0.6)
                 }
-                self.keyring = nil
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-            isProcessing = false
-        }
-    }
+                .foregroundColor(Color(uiColor: .systemBackground))
+                .frame(maxWidth: .infinity)
+                .padding(.leading, knob * 0.6)
+                .opacity(isLoading ? 0 : 1 - Double(progress) * 1.6)
 
-    private func resetAirGap() {
-        importedPSBT = nil
-        summary = nil
-        keyring = nil
-        signedOutput = nil
-        signedPSBTData = nil
-        errorMessage = nil
+                Group {
+                    if isLoading {
+                        ProgressView().tint(Color(uiColor: .label))
+                    } else {
+                        Image(systemName: confirmed ? "checkmark" : icon)
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(Color(uiColor: .label))
+                    }
+                }
+                .frame(width: knob, height: knob)
+                .background(Circle().fill(Color(uiColor: .systemBackground)))
+                .offset(x: inset + offset)
+                .gesture(
+                    DragGesture(minimumDistance: 2)
+                        .onChanged { value in
+                            guard !isLoading, !confirmed else { return }
+                            offset = min(max(0, value.translation.width), maxOffset)
+                        }
+                        .onEnded { _ in
+                            guard !isLoading, !confirmed else { return }
+                            if offset > maxOffset * 0.85 {
+                                UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    offset = maxOffset
+                                    confirmed = true
+                                }
+                                onConfirm()
+                            } else {
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { offset = 0 }
+                            }
+                        }
+                )
+            }
+        }
+        .frame(height: knob + inset * 2)
+        .onChange(of: isLoading) { loading in
+            // Finished (failed or cancelled Face ID): back to the start, ready again.
+            if !loading {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
+                    offset = 0
+                    confirmed = false
+                }
+            }
+        }
     }
 }

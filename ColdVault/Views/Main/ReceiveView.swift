@@ -55,10 +55,6 @@ public struct ReceiveView: View {
                 .contentShape(Rectangle())
                 .onTapGesture(perform: reveal)
 
-            // Fixed title bar above the scrolling content (text never runs under it).
-            VStack(spacing: 0) {
-            SheetHeader(title: L10n.receiveBitcoin(lang))
-                .allowsHitTesting(false)
             GeometryReader { geo in
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 22) {
@@ -141,6 +137,9 @@ public struct ReceiveView: View {
             }
             .scrollDisabled(revealStep == 0)
             }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SheetHeader(title: L10n.receiveBitcoin(lang))
+                    .allowsHitTesting(false)
             }
 
             if revealStep == 0 {

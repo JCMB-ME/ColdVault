@@ -330,6 +330,8 @@ struct SheetHeader<Accessory: View>: View {
         .padding(.top, 18)
         .padding(.bottom, 10)
         .frame(maxWidth: .infinity)
+        // Translucent like a navigation bar: what scrolls underneath shows blurred.
+        .background(Material.bar)
     }
 }
 
