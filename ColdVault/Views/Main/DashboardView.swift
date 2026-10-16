@@ -198,10 +198,24 @@ public struct DashboardView: View {
         }
     }
 
+    /// BTC with more than 2 decimals: the whole part and the first 2 decimals keep the
+    /// big size (as with 2 decimals), the rest is small, the size of the fiat value.
+    private var balanceText: Text {
+        let text = walletManager.formattedBalance
+        let separator = Locale.current.decimalSeparator ?? "."
+        let big = Font.system(size: 64, weight: .bold, design: .default)
+        guard walletManager.displayUnit == .btc, let range = text.range(of: separator),
+              text.distance(from: range.upperBound, to: text.endIndex) > 2 else {
+            return Text(text).font(big)
+        }
+        let split = text.index(range.upperBound, offsetBy: 2)
+        return Text(text[..<split]).font(big)
+            + Text(text[split...]).font(.system(size: 17, weight: .semibold, design: .default))
+    }
+
     private var balanceDisplay: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(walletManager.formattedBalance)
-                .font(.system(size: 64, weight: .bold, design: .default))
+            balanceText
                 .foregroundColor(colorScheme == .dark ? .white : .black)
                 .lineLimit(1)
                 .minimumScaleFactor(0.35)

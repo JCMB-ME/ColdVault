@@ -334,6 +334,19 @@ extension SheetHeader where Accessory == EmptyView {
     }
 }
 
+/// The coin of a wallet (bitcoin today), next to its name.
+struct BitcoinLogo: View {
+    var size: CGFloat = 17
+
+    var body: some View {
+        Image("BitcoinLogo")
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .accessibilityLabel(Text("Bitcoin"))
+    }
+}
+
 /// Icon in a small circle at the start of a settings / card row.
 struct RowIcon: View {
     let systemName: String

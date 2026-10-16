@@ -308,14 +308,8 @@ struct WalletsView: View {
             } label: {
                 HStack(spacing: 12) {
                     WalletAvatar(wallet: wallet, images: walletManager.walletImages, size: 32, highlighted: selected)
-                    Text(title)
-                        .font(.system(size: 16, weight: selected ? .semibold : .regular))
-                        .foregroundColor(Color(uiColor: .label))
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    if let sats = walletManager.cachedBalance(of: account.record) {
-                        amountLabel(sats)
-                    }
+                    nameAndAmount(title, selected: selected, logo: true,
+                                  sats: walletManager.cachedBalance(of: account.record))
                 }
                 .contentShape(Rectangle())
             }
@@ -344,6 +338,41 @@ struct WalletsView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color(uiColor: .systemBackground).opacity(selected ? 0.75 : 0))
         )
+    }
+
+    /// Name and balance on one line when they fit; otherwise (iPhone mini, long names)
+    /// the balance goes under the name, so neither is ever cut.
+    private func nameAndAmount(_ name: String, selected: Bool, logo: Bool = false, sats: UInt64?) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                nameLabel(name, selected: selected, logo: logo)
+                    .fixedSize()
+                Spacer(minLength: 8)
+                if let sats {
+                    amountLabel(sats)
+                        .fixedSize()
+                }
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                nameLabel(name, selected: selected, logo: logo)
+                if let sats {
+                    amountLabel(sats)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func nameLabel(_ name: String, selected: Bool, logo: Bool) -> some View {
+        HStack(spacing: 5) {
+            Text(name)
+                .font(.system(size: 16, weight: selected ? .semibold : .regular))
+                .foregroundColor(Color(uiColor: .label))
+                .lineLimit(1)
+            if logo {
+                BitcoinLogo(size: 14)
+            }
+        }
     }
 
     /// A balance on a single line: it shrinks to fit instead of wrapping (iPhone mini).
@@ -394,11 +423,7 @@ struct WalletsView: View {
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundColor(Color(uiColor: .label))
                             .lineLimit(1)
-                        Image("BitcoinLogo")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 17, height: 17)
-                            .accessibilityLabel(Text("Bitcoin"))
+                        BitcoinLogo(size: 17)
                     }
                     if !subtitle(wallet).isEmpty {
                         Text(subtitle(wallet))
@@ -520,14 +545,8 @@ struct WalletsView: View {
                     .frame(width: 32, height: 32)
                     .background(Circle().fill(selected ? Color(uiColor: .label)
                                                        : Color(uiColor: .systemBackground).opacity(0.9)))
-                Text(account.name)
-                    .font(.system(size: 16, weight: selected ? .semibold : .regular))
-                    .foregroundColor(Color(uiColor: .label))
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                if let sats = walletManager.cachedBalance(of: account.record) {
-                    amountLabel(sats)
-                }
+                nameAndAmount(account.name, selected: selected,
+                              sats: walletManager.cachedBalance(of: account.record))
             }
             .padding(.horizontal, 10)
             .frame(minHeight: 50)

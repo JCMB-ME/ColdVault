@@ -82,8 +82,8 @@ public enum BIP39 {
     // MARK: - Dice
 
     /// Rolls of a fair die for the phrase's full entropy (each roll ≈ 2.585 bits):
-    /// 50 for 12 words (128 bits), 99 for 24 words (256 bits).
-    public static func requiredDiceRolls(wordCount: Int) -> Int { wordCount == 24 ? 99 : 50 }
+    /// 50 for 12 words (129 ≥ 128 bits), 100 for 24 words (258 ≥ 256 bits).
+    public static func requiredDiceRolls(wordCount: Int) -> Int { wordCount == 24 ? 100 : 50 }
 
     /// A phrase from dice rolls alone, verifiable on any offline computer and the same
     /// as Coldcard's: entropy = SHA-256 of the rolls written as the digits "1"–"6";

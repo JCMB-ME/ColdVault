@@ -363,7 +363,26 @@ public final class BlockchainService {
         return points.sorted { $0.date < $1.date }
     }
 
-    /// BTC/USD from Kraken's public ticker: only used if mempool.space is down.
+    /// Live BTC price in every currency (Coinbase spot exchange rates: one request,
+    /// updated continuously, direct BTC/MXN, BTC/JPY, BTC/CNY, BTC/USD quotes).
+    /// Rate limits are per IP, i.e. per iPhone.
+    public func fetchSpotPrices() async throws -> [String: Double] {
+        guard let url = URL(string: "https://api.coinbase.com/v2/exchange-rates?currency=BTC") else {
+            throw BlockchainError.invalidResponse
+        }
+        let data = try await get(url: url)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let payload = object["data"] as? [String: Any],
+              let rates = payload["rates"] as? [String: Any] else { throw BlockchainError.invalidResponse }
+        var result = [String: Double]()
+        for code in FiatCurrency.supported {
+            if let text = rates[code] as? String, let value = Double(text), value > 0 { result[code] = value }
+        }
+        guard result["USD"] != nil else { throw BlockchainError.invalidResponse }
+        return result
+    }
+
+    /// BTC/USD from Kraken's public ticker: only used if Coinbase and mempool.space are down.
     public func fetchKrakenUSD() async throws -> Double {
         guard let url = URL(string: "https://api.kraken.com/0/public/Ticker?pair=XBTUSD") else {
             throw BlockchainError.invalidResponse
@@ -377,10 +396,12 @@ public final class BlockchainService {
         return price
     }
 
-    /// All four app currencies: mempool.space prices (the same public, open-source
-    /// service as the rest of the app), × daily FX rates for MXN and CNY; Kraken's
-    /// BTC/USD if mempool.space can't be reached.
+    /// All four app currencies: Coinbase live quotes; if unavailable, mempool.space
+    /// prices × daily FX rates for MXN and CNY; Kraken's BTC/USD as the last resort.
     public func fetchFiatPrices() async throws -> [String: Double] {
+        if let spot = try? await fetchSpotPrices(), FiatCurrency.supported.allSatisfy({ spot[$0] != nil }) {
+            return spot
+        }
         var prices = (try? await fetchPrices()) ?? [:]
         if prices["USD"] == nil { prices["USD"] = try await fetchKrakenUSD() }
         guard let usd = prices["USD"] else { throw BlockchainError.invalidResponse }

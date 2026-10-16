@@ -13,9 +13,9 @@ final class DiceEntropyTests: XCTestCase {
 
     private func rolls(_ text: String) -> [Int] { text.compactMap { Int(String($0)) } }
 
-    func test24WordsFrom99Rolls() throws {
-        let phrase = try BIP39.mnemonicFromDiceRolls(rolls(String(repeating: "123456", count: 16) + "123"), wordCount: 24)
-        XCTAssertEqual(phrase, "few educate sugar bless boring random strategy waste mutual cargo type hawk prefer denial scan abstract filter extend dignity balcony dust unusual correct bubble")
+    func test24WordsFrom100Rolls() throws {
+        let phrase = try BIP39.mnemonicFromDiceRolls(rolls(String(repeating: "123456", count: 16) + "1234"), wordCount: 24)
+        XCTAssertEqual(phrase, "tornado cactus wheel picture target finish home neither trend picture shoulder endless deputy glide open oxygen another ability forum swear side alcohol devote random")
         XCTAssertTrue(BIP39.validateMnemonic(phrase))
     }
 
@@ -27,9 +27,9 @@ final class DiceEntropyTests: XCTestCase {
 
     func testTooFewOrInvalidRollsAreRejected() {
         XCTAssertThrowsError(try BIP39.mnemonicFromDiceRolls(Array(repeating: 3, count: 49), wordCount: 12))
-        XCTAssertThrowsError(try BIP39.mnemonicFromDiceRolls(Array(repeating: 3, count: 98), wordCount: 24))
+        XCTAssertThrowsError(try BIP39.mnemonicFromDiceRolls(Array(repeating: 3, count: 99), wordCount: 24))
         XCTAssertThrowsError(try BIP39.mnemonicFromDiceRolls(Array(repeating: 7, count: 60), wordCount: 12))
         XCTAssertEqual(BIP39.requiredDiceRolls(wordCount: 12), 50)
-        XCTAssertEqual(BIP39.requiredDiceRolls(wordCount: 24), 99)
+        XCTAssertEqual(BIP39.requiredDiceRolls(wordCount: 24), 100)
     }
 }

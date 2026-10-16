@@ -221,7 +221,7 @@ extension WalletManager {
 
     func refreshMarketData(force: Bool) async {
         let currency = fiatCurrency
-        // mempool.space (MXN, CNY: USD price × FX rate); Kraken as fallback.
+        // Coinbase live quotes; mempool.space × FX rates, then Kraken, as fallbacks.
         if let prices = try? await BlockchainService.shared.fetchFiatPrices(), let usd = prices["USD"] {
             usdPrice = usd
             if let price = prices[currency] { fiatPrice = price }

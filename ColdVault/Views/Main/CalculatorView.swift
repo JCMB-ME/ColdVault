@@ -4,8 +4,8 @@
 //
 //  Live converter between bitcoin (BTC, sats) and the app's four currencies (USD,
 //  MXN, JPY, CNY): two rows, like the iPhone calculator's converter.
-//  Prices come from mempool.space (× FX rates for MXN and CNY), refreshed every
-//  30 s while open; Kraken BTC/USD as fallback.
+//  Live Coinbase quotes, refreshed every 15 s while open; mempool.space × FX rates
+//  and Kraken as fallbacks.
 //
 
 import SwiftUI
@@ -59,10 +59,10 @@ struct CalculatorView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { focused = true }
         }
         .task {
-            // Live while open: a fresh quote every 30 seconds.
+            // Live while open: a fresh quote every 15 seconds.
             while !Task.isCancelled {
                 await loadPrices()
-                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
             }
         }
     }
