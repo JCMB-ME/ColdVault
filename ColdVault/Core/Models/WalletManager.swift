@@ -161,6 +161,7 @@ public final class WalletManager: ObservableObject {
         loadContacts()
         loadLabels()
 
+        TorService.shared.start()
         startPushUpdates()
         loadStoredWallet()
     }

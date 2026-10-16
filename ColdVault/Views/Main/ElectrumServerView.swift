@@ -20,6 +20,8 @@ struct ElectrumServerView: View {
     @State private var current = ElectrumServerConfig.current
     @State private var isTesting = false
     @State private var status: Status?
+    @AppStorage(TorProxy.defaultsKey) private var useTor = false
+    @ObservedObject private var tor = TorService.shared
 
     private enum Status {
         case ok(String)
@@ -35,6 +37,51 @@ struct ElectrumServerView: View {
         guard !trimmed.isEmpty, !trimmed.contains(" "),
               let port = UInt16(portText.trimmingCharacters(in: .whitespaces)), port > 0 else { return nil }
         return ElectrumServerConfig(host: trimmed, port: port, useTLS: useTLS, pinnedFingerprint: useTLS ? pinned : nil)
+    }
+
+    /// Tor: hides your IP from every server ColdVault talks to.
+    private var torSection: some View {
+        SettingsSection(header: "Tor",
+                        footer: torFooter) {
+            SettingsRow(title: t("Use Tor", "Usar Tor"), icon: "network.badge.shield.half.filled") {
+                if #available(iOS 17.0, *) {
+                    Toggle("", isOn: Binding(get: { useTor }, set: { on in
+                        useTor = on
+                        if on { TorService.shared.start() } else { TorService.shared.stop() }
+                        Task { await ElectrumClient.shared.reset(); await ElectrumClient.testnet.reset() }
+                    }))
+                    .labelsHidden()
+                } else {
+                    Text("iOS 17+").font(.system(size: 13)).foregroundColor(Palette.secondary)
+                }
+            }
+            if useTor {
+                SettingsDivider(inset: 60)
+                SettingsRow(title: t("Status", "Estado"), value: torStatusText, icon: torStatusIcon)
+            }
+        }
+    }
+
+    private var torFooter: String {
+        t("Every connection (balances, prices, Ethereum) goes through the Tor network: servers don't see your IP. Slower; the first connection can take a minute. Your own node on your home network or Tailscale is reached directly.",
+          "Todas las conexiones (saldos, precios, Ethereum) pasan por la red Tor: los servidores no ven tu IP. Es más lento; la primera conexión puede tardar un minuto. Tu nodo en tu red de casa o por Tailscale se conecta directo.")
+    }
+
+    private var torStatusText: String {
+        switch tor.status {
+        case .off: return t("Off", "Apagado")
+        case .connecting: return t("Connecting…", "Conectando…")
+        case .ready: return t("Connected", "Conectado")
+        case .failed: return t("Couldn't connect", "No se pudo conectar")
+        }
+    }
+
+    private var torStatusIcon: String {
+        switch tor.status {
+        case .ready: return "checkmark.shield"
+        case .failed: return "exclamationmark.shield"
+        default: return "hourglass"
+        }
     }
 
     var body: some View {
@@ -56,6 +103,8 @@ struct ElectrumServerView: View {
                                "Conecta tu propio nodo (Umbrel, Start9, RaspiBlitz, Electrs, Fulcrum) y nadie más las verá. Solo mainnet."))
             }
             .padding(.horizontal, 4)
+
+            torSection
 
             SettingsSection(header: t("Your server", "Tu servidor"),
                             footer: useTLS

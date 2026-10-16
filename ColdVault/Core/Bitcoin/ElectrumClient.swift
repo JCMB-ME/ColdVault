@@ -114,7 +114,7 @@ public actor ElectrumClient {
         Server(host: "blackie.c3-soft.com", port: 57010)
     ]
 
-    static let requestTimeout: TimeInterval = 15
+    static var requestTimeout: TimeInterval { TorProxy.isEnabled ? 40 : 15 }
 
     private var connection: NWConnection?
     private var serverIndex = 0
@@ -281,7 +281,7 @@ public actor ElectrumClient {
                 }
             }
             newConnection.start(queue: queue)
-            queue.asyncAfter(deadline: .now() + 8) {
+            queue.asyncAfter(deadline: .now() + (TorProxy.isEnabled ? 40 : 8)) {
                 if resumed.claim() {
                     newConnection.cancel()
                     continuation.resume(throwing: ElectrumError.timeout)
@@ -359,8 +359,15 @@ extension ElectrumClient {
     static func parameters(for server: Server, queue: DispatchQueue,
                            observe: ((_ fingerprint: String?, _ systemTrusted: Bool) -> Void)? = nil) -> NWParameters {
         let tcp = NWProtocolTCP.Options()
-        tcp.connectionTimeout = 8
-        guard server.tls else { return NWParameters(tls: nil, tcp: tcp) }
+        // Through Tor a connection takes longer. A node on your own network (LAN,
+        // Tailscale) can't be reached through Tor and is connected to directly.
+        let viaTor = TorProxy.isEnabled && !isPrivateHost(server.host)
+        tcp.connectionTimeout = viaTor ? 40 : 8
+        guard server.tls else {
+            let plain = NWParameters(tls: nil, tcp: tcp)
+            if viaTor { TorProxy.apply(to: plain) }
+            return plain
+        }
         let tls = NWProtocolTLS.Options()
         if server.custom {
             let pin = server.pin
@@ -376,7 +383,22 @@ extension ElectrumClient {
                 }
             }, queue)
         }
-        return NWParameters(tls: tls, tcp: tcp)
+        let parameters = NWParameters(tls: tls, tcp: tcp)
+        if viaTor { TorProxy.apply(to: parameters) }
+        return parameters
+    }
+
+    /// LAN, link-local, Tailscale (100.64/10) and .local names.
+    static func isPrivateHost(_ host: String) -> Bool {
+        let name = host.lowercased()
+        if name == "localhost" || name.hasSuffix(".local") || name.hasSuffix(".ts.net") { return true }
+        let parts = name.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4 else { return false }
+        switch (parts[0], parts[1]) {
+        case (10, _), (127, _), (192, 168), (169, 254): return true
+        case (172, 16...31), (100, 64...127): return true
+        default: return false
+        }
     }
 
     static func leafFingerprint(_ trust: SecTrust) -> String? {

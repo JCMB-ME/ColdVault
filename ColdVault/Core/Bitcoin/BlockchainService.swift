@@ -83,14 +83,25 @@ public struct EsploraTransaction: Decodable {
 public final class BlockchainService {
 
     public static let shared = BlockchainService()
-    private let session: URLSession
     private let lock = NSLock()
+    private var cachedSession: (tor: Bool, session: URLSession)?
 
-    private init() {
-        let config = URLSessionConfiguration.ephemeral // No caching on disk
-        config.timeoutIntervalForRequest = 20
+    private init() {}
+
+    /// No caching on disk; through Tor's proxy when Tor is on (rebuilt when it changes).
+    private var session: URLSession {
+        lock.lock()
+        defer { lock.unlock() }
+        let tor = TorProxy.isEnabled
+        if let cached = cachedSession, cached.tor == tor { return cached.session }
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = tor ? 45 : 20
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        self.session = URLSession(configuration: config)
+        TorProxy.apply(to: config)
+        let fresh = URLSession(configuration: config)
+        cachedSession?.session.finishTasksAndInvalidate()
+        cachedSession = (tor, fresh)
+        return fresh
     }
 
     private func baseURL(isTestnet: Bool) -> String {

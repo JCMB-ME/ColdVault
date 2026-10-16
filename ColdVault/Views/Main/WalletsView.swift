@@ -29,6 +29,7 @@ struct WalletsView: View {
     @State private var iconSlot: IconTarget?
     /// The wallet being dragged to a new position.
     @State private var draggingSlot: String?
+    @State private var showEthereum = false
     @State private var deleteAccountTarget: AccountTarget?
 
     private struct AccountTarget: Identifiable {
@@ -152,6 +153,9 @@ struct WalletsView: View {
         .onDrop(of: [UTType.text], isTargeted: nil) { _ in
             draggingSlot = nil
             return false
+        }
+        .sheet(isPresented: $showEthereum) {
+            EthereumView().environmentObject(walletManager)
         }
         .sheet(item: $iconSlot) { target in
             WalletIconPicker(slot: target.slot).environmentObject(walletManager)
@@ -518,6 +522,10 @@ struct WalletsView: View {
                     }
                     .disabled(addingAccountTo != nil)
                 }
+
+                if walletManager.supportsEthereum(wallet) {
+                    ethereumRow(wallet)
+                }
             }
             .padding(.horizontal, 4)
             .padding(.bottom, 8)
@@ -566,6 +574,44 @@ struct WalletsView: View {
                     deleteAccountTarget = AccountTarget(slot: wallet.slot, account: index, name: account.name)
                 } label: { Label(t("Delete account", "Eliminar cuenta"), systemImage: "trash") }
             }
+        }
+    }
+
+    /// The wallet's Ethereum account (same recovery phrase), or "Add Ethereum".
+    private func ethereumRow(_ wallet: LibraryWallet) -> some View {
+        let address = walletManager.ethereumAddress(slot: wallet.slot)
+        let testnet = wallet.bundle.accounts.first?.record.isTestnet ?? false
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            if walletManager.activeSlot != wallet.slot { walletManager.selectWallet(slot: wallet.slot, account: nil) }
+            showEthereum = true
+        } label: {
+            HStack(spacing: 12) {
+                Image("EthereumLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 32, height: 32)
+                    .opacity(address == nil ? 0.45 : 1)
+                Text(address == nil ? t("Add Ethereum", "Añadir Ethereum") : (testnet ? "Sepolia" : "Ethereum"))
+                    .font(.system(size: 15, weight: address == nil ? .medium : .regular))
+                    .foregroundColor(address == nil ? Palette.secondary : Color(uiColor: .label))
+                Spacer()
+                if address != nil, let wei = walletManager.cachedEthereumBalance(slot: wallet.slot, testnet: testnet) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(wei.formatted(decimals: 18, maxFraction: 6))
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(Color(uiColor: .label))
+                        Text("ETH")
+                            .font(.system(size: 11))
+                            .foregroundColor(Palette.secondary)
+                    }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(minHeight: 50)
+            .contentShape(Rectangle())
         }
     }
 
