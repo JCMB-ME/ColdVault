@@ -36,8 +36,8 @@ struct DiceEntropyView: View {
                             .foregroundColor(Color(uiColor: .label))
                             .modifier(RollingDigits())
                             .animation(.spring(response: 0.3, dampingFraction: 0.8), value: rolls.count)
-                        Text(t("Roll a real die and tap the number it shows. 50 rolls for a 12-word phrase, 100 for 24 words (each roll adds about 2.6 bits). This phrase: \(wordCount) words.",
-                               "Lanza un dado real y toca el número que salga. 50 tiradas para una frase de 12 palabras, 100 para 24 (cada tirada aporta unos 2,6 bits). Esta frase: \(wordCount) palabras."))
+                        Text(t("Roll a real die and tap the number it shows. \(required) rolls for \(wordCount) words.",
+                               "Lanza un dado real y toca el número que salga. \(required) tiradas para \(wordCount) palabras."))
                             .font(.system(size: 14))
                             .foregroundColor(Palette.secondary)
                             .multilineTextAlignment(.center)
