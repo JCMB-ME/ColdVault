@@ -24,6 +24,10 @@ public struct ReceiveView: View {
     @State private var verifyError: String?
     @State private var isAddingAccount = false
     @State private var accountError: String?
+    /// Requested amount in BTC (empty = none): the QR becomes a BIP-21 payment request.
+    @State private var requestText: String = ""
+    @State private var showRequest = false
+    @FocusState private var requestFocused: Bool
     /// The QR leaves the center and rises to the top before the details appear.
     @State private var qrRaised: Bool = false
     /// 0 = only the QR; 1…4 = details appearing one after another.
@@ -49,6 +53,21 @@ public struct ReceiveView: View {
 
     private var currentAddress: String { current?.address ?? "" }
 
+    private var requestedSats: UInt64? {
+        guard let sats = SendView.parseBTC(requestText), sats > 0 else { return nil }
+        return sats
+    }
+
+    /// What the QR and Share carry: the address, or "bitcoin:address?amount=…".
+    private var qrText: String {
+        guard let sats = requestedSats, !currentAddress.isEmpty else { return currentAddress }
+        var fraction = String(sats % 100_000_000)
+        fraction = String(repeating: "0", count: 8 - fraction.count) + fraction
+        while fraction.hasSuffix("0") { fraction.removeLast() }
+        let amount = "\(sats / 100_000_000)" + (fraction.isEmpty ? "" : "." + fraction)
+        return "bitcoin:\(currentAddress)?amount=\(amount)"
+    }
+
     public var body: some View {
         ZStack {
             GlassAmbientBackground()
@@ -70,8 +89,8 @@ public struct ReceiveView: View {
                     }
 
                     // The QR, redrawn (and re-animated) whenever the address changes.
-                    PixelRevealQRCode(text: currentAddress, size: ReceiveView.qrSize)
-                        .id(currentAddress)
+                    PixelRevealQRCode(text: qrText, size: ReceiveView.qrSize)
+                        .id(qrText)
                         .onTapGesture(perform: reveal)
 
                     if revealStep >= 2 {
@@ -105,7 +124,7 @@ public struct ReceiveView: View {
                                     .modifier(GlassPillModifier(isEmphasized: false))
                             }
                             .buttonStyle(.plain)
-                            ShareLink(item: currentAddress) {
+                            ShareLink(item: qrText) {
                                 Label(L10n.share(lang), systemImage: "square.and.arrow.up")
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundColor(.white)
@@ -116,6 +135,12 @@ public struct ReceiveView: View {
                         }
                         .padding(.horizontal, 24)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+
+                    if revealStep >= 3 {
+                        requestRow
+                            .padding(.horizontal, 24)
+                            .transition(.opacity)
                     }
 
                     if revealStep >= 4 {
@@ -156,6 +181,50 @@ public struct ReceiveView: View {
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+    }
+
+    /// "Request amount": type an amount and the QR asks for it.
+    @ViewBuilder
+    private var requestRow: some View {
+        if showRequest {
+            HStack(spacing: 10) {
+                TextField("0.001", text: $requestText)
+                    .font(.system(size: 17, weight: .semibold))
+                    .keyboardType(.decimalPad)
+                    .focused($requestFocused)
+                Text("BTC")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Palette.secondary)
+                Button {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                        requestText = ""
+                        showRequest = false
+                    }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(Palette.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 50)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
+        } else {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { showRequest = true }
+                requestFocused = true
+            } label: {
+                Label(t("Request amount", "Pedir monto"), systemImage: "plus.circle")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                    .padding(.horizontal, 18)
+                    .frame(height: 40)
+                    .background(Capsule().fill(SettingsStyle.groupFill))
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     /// Raises the QR, then shows the details one after another.

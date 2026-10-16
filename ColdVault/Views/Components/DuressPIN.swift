@@ -1,0 +1,349 @@
+//
+//  DuressPIN.swift
+//  ColdVault
+//
+//  Duress PIN. With the app lock on, ColdVault can also open with a 6-digit PIN:
+//  your real PIN (or Face ID) opens everything; the duress PIN opens only a decoy
+//  wallet you chose (keep little in it), as if it were the only one. Nothing on
+//  screen says which PIN was used. Both PINs are stored only as salted PBKDF2
+//  hashes in this iPhone's Keychain.
+//
+
+import SwiftUI
+import Security
+import CommonCrypto
+
+enum PinLock {
+    struct Config: Codable {
+        var salt: Data
+        var realHash: Data
+        var duressHash: Data
+        var decoySlot: String
+    }
+
+    enum Outcome { case real, duress, wrong }
+
+    private static let service = "ColdVault.pinlock"
+    private static let account = "config"
+
+    static func load() -> Config? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
+        return try? JSONDecoder().decode(Config.self, from: data)
+    }
+
+    @discardableResult
+    static func save(_ config: Config?) -> Bool {
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(base as CFDictionary)
+        guard let config = config, let data = try? JSONEncoder().encode(config) else { return true }
+        var add = base
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+
+    static var isEnabled: Bool { load() != nil }
+
+    static func make(realPIN: String, duressPIN: String, decoySlot: String) -> Config {
+        var salt = Data(count: 16)
+        _ = salt.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!) }
+        return Config(salt: salt, realHash: hash(realPIN, salt: salt), duressHash: hash(duressPIN, salt: salt),
+                      decoySlot: decoySlot)
+    }
+
+    static func check(_ pin: String) -> Outcome {
+        guard let config = load() else { return .wrong }
+        let value = hash(pin, salt: config.salt)
+        if value == config.realHash { return .real }
+        if value == config.duressHash { return .duress }
+        return .wrong
+    }
+
+    /// PBKDF2-HMAC-SHA256, 200 000 rounds: slow enough to make guessing from a copied
+    /// hash expensive, fast enough to unlock instantly.
+    static func hash(_ pin: String, salt: Data) -> Data {
+        let saltBytes = [UInt8](salt)
+        var output = [UInt8](repeating: 0, count: 32)
+        _ = CCKeyDerivationPBKDF(CCPBKDFAlgorithm(kCCPBKDF2), pin, pin.utf8.count, saltBytes, saltBytes.count,
+                                 CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256), 200_000, &output, output.count)
+        return Data(output)
+    }
+}
+
+// MARK: - PIN pad
+
+/// Six dots and a numeric keypad. Calls `onComplete` with the 6 digits.
+struct PinPad: View {
+    let title: String
+    var subtitle: String? = nil
+    var shake: Int = 0
+    let onComplete: (String) -> Void
+
+    @State private var digits = ""
+
+    var body: some View {
+        VStack(spacing: 22) {
+            VStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                    .multilineTextAlignment(.center)
+                if let subtitle = subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 13))
+                        .foregroundColor(Palette.secondary)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            HStack(spacing: 14) {
+                ForEach(0..<6, id: \.self) { index in
+                    Circle()
+                        .fill(index < digits.count ? Color(uiColor: .label) : Color.clear)
+                        .overlay(Circle().stroke(Color(uiColor: .label), lineWidth: 1.5))
+                        .frame(width: 13, height: 13)
+                }
+            }
+            .modifier(Shake(animatableData: CGFloat(shake)))
+            .animation(.default, value: shake)
+
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(78), spacing: 18), count: 3), spacing: 14) {
+                ForEach(1...9, id: \.self) { key($0) }
+                Color.clear.frame(width: 72, height: 72)
+                key(0)
+                Button {
+                    if !digits.isEmpty { digits.removeLast() }
+                } label: {
+                    Image(systemName: "delete.left")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(Color(uiColor: .label))
+                        .frame(width: 72, height: 72)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .onChange(of: shake) { _ in digits = "" }
+    }
+
+    private func key(_ number: Int) -> some View {
+        Button {
+            guard digits.count < 6 else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            digits.append(String(number))
+            if digits.count == 6 {
+                let pin = digits
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                    onComplete(pin)
+                    digits = ""
+                }
+            }
+        } label: {
+            Text("\(number)")
+                .font(.system(size: 30, weight: .regular, design: .rounded))
+                .foregroundColor(Color(uiColor: .label))
+                .frame(width: 72, height: 72)
+                .background(Circle().fill(SettingsStyle.groupFill))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Horizontal shake after a wrong PIN.
+struct Shake: GeometryEffect {
+    var animatableData: CGFloat
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        ProjectionTransform(CGAffineTransform(translationX: 10 * sin(animatableData * .pi * 4), y: 0))
+    }
+}
+
+// MARK: - Setup (Settings › Security)
+
+struct DuressSetupView: View {
+    @EnvironmentObject var walletManager: WalletManager
+    @Environment(\.presentationMode) var presentationMode
+    @AppStorage("appLockEnabled") private var appLockEnabled = false
+
+    private enum Step { case intro, real, realConfirm, duress, duressConfirm, decoy }
+
+    @State private var step: Step = .intro
+    @State private var realPIN = ""
+    @State private var duressPIN = ""
+    @State private var shake = 0
+    @State private var message: String?
+    @State private var enabled = PinLock.isEnabled
+
+    private var lang: AppLanguage { walletManager.appLanguage }
+    private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+
+    var body: some View {
+        ZStack {
+            GlassAmbientBackground()
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 22) {
+                    switch step {
+                    case .intro: intro
+                    case .real:
+                        PinPad(title: t("Your real PIN", "Tu PIN real"),
+                               subtitle: t("Opens everything, like Face ID.", "Abre todo, como Face ID."), shake: shake) { pin in
+                            realPIN = pin
+                            next(.realConfirm)
+                        }
+                    case .realConfirm:
+                        PinPad(title: t("Repeat your real PIN", "Repite tu PIN real"), shake: shake) { pin in
+                            if pin == realPIN { next(.duress) } else { fail(t("They don't match.", "No coinciden.")); next(.real) }
+                        }
+                    case .duress:
+                        PinPad(title: t("Duress PIN", "PIN de coacción"),
+                               subtitle: t("Different from the real one. Opens only the decoy wallet.",
+                                           "Distinto del real. Abre solo la billetera señuelo."), shake: shake) { pin in
+                            if pin == realPIN { fail(t("It must be different from the real PIN.", "Debe ser distinto del PIN real.")) }
+                            else { duressPIN = pin; next(.duressConfirm) }
+                        }
+                    case .duressConfirm:
+                        PinPad(title: t("Repeat the duress PIN", "Repite el PIN de coacción"), shake: shake) { pin in
+                            if pin == duressPIN { next(.decoy) } else { fail(t("They don't match.", "No coinciden.")); next(.duress) }
+                        }
+                    case .decoy: decoyPicker
+                    }
+                    if let message = message {
+                        Text(message)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.orange)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 32)
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SheetHeader(title: t("Duress PIN", "PIN de coacción"))
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private var intro: some View {
+        VStack(spacing: 18) {
+            VStack(alignment: .leading, spacing: 12) {
+                TipRow(icon: "hand.raised", text: t("If someone forces you to open ColdVault, type the duress PIN: it opens only a decoy wallet with little money, as if it were the only one.",
+                                                    "Si alguien te obliga a abrir ColdVault, escribe el PIN de coacción: abre solo una billetera señuelo con poco dinero, como si fuera la única."))
+                TipRow(icon: "lock", text: t("Your real PIN or Face ID open everything as usual.",
+                                             "Tu PIN real o Face ID abren todo como siempre."))
+                TipRow(icon: "wallet.pass", text: t("Create the decoy wallet first and keep a small, believable amount in it.",
+                                                    "Crea antes la billetera señuelo y deja en ella una cantidad pequeña y creíble."))
+            }
+            .padding(18)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+
+            if enabled {
+                Label(t("On", "Activado"), systemImage: "checkmark.shield.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.green)
+                PrimaryCapsuleButton(title: t("Change PINs", "Cambiar PINs"), icon: "arrow.triangle.2.circlepath") { start() }
+                Button(t("Turn off", "Desactivar")) { turnOff() }
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.red)
+            } else {
+                PrimaryCapsuleButton(title: t("Set up", "Configurar"), icon: "hand.raised",
+                                     enabled: walletManager.library.count > 1) { start() }
+                    .disabled(walletManager.library.count < 2)
+                if walletManager.library.count < 2 {
+                    Text(t("You need at least two wallets: the real ones and a decoy.",
+                           "Necesitas al menos dos billeteras: las reales y una señuelo."))
+                        .font(.system(size: 13))
+                        .foregroundColor(Palette.secondary)
+                        .multilineTextAlignment(.center)
+                }
+            }
+        }
+    }
+
+    private var decoyPicker: some View {
+        VStack(spacing: 14) {
+            Text(t("Choose the decoy wallet", "Elige la billetera señuelo"))
+                .font(.system(size: 18, weight: .semibold))
+            VStack(spacing: 0) {
+                ForEach(Array(walletManager.library.enumerated()), id: \.element.slot) { index, wallet in
+                    if index > 0 { SettingsDivider(inset: 64) }
+                    Button { save(decoy: wallet.slot) } label: {
+                        HStack(spacing: 12) {
+                            WalletAvatar(wallet: wallet, images: walletManager.walletImages, size: 38)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(wallet.bundle.name)
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(Color(uiColor: .label))
+                                if let record = wallet.bundle.accounts.first?.record,
+                                   let sats = walletManager.cachedBalance(of: record) {
+                                    Text("\(walletManager.format(sats: sats)) \(walletManager.displayUnit.rawValue)")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(Palette.secondary)
+                                }
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(Palette.tertiary)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+        }
+    }
+
+    private func start() {
+        message = nil
+        realPIN = ""
+        duressPIN = ""
+        withAnimation { step = .real }
+    }
+
+    private func next(_ value: Step) {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { step = value }
+    }
+
+    private func fail(_ text: String) {
+        message = text
+        shake += 1
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
+    }
+
+    private func save(decoy: String) {
+        Task {
+            guard await AppLock.authenticate(reason: t("Confirm to turn on the duress PIN", "Confirma para activar el PIN de coacción")) else { return }
+            PinLock.save(PinLock.make(realPIN: realPIN, duressPIN: duressPIN, decoySlot: decoy))
+            realPIN = ""
+            duressPIN = ""
+            appLockEnabled = true                    // the PIN is asked on the lock screen
+            enabled = true
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            message = nil
+            step = .intro
+        }
+    }
+
+    private func turnOff() {
+        Task {
+            guard await AppLock.authenticate(reason: t("Confirm to turn off the duress PIN", "Confirma para desactivar el PIN de coacción")) else { return }
+            PinLock.save(nil)
+            enabled = false
+        }
+    }
+}

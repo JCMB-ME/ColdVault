@@ -36,6 +36,13 @@ public final class WalletManager: ObservableObject {
     /// (the metadata they normally come from has no Face ID protection).
     @Published public internal(set) var verifiedAccounts: Set<String> = []
 
+    /// Duress PIN: while set, only this wallet is shown (in memory only, never saved).
+    @Published public internal(set) var decoySlot: String?
+    var slotBeforeDecoy: String?
+
+    /// Your note per transaction (txid → text), kept on this iPhone only.
+    @Published public internal(set) var transactionLabels: [String: String] = [:]
+
     // Address rotation: what the last gap-limit scan found (in memory only).
     var trackedByScript: [Data: TrackedAddress] = [:]
     var fundedAddresses: [TrackedAddress] = []
@@ -152,6 +159,7 @@ public final class WalletManager: ObservableObject {
         let savedCurrency = defaults.string(forKey: "fiatCurrency") ?? FiatCurrency.deviceDefault
         self.fiatCurrency = FiatCurrency.supported.contains(savedCurrency) ? savedCurrency : "USD"
         loadContacts()
+        loadLabels()
 
         startPushUpdates()
         loadStoredWallet()
@@ -224,7 +232,7 @@ public final class WalletManager: ObservableObject {
     public var receiveAddresses: [String] { currentReceiveAddresses.map { $0.address } }
 
     /// The fixed addresses of a wallet without rotation (SegWit, Taproot, Legacy).
-    private var staticAddresses: [String] {
+    var staticAddresses: [String] {
         guard let record = activeRecord else { return [] }
         var seen = Set<String>()
         return [record.primaryAddress, record.taprootAddress, record.legacyAddress].filter { seen.insert($0).inserted }
@@ -485,7 +493,7 @@ public final class WalletManager: ObservableObject {
 
     /// Fresh change address: same account type as the recipient when it is SegWit or
     /// Taproot (outputs look alike), otherwise the SegWit account.
-    private func nextChangeAddress(recipientType: ScriptType) throws -> TrackedAddress {
+    func nextChangeAddress(recipientType: ScriptType) throws -> TrackedAddress {
         guard let record = activeRecord else { throw WalletError.derivationFailed }
         let all = derivers(for: record)
         let current = indexes(for: record)

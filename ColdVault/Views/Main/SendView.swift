@@ -35,6 +35,9 @@ public struct SendView: View {
     @State private var feesUnavailable: Bool = false
     @State private var feeChoice: FeeChoice = .normal
     @State private var customFeeRate: Int = 5
+    /// Coin control: nil = automatic selection, otherwise only these coins ("txid:vout").
+    @State private var selectedCoins: Set<String>?
+    @State private var showCoins = false
 
     // Flow state
     @State private var plan: TransactionPlan?
@@ -410,6 +413,31 @@ public struct SendView: View {
                 .frame(minHeight: 46)
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
             }
+            // Coin control.
+            Button { showCoins = true } label: {
+                HStack {
+                    Image(systemName: "circle.grid.2x2")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(t("Coins", "Monedas"))
+                        .font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                    Text(selectedCoins.map { t("\($0.count) chosen", "\($0.count) elegidas") } ?? t("Automatic", "Automático"))
+                        .font(.system(size: 13))
+                        .foregroundColor(Palette.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(Palette.tertiary)
+                }
+                .foregroundColor(Color(uiColor: .label))
+                .padding(.horizontal, 14)
+                .frame(height: 44)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
+            }
+            .buttonStyle(.plain)
+            .sheet(isPresented: $showCoins) {
+                CoinControlView(selection: $selectedCoins)
+                    .environmentObject(walletManager)
+            }
             if feesUnavailable {
                 Text(t("Could not load current fees. Check the rate before sending.",
                        "No se pudieron cargar las comisiones actuales. Revisa la tasa antes de enviar."))
@@ -735,9 +763,15 @@ public struct SendView: View {
         let recipient = trimmedRecipient
         let amount = sendAll ? nil : amountSats
         let rate = feeRate
+        let coins = selectedCoins
         Task {
             do {
-                let prepared = try await walletManager.prepareSend(to: recipient, amount: amount, feeRate: rate)
+                let prepared: TransactionPlan
+                if let coins = coins {
+                    prepared = try await walletManager.prepareSend(to: recipient, amount: amount, feeRate: rate, onlyCoins: coins)
+                } else {
+                    prepared = try await walletManager.prepareSend(to: recipient, amount: amount, feeRate: rate)
+                }
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { plan = prepared }
             } catch {
                 errorMessage = error.localizedDescription

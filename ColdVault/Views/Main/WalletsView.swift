@@ -145,8 +145,8 @@ struct WalletsView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 40)
             .buttonStyle(.plain)
-            .animation(.spring(response: 0.45, dampingFraction: 0.85), value: walletManager.library.map { $0.bundle.accounts.count })
-            .animation(.spring(response: 0.4, dampingFraction: 0.82), value: walletManager.library.map { $0.slot })
+            .animation(.spring(response: 0.45, dampingFraction: 0.85), value: walletManager.visibleLibrary.map { $0.bundle.accounts.count })
+            .animation(.spring(response: 0.4, dampingFraction: 0.82), value: walletManager.visibleLibrary.map { $0.slot })
         }
         // A drop anywhere else ends the drag.
         .onDrop(of: [UTType.text], isTargeted: nil) { _ in
@@ -220,7 +220,7 @@ struct WalletsView: View {
     /// Sum of the mainnet accounts of the wallets you own (watch-only ones are only
     /// watched, not yours: shown apart); with only testnet accounts, the testnet sum.
     private var totalBalance: UInt64? {
-        guard walletManager.library.flatMap({ $0.bundle.accounts }).count > 1 else { return nil }
+        guard walletManager.visibleLibrary.flatMap({ $0.bundle.accounts }).count > 1 else { return nil }
         return sum(testnet: totalIsTestnet) ?? (watchOnlySum == nil ? nil : 0)
     }
 
@@ -244,8 +244,8 @@ struct WalletsView: View {
         return accounts.compactMap { walletManager.cachedBalance(of: $0.record) }.reduce(0, +)
     }
 
-    private var keyWallets: [LibraryWallet] { walletManager.library.filter { !isWatchOnly($0) } }
-    private var watchWallets: [LibraryWallet] { walletManager.library.filter { isWatchOnly($0) } }
+    private var keyWallets: [LibraryWallet] { walletManager.visibleLibrary.filter { !isWatchOnly($0) } }
+    private var watchWallets: [LibraryWallet] { walletManager.visibleLibrary.filter { isWatchOnly($0) } }
 
     private func isWatchOnly(_ wallet: LibraryWallet) -> Bool {
         wallet.bundle.accounts.first?.record.type == .watchOnly

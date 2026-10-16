@@ -263,7 +263,7 @@ public struct DashboardView: View {
 
     /// Every account of every wallet, in the order of the Wallets page.
     private var accountTargets: [AccountTarget] {
-        walletManager.library.flatMap { wallet in
+        walletManager.visibleLibrary.flatMap { wallet in
             wallet.bundle.accounts.indices.map { AccountTarget(slot: wallet.slot, account: $0) }
         }
     }
@@ -365,7 +365,7 @@ public struct DashboardView: View {
     private var accountDots: some View {
         let current = currentTarget
         return HStack(spacing: 12) {
-            ForEach(walletManager.library) { wallet in
+            ForEach(walletManager.visibleLibrary) { wallet in
                 HStack(spacing: 5) {
                     ForEach(wallet.bundle.accounts.indices, id: \.self) { index in
                         let active = current == AccountTarget(slot: wallet.slot, account: index)
@@ -527,7 +527,7 @@ public struct DashboardView: View {
 
     /// With several wallets or accounts, which one is on screen.
     private var showsAccountName: Bool {
-        walletManager.library.count > 1 || (walletManager.activeWallet?.bundle.accounts.count ?? 0) > 1
+        walletManager.visibleLibrary.count > 1 || (walletManager.activeWallet?.bundle.accounts.count ?? 0) > 1
     }
 
     private func badge(icon: String?, text: String) -> some View {
@@ -682,6 +682,7 @@ struct HomeExtrasView: View {
 struct TransactionCard: View {
     @EnvironmentObject var walletManager: WalletManager
     let transaction: WalletTransaction
+    @State private var showDetail = false
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -706,9 +707,10 @@ struct TransactionCard: View {
     private static let spanishTime = timeFormatter("es")
 
     var body: some View {
-        let url = URL(string: "https://mempool.space/\(walletManager.isTestnet ? "testnet4/" : "")tx/\(transaction.txid)")
-            ?? URL(string: "https://mempool.space")!
-        Link(destination: url) {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showDetail = true
+        } label: {
             HStack(spacing: 14) {
                 Image(systemName: received ? "arrow.down.left" : "arrow.up.right")
                     .font(.system(size: 15, weight: .semibold))
@@ -716,9 +718,10 @@ struct TransactionCard: View {
                     .frame(width: 42, height: 42)
                     .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(received ? t("Received", "Recibido") : t("Sent", "Enviado"))
+                    Text(walletManager.label(for: transaction.txid) ?? (received ? t("Received", "Recibido") : t("Sent", "Enviado")))
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
+                        .lineLimit(1)
                     Text(timeText)
                         .font(.system(size: 13))
                         .foregroundColor(Palette.secondary)
@@ -736,6 +739,11 @@ struct TransactionCard: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showDetail) {
+            TransactionDetailView(transaction: transaction)
+                .environmentObject(walletManager)
         }
     }
 }

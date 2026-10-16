@@ -160,6 +160,7 @@ extension WalletManager {
                     WalletManager.protectedDataObserver = nil
                 }
                 manager?.loadContacts()
+                manager?.loadLabels()
                 manager?.loadStoredWallet()
             }
         }

@@ -62,7 +62,11 @@ enum SecurePasteboard {
 /// and whenever it comes back from the background. The keys are always protected by
 /// the Keychain anyway; this hides balances and history from someone holding the phone.
 struct AppLockModifier: ViewModifier {
+    @EnvironmentObject var walletManager: WalletManager
     @AppStorage("appLockEnabled") private var enabled = false
+    @State private var pinShake = 0
+    @State private var wrongPINs = 0
+    @State private var pinBlockedUntil: Date?
     @Environment(\.scenePhase) private var scenePhase
     @State private var locked = UserDefaults.standard.bool(forKey: "appLockEnabled")
     @State private var authenticating = false
@@ -72,7 +76,21 @@ struct AppLockModifier: ViewModifier {
             content
                 .blur(radius: locked ? 30 : 0)
                 .allowsHitTesting(!locked)
-            if locked {
+            if locked && PinLock.isEnabled {
+                Color(uiColor: .systemBackground).opacity(0.9)
+                    .ignoresSafeArea()
+                VStack(spacing: 26) {
+                    PinPad(title: WalletManager.deviceLanguage == .english ? "Enter your PIN" : "Introduce tu PIN",
+                           shake: pinShake, onComplete: checkPIN)
+                    Button(action: unlock) {
+                        Label("Face ID", systemImage: "faceid")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(Color(uiColor: .label))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .transition(.opacity)
+            } else if locked {
                 Color(uiColor: .systemBackground).opacity(0.35)
                     .ignoresSafeArea()
                 Button(action: unlock) {
@@ -110,7 +128,36 @@ struct AppLockModifier: ViewModifier {
         Task {
             let ok = await AppLock.authenticate()
             authenticating = false
-            if ok { withAnimation(.easeOut(duration: 0.25)) { locked = false } }
+            if ok {
+                walletManager.exitDecoy()
+                withAnimation(.easeOut(duration: 0.25)) { locked = false }
+            }
+        }
+    }
+
+    /// Real PIN: everything; duress PIN: only the decoy wallet; 5 wrong: wait 30 s.
+    private func checkPIN(_ pin: String) {
+        if let until = pinBlockedUntil, Date() < until {
+            pinShake += 1
+            return
+        }
+        switch PinLock.check(pin) {
+        case .real:
+            wrongPINs = 0
+            walletManager.exitDecoy()
+            withAnimation(.easeOut(duration: 0.25)) { locked = false }
+        case .duress:
+            wrongPINs = 0
+            walletManager.enterDecoy()
+            withAnimation(.easeOut(duration: 0.25)) { locked = false }
+        case .wrong:
+            wrongPINs += 1
+            pinShake += 1
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            if wrongPINs >= 5 {
+                pinBlockedUntil = Date().addingTimeInterval(30)
+                wrongPINs = 0
+            }
         }
     }
 }

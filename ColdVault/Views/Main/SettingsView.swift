@@ -37,6 +37,10 @@ public struct SettingsView: View {
     @State private var customDecimalsText: String = ""
     @State private var editingContact: Contact?
     @State private var showCalculator = false
+    @State private var exportItem: ExportItem?
+    @State private var showSignPSBT = false
+    @State private var showInheritance = false
+    @State private var showDuress = false
     @State private var showCustomTransactions = false
     @State private var customTransactionsText = ""
     /// Bumped on every reveal so the words animate in again.
@@ -197,6 +201,49 @@ public struct SettingsView: View {
                     }
                 }
 
+                SettingsSection(header: t("Tools", "Herramientas"),
+                                footer: t("Sign PSBT: cosign multisig or transactions made in Sparrow, Nunchuk or Electrum.",
+                                          "Firmar PSBT: cofirma multisig o transacciones hechas en Sparrow, Nunchuk o Electrum.")) {
+                    if !walletManager.isWatchOnly {
+                        Button { showSignPSBT = true } label: {
+                            SettingsRow(title: t("Sign PSBT", "Firmar PSBT"), chevron: true, icon: "signature")
+                        }
+                        SettingsDivider(inset: 60)
+                    }
+                    Button { showInheritance = true } label: {
+                        SettingsRow(title: t("Inheritance", "Herencia"), chevron: true, icon: "person.2.wave.2")
+                    }
+                }
+                .sheet(isPresented: $showSignPSBT) {
+                    SignPSBTView().environmentObject(walletManager)
+                }
+                .sheet(isPresented: $showInheritance) {
+                    InheritanceView().environmentObject(walletManager)
+                }
+
+                SettingsSection(header: t("Export", "Exportar"),
+                                footer: t("History of the account on screen. Labels in BIP-329, readable by Sparrow and other wallets.",
+                                          "Historial de la cuenta en pantalla. Etiquetas en BIP-329, que leen Sparrow y otras billeteras.")) {
+                    Button {
+                        exportItem = walletManager.exportFile(name: "ColdVault-history.csv", contents: walletManager.historyCSV())
+                            .map { ExportItem(url: $0) }
+                    } label: {
+                        SettingsRow(title: t("History (CSV)", "Historial (CSV)"), chevron: true, icon: "tablecells")
+                    }
+                    SettingsDivider(inset: 60)
+                    Button {
+                        exportItem = walletManager.exportFile(name: "ColdVault-labels.jsonl", contents: walletManager.labelsBIP329())
+                            .map { ExportItem(url: $0) }
+                    } label: {
+                        SettingsRow(title: t("Labels (BIP-329)", "Etiquetas (BIP-329)"),
+                                    value: walletManager.transactionLabels.isEmpty ? nil : "\(walletManager.transactionLabels.count)",
+                                    chevron: true, icon: "tag")
+                    }
+                }
+                .sheet(item: $exportItem) { item in
+                    ActivityView(items: [item.url])
+                }
+
                 SettingsSection(header: t("Appearance", "Apariencia"),
                                 footer: t("Liquid Glass needs iOS 26 or later.", "Liquid Glass requiere iOS 26 o posterior.")) {
                     Menu {
@@ -350,7 +397,7 @@ public struct SettingsView: View {
                                  "Elige una billetera para ver cómo restaurarla."))
 
         VStack(spacing: 4) {
-            ForEach(walletManager.library) { wallet in
+            ForEach(walletManager.visibleLibrary) { wallet in
                 NavigationLink(value: wallet.slot) {
                     HStack(spacing: 12) {
                         WalletAvatar(wallet: wallet, images: walletManager.walletImages, size: 44)
@@ -426,6 +473,17 @@ public struct SettingsView: View {
                 Toggle("", isOn: Binding(get: { appLockEnabled }, set: { setAppLock($0) }))
                     .labelsHidden()
             }
+            // Never shown while the decoy wallet is open.
+            if walletManager.decoySlot == nil {
+                SettingsDivider(inset: 60)
+                Button { showDuress = true } label: {
+                    SettingsRow(title: t("Duress PIN", "PIN de coacción"),
+                                value: PinLock.isEnabled ? t("On", "Activado") : nil, chevron: true, icon: "hand.raised")
+                }
+            }
+        }
+        .sheet(isPresented: $showDuress) {
+            DuressSetupView().environmentObject(walletManager)
         }
 
         if walletManager.usesAddressRotation {
