@@ -41,6 +41,9 @@ public struct SettingsView: View {
     @State private var showSignPSBT = false
     @State private var showInheritance = false
     @State private var showDuress = false
+    @ObservedObject private var lightning = LightningManager.shared
+    @State private var showBreezKey = false
+    @State private var breezKeyDraft = ""
     @State private var showCustomTransactions = false
     @State private var customTransactionsText = ""
     /// Bumped on every reveal so the words animate in again.
@@ -219,6 +222,40 @@ public struct SettingsView: View {
                 }
                 .sheet(isPresented: $showInheritance) {
                     InheritanceView().environmentObject(walletManager)
+                }
+
+                SettingsSection(header: "Lightning",
+                                footer: t("Breez: instant, no channels, needs a free API key (breez.technology). LDK: your own node in this iPhone; you open channels. Mainnet only.",
+                                          "Breez: instantáneo, sin canales, necesita una API key gratuita (breez.technology). LDK: tu propio nodo en este iPhone; tú abres los canales. Solo mainnet.")) {
+                    Menu {
+                        Button { switchLightning(.breez) } label: {
+                            menuLabel("Breez (Spark)", selected: lightning.kind == .breez)
+                        }
+                        Button { switchLightning(.ldk) } label: {
+                            menuLabel(t("LDK (own node)", "LDK (nodo propio)"), selected: lightning.kind == .ldk)
+                        }
+                    } label: {
+                        SettingsRow(title: t("Engine", "Motor"), value: lightning.kind == .breez ? "Breez" : "LDK",
+                                    chevron: true, icon: "bolt")
+                    }
+                    if lightning.kind == .breez {
+                        SettingsDivider(inset: 60)
+                        Button {
+                            breezKeyDraft = lightning.breezAPIKey
+                            showBreezKey = true
+                        } label: {
+                            SettingsRow(title: t("Breez API key", "API key de Breez"),
+                                        value: lightning.breezAPIKey.isEmpty ? t("Missing", "Falta") : "••••" + String(lightning.breezAPIKey.suffix(4)),
+                                        chevron: true, icon: "key.horizontal")
+                        }
+                    }
+                }
+                .alert(t("Breez API key", "API key de Breez"), isPresented: $showBreezKey) {
+                    TextField("API key", text: $breezKeyDraft)
+                    Button(t("Save", "Guardar")) { lightning.breezAPIKey = breezKeyDraft }
+                    Button(t("Cancel", "Cancelar"), role: .cancel) {}
+                } message: {
+                    Text(t("Request it free at breez.technology (Breez SDK).", "Pídela gratis en breez.technology (Breez SDK)."))
                 }
 
                 SettingsSection(header: t("Export", "Exportar"),
@@ -646,6 +683,13 @@ public struct SettingsView: View {
     }
 
     /// Turning the lock on or off needs Face ID / passcode first.
+    /// Another engine: the running one is stopped (its funds stay where they are).
+    private func switchLightning(_ kind: LightningEngineKind) {
+        guard lightning.kind != kind else { return }
+        lightning.kind = kind
+        Task { await lightning.stop() }
+    }
+
     private func setAppLock(_ on: Bool) {
         Task {
             let ok = await AppLock.authenticate(reason: on ? t("Turn on the app lock", "Activa el bloqueo de la app")

@@ -19,6 +19,13 @@ packages:
   # Embedded Tor (official iCepa build, checksum-pinned) + C shim. See Vendor/TorLocal.
   TorLocal:
     path: Vendor/TorLocal
+  # Lightning engines.
+  BreezSdkSpark:
+    url: https://github.com/breez/breez-sdk-spark-swift
+    exactVersion: 0.26.1
+  LDKNode:
+    url: https://github.com/lightningdevkit/ldk-node
+    exactVersion: 0.7.0
 
 targets:
   ColdVault:
@@ -32,6 +39,10 @@ targets:
         product: CSecp256k1
       - package: TorLocal
         product: TorLocal
+      - package: BreezSdkSpark
+        product: BreezSdkSpark
+      - package: LDKNode
+        product: LDKNode
       - target: ColdVaultWidget
     entitlements:
       path: ColdVault/ColdVault.entitlements

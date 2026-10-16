@@ -30,6 +30,7 @@ struct WalletsView: View {
     /// The wallet being dragged to a new position.
     @State private var draggingSlot: String?
     @State private var showEthereum = false
+    @State private var showLightning = false
     @State private var deleteAccountTarget: AccountTarget?
 
     private struct AccountTarget: Identifiable {
@@ -153,6 +154,9 @@ struct WalletsView: View {
         .onDrop(of: [UTType.text], isTargeted: nil) { _ in
             draggingSlot = nil
             return false
+        }
+        .sheet(isPresented: $showLightning) {
+            LightningView().environmentObject(walletManager)
         }
         .sheet(isPresented: $showEthereum) {
             EthereumView().environmentObject(walletManager)
@@ -524,6 +528,7 @@ struct WalletsView: View {
                 }
 
                 if walletManager.supportsEthereum(wallet) {
+                    lightningRow(wallet)
                     ethereumRow(wallet)
                 }
             }
@@ -574,6 +579,36 @@ struct WalletsView: View {
                     deleteAccountTarget = AccountTarget(slot: wallet.slot, account: index, name: account.name)
                 } label: { Label(t("Delete account", "Eliminar cuenta"), systemImage: "trash") }
             }
+        }
+    }
+
+    /// Lightning for this wallet (mainnet).
+    private func lightningRow(_ wallet: LibraryWallet) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            if walletManager.activeSlot != wallet.slot { walletManager.selectWallet(slot: wallet.slot, account: nil) }
+            showLightning = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(Color.orange))
+                Text("Lightning")
+                    .font(.system(size: 15))
+                    .foregroundColor(Color(uiColor: .label))
+                Spacer()
+                if LightningManager.shared.isRunning(for: wallet.slot) {
+                    Circle().fill(Color.green).frame(width: 7, height: 7)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Palette.tertiary)
+            }
+            .padding(.horizontal, 10)
+            .frame(minHeight: 50)
+            .contentShape(Rectangle())
         }
     }
 
