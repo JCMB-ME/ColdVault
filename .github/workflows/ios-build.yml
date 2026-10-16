@@ -35,6 +35,10 @@ jobs:
         run: |
           brew install xcodegen
 
+      - name: Fetch Tor library (checksum-verified)
+        run: |
+          bash Vendor/TorLocal/fetch-tor.sh
+
       - name: Generate Xcode Project
         run: |
           xcodegen generate
