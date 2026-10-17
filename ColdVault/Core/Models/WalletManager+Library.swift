@@ -55,7 +55,9 @@ extension WalletManager {
     }
 
     func saveLibrary() {
-        let index = WalletLibrary(slots: library.map { $0.slot }, selected: activeSlot)
+        // While the decoy is open, the real wallet is still the one remembered for the next launch.
+        let remembered = decoySlot == nil ? activeSlot : (slotBeforeDecoy ?? activeSlot)
+        let index = WalletLibrary(slots: library.map { $0.slot }, selected: remembered)
         if let data = try? JSONEncoder().encode(index) {
             try? SecureKeyStore.shared.saveLibrary(data)
         }

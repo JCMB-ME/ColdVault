@@ -338,13 +338,16 @@ extension WalletManager {
         return library.filter { $0.slot == decoy }
     }
 
-    /// Duress PIN typed: show only the decoy wallet.
-    public func enterDecoy() {
-        guard let config = PinLock.load(), library.contains(where: { $0.slot == config.decoySlot }) else { return }
+    /// Duress PIN typed (or Face ID, once a duress PIN exists): show only the decoy wallet.
+    /// False, and nothing changes, when there is no decoy to show: the real wallets stay closed.
+    @discardableResult
+    public func enterDecoy() -> Bool {
+        guard let config = PinLock.load(), library.contains(where: { $0.slot == config.decoySlot }) else { return false }
         if decoySlot == nil { slotBeforeDecoy = activeSlot }
         decoySlot = config.decoySlot
         selectWallet(slot: config.decoySlot, account: nil)
         Task { await refreshAll() }
+        return true
     }
 
     /// Real PIN or Face ID: everything back.

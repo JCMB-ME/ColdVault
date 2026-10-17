@@ -65,8 +65,7 @@ struct AppLockModifier: ViewModifier {
     @EnvironmentObject var walletManager: WalletManager
     @AppStorage("appLockEnabled") private var enabled = false
     @State private var pinShake = 0
-    @State private var wrongPINs = 0
-    @State private var pinBlockedUntil: Date?
+    // Wrong PINs and the wait are kept in the Keychain (PinLock), not in view state.
     @Environment(\.scenePhase) private var scenePhase
     @State private var locked = UserDefaults.standard.bool(forKey: "appLockEnabled")
     @State private var authenticating = false
@@ -128,36 +127,43 @@ struct AppLockModifier: ViewModifier {
         Task {
             let ok = await AppLock.authenticate()
             authenticating = false
-            if ok {
+            guard ok else { return }
+            // With a duress PIN set, Face ID opens the decoy, never the real wallets: under
+            // coercion the real PIN is the only way to them.
+            if PinLock.isEnabled {
+                guard walletManager.enterDecoy() else { return }
+            } else {
                 walletManager.exitDecoy()
-                withAnimation(.easeOut(duration: 0.25)) { locked = false }
             }
+            withAnimation(.easeOut(duration: 0.25)) { locked = false }
         }
     }
 
     /// Real PIN: everything; duress PIN: only the decoy wallet; 5 wrong: wait 30 s.
     private func checkPIN(_ pin: String) {
-        if let until = pinBlockedUntil, Date() < until {
+        if PinLock.blockedRemaining() > 0 {
             pinShake += 1
             return
         }
         switch PinLock.check(pin) {
         case .real:
-            wrongPINs = 0
+            PinLock.registerSuccess()
             walletManager.exitDecoy()
             withAnimation(.easeOut(duration: 0.25)) { locked = false }
         case .duress:
-            wrongPINs = 0
-            walletManager.enterDecoy()
+            guard walletManager.enterDecoy() else {
+                // No decoy to show: answer like a wrong PIN, never open the real wallets.
+                PinLock.registerFailure()
+                pinShake += 1
+                return
+            }
+            // A duress unlock leaves the counter alone: resetting it here would give the real PIN
+            // unlimited tries to whoever already knows the duress PIN.
             withAnimation(.easeOut(duration: 0.25)) { locked = false }
         case .wrong:
-            wrongPINs += 1
+            PinLock.registerFailure()
             pinShake += 1
             UINotificationFeedbackGenerator().notificationOccurred(.error)
-            if wrongPINs >= 5 {
-                pinBlockedUntil = Date().addingTimeInterval(30)
-                wrongPINs = 0
-            }
         }
     }
 }

@@ -19,6 +19,10 @@ enum PinLock {
         var realHash: Data
         var duressHash: Data
         var decoySlot: String
+        /// Wrong PINs in a row, and until when no PIN is tried. Kept here so reopening the app
+        /// does not reset them.
+        var failedAttempts: Int? = nil
+        var blockedUntil: Date? = nil
     }
 
     enum Outcome { case real, duress, wrong }
@@ -55,6 +59,48 @@ enum PinLock {
     }
 
     static var isEnabled: Bool { load() != nil }
+
+    /// Wait after a wrong PIN: none for the first four, then 30 s, doubling, at most an hour.
+    static func delay(afterFailures failures: Int) -> TimeInterval {
+        guard failures >= 5 else { return 0 }
+        let shift = min(failures - 5, 7)
+        return TimeInterval(min(30 << shift, 3600))
+    }
+
+    /// Seconds left before a PIN may be tried again (0 when none).
+    static func blockedRemaining(now: Date = Date()) -> TimeInterval {
+        guard let blockedUntil = load()?.blockedUntil else { return 0 }
+        return max(0, blockedUntil.timeIntervalSince(now))
+    }
+
+    /// A wrong PIN: counts it and, from the fifth on, sets the wait. Stored in the Keychain.
+    static func registerFailure(now: Date = Date()) {
+        guard var config = load() else { return }
+        let failures = (config.failedAttempts ?? 0) + 1
+        config.failedAttempts = failures
+        let wait = delay(afterFailures: failures)
+        config.blockedUntil = wait > 0 ? now.addingTimeInterval(wait) : nil
+        update(config)
+    }
+
+    /// The right PIN: the counter starts again.
+    static func registerSuccess() {
+        guard var config = load(), config.failedAttempts != nil || config.blockedUntil != nil else { return }
+        config.failedAttempts = nil
+        config.blockedUntil = nil
+        update(config)
+    }
+
+    /// Writes the config in place. Not a delete and add: a failed write must not drop the PIN setup.
+    private static func update(_ config: Config) {
+        guard let data = try? JSONEncoder().encode(config) else { return }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        _ = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+    }
 
     static func make(realPIN: String, duressPIN: String, decoySlot: String) -> Config {
         var salt = Data(count: 16)
@@ -240,8 +286,8 @@ struct DuressSetupView: View {
             VStack(alignment: .leading, spacing: 12) {
                 TipRow(icon: "hand.raised", text: t("If someone forces you to open ColdVault, type the duress PIN: it opens only a decoy wallet with little money, as if it were the only one.",
                                                     "Si alguien te obliga a abrir ColdVault, escribe el PIN de coacción: abre solo una billetera señuelo con poco dinero, como si fuera la única."))
-                TipRow(icon: "lock", text: t("Your real PIN or Face ID open everything as usual.",
-                                             "Tu PIN real o Face ID abren todo como siempre."))
+                TipRow(icon: "lock", text: t("Your real PIN opens everything. Face ID opens only the decoy.",
+                                             "Tu PIN real abre todo. Face ID abre solo el señuelo."))
                 TipRow(icon: "wallet.pass", text: t("Create the decoy wallet first and keep a small, believable amount in it.",
                                                     "Crea antes la billetera señuelo y deja en ella una cantidad pequeña y creíble."))
             }
