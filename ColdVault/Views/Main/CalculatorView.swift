@@ -195,9 +195,7 @@ struct CalculatorView: View {
         case "BTC":
             BitcoinLogo(size: 38)
         case "ETH":
-            CoinLogo(coin: .ethereum, size: 24)
-                .frame(width: 38, height: 38)
-                .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+            CoinLogo(coin: .ethereum, size: 38)       // the logo is already a full circle
         case "sats":
             Text("s")
                 .font(.system(size: 17, weight: .bold, design: .rounded))
