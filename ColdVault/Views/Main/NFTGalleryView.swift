@@ -222,3 +222,88 @@ final class NFTImageLoader {
         return CGSize(width: size.width * scale, height: size.height * scale)
     }
 }
+
+/// One NFT: big picture, name, collection and where it lives.
+struct NFTDetailView: View {
+    @EnvironmentObject var walletManager: WalletManager
+    let item: EVMNFT
+
+    private var lang: AppLanguage { walletManager.appLanguage }
+    private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+
+    var body: some View {
+        ZStack {
+            GlassAmbientBackground()
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 16) {
+                    NFTImage(url: item.imageURL)
+                        .aspectRatio(1, contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    VStack(spacing: 4) {
+                        Text(item.name)
+                            .font(.system(size: 22, weight: .bold))
+                            .multilineTextAlignment(.center)
+                        Text(item.collection)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(Palette.secondary)
+                    }
+                    if !item.details.isEmpty {
+                        Text(item.details)
+                            .font(.system(size: 13))
+                            .foregroundColor(Palette.secondary)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(16)
+                            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+                    }
+                    VStack(spacing: 0) {
+                        row(t("Network", "Red"), item.chain.name(testnet: walletManager.isTestnet))
+                        SettingsDivider(inset: 16)
+                        row(t("Standard", "Estándar"), item.standard)
+                        SettingsDivider(inset: 16)
+                        row("Token ID", item.tokenId)
+                        SettingsDivider(inset: 16)
+                        row(t("Contract", "Contrato"), item.contract)
+                    }
+                    .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+                    if let url = item.chain.nftURL(contract: item.contract, tokenId: item.tokenId, testnet: walletManager.isTestnet) {
+                        Link(destination: url) {
+                            Label(t("View in explorer", "Ver en el explorador"), systemImage: "safari")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(Color(uiColor: .label))
+                                .padding(.horizontal, 18)
+                                .frame(height: 40)
+                                .background(Capsule().fill(SettingsStyle.groupFill))
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 32)
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SheetHeader(title: "NFT")
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func row(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(.system(size: 14))
+                .foregroundColor(Palette.secondary)
+            Spacer(minLength: 10)
+            Text(value)
+                .font(.system(size: 13, weight: .semibold, design: value.hasPrefix("0x") ? .monospaced : .default))
+                .foregroundColor(Color(uiColor: .label))
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+                .textSelection(.enabled)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+}
