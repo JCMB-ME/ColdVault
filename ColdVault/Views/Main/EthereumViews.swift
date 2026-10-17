@@ -856,8 +856,46 @@ struct EVMAssetsCard: View {
             } else {
                 section("ETH", natives)
                 if !tokens.isEmpty { section(t("Tokens", "Tokens"), tokens) }
+                nftRow
             }
         }
+        .sheet(isPresented: $showNFTs) {
+            NFTGalleryView().environmentObject(walletManager)
+        }
+    }
+
+    @State private var showNFTs = false
+
+    /// Opens the NFT gallery (Ethereum and Base).
+    private var nftRow: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showNFTs = true
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                    .frame(width: 42, height: 42)
+                    .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("NFTs")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                    Text("Ethereum · Base")
+                        .font(.system(size: 13))
+                        .foregroundColor(Palette.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Palette.tertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder

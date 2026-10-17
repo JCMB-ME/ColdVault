@@ -136,3 +136,29 @@ public enum ERC20 {
         return Data([0xa9, 0x05, 0x9c, 0xbb]) + Data(repeating: 0, count: 12) + to + word
     }
 }
+
+/// An NFT (ERC-721 / ERC-1155) held by the account.
+public struct EVMNFT: Identifiable, Equatable {
+    public var id: String { "\(chain.rawValue):\(contract.lowercased()):\(tokenId)" }
+    public let chain: EVMChain
+    public let contract: String
+    public let tokenId: String
+    public let name: String
+    public let collection: String
+    public let details: String
+    public let imageURL: URL?
+    public let standard: String
+
+    /// ipfs://… and ar://… links through public gateways.
+    public static func webURL(_ text: String?) -> URL? {
+        guard var text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        if text.hasPrefix("ipfs://") {
+            text = text.replacingOccurrences(of: "ipfs://ipfs/", with: "ipfs://")
+            text = "https://ipfs.io/ipfs/" + text.dropFirst(7)
+        } else if text.hasPrefix("ar://") {
+            text = "https://arweave.net/" + text.dropFirst(5)
+        }
+        guard text.hasPrefix("https://") || text.hasPrefix("http://") else { return nil }
+        return URL(string: text)
+    }
+}

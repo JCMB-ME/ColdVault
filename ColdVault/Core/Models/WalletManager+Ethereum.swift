@@ -268,6 +268,33 @@ extension WalletManager {
         }
     }
 
+    /// NFTs on every chain (Blockscout), newest collections first as Blockscout lists them.
+    public func loadNFTs() async -> [EVMNFT] {
+        guard let record = activeRecord, record.coinKind.isEVM else { return [] }
+        var result = [EVMNFT]()
+        for chain in EVMChain.allCases {
+            let base = chain.blockscout(testnet: record.isTestnet)
+            guard let url = URL(string: "\(base)/api/v2/addresses/\(record.primaryAddress)/nft?type=ERC-721,ERC-1155"),
+                  let data = await blockscoutData(url),
+                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let items = object["items"] as? [[String: Any]] else { continue }
+            for item in items {
+                guard let token = item["token"] as? [String: Any],
+                      let contract = (token["address_hash"] as? String) ?? (token["address"] as? String),
+                      let tokenId = (item["id"] as? String) ?? (item["id"] as? NSNumber)?.stringValue else { continue }
+                let metadata = item["metadata"] as? [String: Any]
+                let collection = (token["name"] as? String) ?? (token["symbol"] as? String) ?? "NFT"
+                let name = (metadata?["name"] as? String) ?? "\(collection) #\(tokenId.prefix(12))"
+                let image = EVMNFT.webURL(item["image_url"] as? String) ?? EVMNFT.webURL(metadata?["image"] as? String)
+                let standard = (item["token_type"] as? String) ?? (token["type"] as? String) ?? "ERC-721"
+                result.append(EVMNFT(chain: chain, contract: contract, tokenId: tokenId, name: name,
+                                     collection: collection, details: (metadata?["description"] as? String) ?? "",
+                                     imageURL: image, standard: standard))
+            }
+        }
+        return result
+    }
+
     private func blockscoutData(_ url: URL) async -> Data? {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = TorProxy.isEnabled ? 45 : 20
