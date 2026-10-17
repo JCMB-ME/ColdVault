@@ -314,6 +314,7 @@ extension WalletManager {
         trackedByScript = [:]
         fundedAddresses = []
         transactions = []
+        evmAssets = []
         clearCaches(for: deletedAccounts)
         Task { await ElectrumClient.shared.disconnect() }
 

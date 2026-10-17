@@ -351,6 +351,7 @@ extension WalletManager {
         guard let wallet = activeWallet else { throw WalletError.derivationFailed }
         var bundle = wallet.bundle
         for position in bundle.accounts.indices { bundle.accounts[position].record.isTestnet = isTestnet }
+        evmAssets = []                    // the other network's assets are not shown as current
         guard let index = library.firstIndex(where: { $0.slot == wallet.slot }) else { return }
         library[index].bundle = bundle
         writeMetadata(bundle, slot: wallet.slot)
@@ -361,7 +362,7 @@ extension WalletManager {
 
     /// Coins and tokens on every network of the wallet. The balance is the native coin
     /// (all its networks), or for Stable all the USDC + USDT (in millionths of a dollar).
-    /// A network that does not answer keeps what it had, so the total never drops by mistake.
+    /// A network that does not answer contributes nothing: its old assets are not shown as current.
     func refreshEthereumBalance() async {
         guard let record = activeRecord else { return }
         isLoadingBalance = true
@@ -389,8 +390,6 @@ extension WalletManager {
             balanceError = EthereumError.unavailable.localizedDescription
             return
         }
-        // Keep the last known assets of a network that did not answer.
-        assets += evmAssets.filter { failed.contains($0.chain) }
         evmAssets = assets
         balanceSats = WalletManager.balanceUnits(assets, dollars: kind == .dollars)
         balanceError = nil

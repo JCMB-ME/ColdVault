@@ -368,6 +368,7 @@ public final class WalletManager: ObservableObject {
         self.trackedByScript = [:]
         self.fundedAddresses = []
         self.transactions = []
+        self.evmAssets = []               // the previous wallet's tokens are not shown for this one
         self.homeNFTs = nil
         self.homeInscriptions = nil
         self.homeCollectiblesKey = nil

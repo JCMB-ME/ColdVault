@@ -6,9 +6,9 @@
 //  does not know which sat carries one, so an indexer is asked: ordinals.com, the
 //  public `ord` server (JSON API, no key). Mainnet only.
 //
-//  Protection: a small coin (≤ 10,000 sats, the usual inscription "postage") is only
-//  spent when ordinals.com confirms it carries no inscription or rune, so a payment
-//  can never burn one as fee or hand it out as change.
+//  Protection: every coin is checked before it can be spent. An inscription can sit on an
+//  output of any size, so a coin ordinals.com does not confirm as clear stays aside: a
+//  payment can never burn one as fee or hand it out as change.
 //
 
 import Foundation
@@ -29,7 +29,7 @@ public struct Inscription: Identifiable, Equatable, Sendable {
 
 public enum OrdinalsService {
     static let base = "https://ordinals.com"
-    /// Coins at or below this are checked before being spent.
+    /// Typical inscription postage. Kept for reference: every coin is checked, whatever its size.
     public static let postageLimit: UInt64 = 10_000
 
     private static func json(_ path: String) async throws -> Any {
@@ -82,6 +82,14 @@ public enum OrdinalsService {
     }
 }
 
+/// Keeps the coins confirmed to carry no inscription or rune. `answer` gives, per "txid:vout",
+/// whether the output holds assets, or nil when nobody could tell: such a coin is not kept.
+enum InscriptionFilter {
+    static func spendable(_ coins: [SpendableCoin], answer: (String) -> Bool?) -> [SpendableCoin] {
+        coins.filter { answer($0.id) == false }
+    }
+}
+
 extension WalletManager {
 
     /// The inscriptions on this wallet's addresses (mainnet bitcoin wallets): every one
@@ -121,18 +129,27 @@ extension WalletManager {
         return result.sorted { ($0.number ?? Int.max) > ($1.number ?? Int.max) }
     }
 
-    /// Drops small coins that carry (or might carry) an inscription or a rune.
+    /// Keeps only the coins ordinals.com confirms carry no inscription or rune. Every coin is
+    /// asked about, whatever its size; a coin it cannot confirm stays aside.
     func withoutInscriptions(_ coins: [SpendableCoin], isTestnet: Bool) async -> [SpendableCoin] {
         guard !isTestnet else { return coins }
-        var kept = [SpendableCoin]()
-        for coin in coins {
-            if coin.value > OrdinalsService.postageLimit {
-                kept.append(coin)
-            } else if let holds = try? await OrdinalsService.outputHoldsAssets("\(coin.txid):\(coin.vout)"), !holds {
-                kept.append(coin)
+        var answers = [String: Bool]()
+        // A few at a time: the public indexer rate-limits bursts.
+        for start in stride(from: 0, to: coins.count, by: 4) {
+            let batch = coins[start..<min(start + 4, coins.count)]
+            await withTaskGroup(of: (String, Bool?).self) { group in
+                for coin in batch {
+                    let outpoint = coin.id
+                    group.addTask {
+                        let holds = try? await OrdinalsService.outputHoldsAssets(outpoint)
+                        return (outpoint, holds)
+                    }
+                }
+                for await (outpoint, holds) in group {
+                    if let holds { answers[outpoint] = holds }
+                }
             }
-            // Unknown (ordinals.com down): kept aside, never spent by mistake.
         }
-        return kept
+        return InscriptionFilter.spendable(coins) { answers[$0] }
     }
 }
