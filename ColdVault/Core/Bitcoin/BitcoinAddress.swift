@@ -127,6 +127,8 @@ public enum BitcoinAddress {
                 guard decoded.type == .bech32, program.count == 20 || program.count == 32 else { return nil }
             } else {
                 guard decoded.type == .bech32m else { return nil }
+                // Taproot (version 1, 32 bytes) must be a point of the curve, or the output can never be spent.
+                if version == 1, program.count == 32, Secp256k1.xOnlyPublicKey(program) == nil { return nil }
             }
             var script = Data([version == 0 ? 0x00 : 0x50 + version, UInt8(program.count)])
             script.append(program)

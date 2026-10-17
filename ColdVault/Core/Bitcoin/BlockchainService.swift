@@ -321,7 +321,7 @@ public final class BlockchainService {
         guard fees.hourFee >= 1, fees.fastestFee >= fees.hourFee, fees.fastestFee < 10_000 else {
             throw BlockchainError.invalidResponse
         }
-        return fees
+        return FeePolicy.capped(fees)
     }
 
     // MARK: - UTXOs

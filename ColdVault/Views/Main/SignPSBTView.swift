@@ -127,7 +127,7 @@ struct SignPSBTView: View {
     private func reviewCard(psbt: PSBT, summary: PSBTSummary) -> some View {
         let feeTooHigh: Bool = {
             guard let fee = summary.fee else { return false }
-            return summary.externalTotal > 0 ? fee * 10 > summary.externalTotal : fee > 100_000
+            return summary.externalTotal > 0 ? fee * 10 > summary.externalTotal : FeePolicy.isStrong(fee: UInt64(fee))
         }()
         return VStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 12) {

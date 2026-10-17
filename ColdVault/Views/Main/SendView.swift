@@ -34,6 +34,8 @@ public struct SendView: View {
     @State private var fees: RecommendedFees?
     @State private var feesUnavailable: Bool = false
     @State private var feeChoice: FeeChoice = .normal
+    /// The user has read a fee above `FeePolicy.strongWarningSats`; the slider stays locked until then.
+    @State private var feeAcknowledged = false
     @State private var customFeeRate: Int = 5
     /// Coin control: nil = automatic selection, otherwise only these coins ("txid:vout").
     @State private var selectedCoins: Set<String>?
@@ -457,6 +459,13 @@ public struct SendView: View {
                 CoinControlView(selection: $selectedCoins)
                     .environmentObject(walletManager)
             }
+            if let server = fees, server.fastestFee >= FeePolicy.rateCeiling {
+                Text(t("For safety, the fastest rate is capped at \(FeePolicy.rateCeiling) sat/vB.",
+                       "Por seguridad, la tasa más rápida se limita a \(FeePolicy.rateCeiling) sat/vB."))
+                    .font(.system(size: 12))
+                    .foregroundColor(.orange)
+                    .multilineTextAlignment(.center)
+            }
             if feesUnavailable {
                 Text(t("Could not load current fees. Check the rate before sending.",
                        "No se pudieron cargar las comisiones actuales. Revisa la tasa antes de enviar."))
@@ -575,6 +584,18 @@ public struct SendView: View {
                         .foregroundColor(.orange)
                         .multilineTextAlignment(.center)
                 }
+                if FeePolicy.isStrong(fee: plan.fee) {
+                    VStack(spacing: 8) {
+                        Label(t("This fee is above \(SendView.satsText(FeePolicy.strongWarningSats)) sats. Check it before you send.",
+                                "Esta comisión supera \(SendView.satsText(FeePolicy.strongWarningSats)) sats. Revísala antes de enviar."),
+                              systemImage: "exclamationmark.octagon.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.red)
+                            .multilineTextAlignment(.center)
+                        Toggle(t("I have checked the fee", "He revisado la comisión"), isOn: $feeAcknowledged)
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                }
                 if highFee {
                     Label(t("The fee is more than 10% of the amount.", "La comisión supera el 10% del monto."),
                           systemImage: "exclamationmark.triangle.fill")
@@ -602,6 +623,7 @@ public struct SendView: View {
                 confirm(plan)
             }
             .padding(.top, 4)
+            .disabled(FeePolicy.isStrong(fee: plan.fee) && !feeAcknowledged)
 
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -803,6 +825,7 @@ public struct SendView: View {
                 } else {
                     prepared = try await walletManager.prepareSend(to: recipient, amount: amount, feeRate: rate)
                 }
+                feeAcknowledged = false
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { plan = prepared }
             } catch {
                 errorMessage = error.localizedDescription
