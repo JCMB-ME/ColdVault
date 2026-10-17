@@ -386,6 +386,8 @@ public enum EthereumError: LocalizedError {
     case insufficientToken(String)
     /// A token payment needs the network's coin (ETH, POL, TRX, TON) for the fee.
     case noGas(String, String)
+    /// The node reported another hash than the one of the bytes sent: the send is not confirmed.
+    case hashMismatch(String)
 
     public var errorDescription: String? {
         let english = !(Locale.preferredLanguages.first ?? "").lowercased().hasPrefix("es")
@@ -397,6 +399,7 @@ public enum EthereumError: LocalizedError {
         case .insufficientToken(let symbol): return english ? "Not enough \(symbol) for this amount." : "No tienes suficiente \(symbol) para este monto."
         case .noGas(let chain, let coin): return english ? "You need a little \(coin) on \(chain) to pay the network fee. Receive it at this same address."
                                                          : "Necesitas un poco de \(coin) en \(chain) para pagar la comisión de red. Recíbelo en esta misma dirección."
+        case .hashMismatch(let expected): return english ? "The node reported another hash for this transaction (expected \(expected)). Check your history before sending again." : "El nodo devolvió otro hash para esta transacción (esperado \(expected)). Revisa tu historial antes de volver a enviar."
         }
     }
 }
@@ -489,10 +492,40 @@ public final class EthereumRPC {
     }
 
     public func send(_ raw: Data) async throws -> String {
-        guard let hash = try await call("eth_sendRawTransaction", ["0x" + raw.hexEncodedString]) as? String else {
-            throw EthereumError.unavailable
+        let hash: String
+        do {
+            guard let answer = try await call("eth_sendRawTransaction", ["0x" + raw.hexEncodedString]) as? String else {
+                throw EthereumError.unavailable
+            }
+            hash = answer
+        } catch EthereumError.server(let message) where EthereumRPC.isKnownAlready(message) {
+            hash = EthereumRPC.expectedHash(of: raw)      // the very same transaction is already in the mempool
         }
-        return hash
+        return try EthereumRPC.checkReported(hash, for: raw)
+    }
+
+    /// The id of signed bytes: keccak256 of the raw transaction.
+    public static func expectedHash(of raw: Data) -> String {
+        "0x" + Keccak256.hash(raw).hexEncodedString
+    }
+
+    /// The node must report the hash of the bytes it was given; anything else is not confirmed.
+    public static func checkReported(_ reported: String, for raw: Data) throws -> String {
+        let expected = expectedHash(of: raw)
+        guard reported.lowercased() == expected.lowercased() else { throw EthereumError.hashMismatch(expected) }
+        return reported
+    }
+
+    /// Nodes answer "already known" when they hold this very transaction.
+    static func isKnownAlready(_ message: String) -> Bool {
+        let text = message.lowercased()
+        return text.contains("already known") || text.contains("known transaction")
+    }
+
+    /// Whether the node knows the transaction (pending or mined).
+    public func transactionExists(_ hash: String) async throws -> Bool {
+        let result = try await call("eth_getTransactionByHash", [hash])
+        return result is [String: Any]
     }
 
     /// Live ETH price in a currency (Coinbase).

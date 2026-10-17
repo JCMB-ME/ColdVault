@@ -173,6 +173,9 @@ public final class WalletManager: ObservableObject {
     @Published public internal(set) var transactions: [WalletTransaction] = []
     @Published public internal(set) var isLoadingTransactions: Bool = false
     @Published public internal(set) var contacts: [Contact] = []
+    /// Broadcasts whose outcome is unknown (timeout, lost connection, an answer that does not add up),
+    /// per chain and account. The chain is asked about them before the same payment is sent again.
+    var unconfirmedSends: [String: UnconfirmedSend] = [:]
     var lastPriceHistoryFetch: Date?
     var widgetUpdatePending = false
     var priceHistoryCurrency: String?

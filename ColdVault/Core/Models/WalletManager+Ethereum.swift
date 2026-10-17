@@ -23,6 +23,21 @@ public enum ChainTransaction {
     case ton(wallet: TonAddress, signing: TonCell, deploy: Bool)
 }
 
+/// A broadcast whose outcome is unknown, with what is needed to ask the chain about it.
+struct UnconfirmedSend {
+    enum Proof {
+        /// keccak256 of the signed bytes: found with eth_getTransactionByHash.
+        case evm(hash: String)
+        /// Tron transaction id and the signed bytes: found with gettransactionbyid, else sent again (same bytes).
+        case tron(txID: Data, signed: Data)
+        /// TON message hash and the wallet seqno it was signed with: done once the wallet's seqno moves on.
+        case ton(hash: String, seqno: UInt32)
+    }
+    let recipient: String
+    let amount: UInt256
+    let proof: Proof
+}
+
 public struct EthereumSendPlan {
     public let payload: ChainTransaction
     public let recipient: String
@@ -34,7 +49,11 @@ public struct EthereumSendPlan {
     /// What is sent (a native coin or a token, on one network) and how much.
     public let asset: EVMAsset
     public let amount: UInt256
-    public var feeIsEstimate: Bool { !asset.chain.isEVM }
+    /// Tron TRC-20: the fee limit the transaction carries (the most it can burn), not an estimate.
+    public var feeIsCap = false
+    /// TON: the seqno the message was signed with, to recognise it on the chain later.
+    public var seqno: UInt32? = nil
+    public var feeIsEstimate: Bool { !asset.chain.isEVM && !feeIsCap }
 }
 
 extension WalletManager {
@@ -1059,8 +1078,8 @@ extension WalletManager {
         let feeLimit = min(max(fee * 2, 20_000_000), 150_000_000)
         let tx = TronTransaction(owner: ownerBytes, kind: .trc20(contract: contractBytes, to: to, amount: tokenAmount),
                                  blockNumber: block.number, blockID: block.id, blockTimestamp: block.timestamp, feeLimit: feeLimit)
-        return EthereumSendPlan(payload: .tron(tx), recipient: target, maxFee: UInt256(UInt64(fee)), total: UInt256(UInt64(fee)),
-                                asset: asset, amount: tokenAmount)
+        return EthereumSendPlan(payload: .tron(tx), recipient: target, maxFee: UInt256(UInt64(feeLimit)), total: UInt256(UInt64(feeLimit)),
+                                asset: asset, amount: tokenAmount, feeIsCap: true)
     }
 
     /// TON or a jetton (sent to the owner's jetton wallet with 0.05 TON for its gas;
@@ -1094,7 +1113,7 @@ extension WalletManager {
             let message = TonWallet.internalMessage(to: destination, amount: messageValue, bounce: destination.bounceable)
             let signing = TonWallet.signingMessage(seqno: info.seqno, validUntil: validUntil, messages: [(mode: mode, message: message)])
             return EthereumSendPlan(payload: .ton(wallet: me, signing: signing, deploy: !info.active), recipient: target,
-                                    maxFee: fee, total: total, asset: asset, amount: value)
+                                    maxFee: fee, total: total, asset: asset, amount: value, seqno: info.seqno)
         }
 
         guard let jettonWallet = asset.tokenWallet.flatMap({ TonAddress.parse($0) }) else {
@@ -1110,11 +1129,51 @@ extension WalletManager {
         let message = TonWallet.internalMessage(to: jettonWallet, amount: attached, bounce: true, body: body)
         let signing = TonWallet.signingMessage(seqno: info.seqno, validUntil: validUntil, messages: [(mode: 3, message: message)])
         return EthereumSendPlan(payload: .ton(wallet: me, signing: signing, deploy: !info.active), recipient: target,
-                                maxFee: needed, total: needed, asset: asset, amount: tokenAmount)
+                                maxFee: needed, total: needed, asset: asset, amount: tokenAmount, seqno: info.seqno)
+    }
+
+    /// If an earlier broadcast of the same payment (same recipient and amount) may be on the network,
+    /// asks the chain. Returns its hash when it is, so the payment is not sent twice; nil when the
+    /// new attempt can go.
+    private func alreadySent(sendKey: String, plan: EthereumSendPlan, owner: String) async throws -> String? {
+        guard let earlier = unconfirmedSends[sendKey], earlier.recipient == plan.recipient,
+              earlier.amount == plan.amount else { return nil }
+        switch earlier.proof {
+        case .evm(let hash):
+            let known = try await EthereumRPC(isTestnet: isTestnet, chain: plan.asset.chain).transactionExists(hash)
+            unconfirmedSends[sendKey] = nil
+            return known ? hash : nil
+        case .tron(let txID, let signed):
+            let api = TronAPI(isTestnet: isTestnet)
+            if try await api.transactionKnown(txID) {
+                unconfirmedSends[sendKey] = nil
+                return txID.hexEncodedString
+            }
+            // Not on the network yet: the same signed bytes cannot pay twice.
+            do {
+                let sent = try await api.broadcast(signed, txID: txID)
+                unconfirmedSends[sendKey] = nil
+                return sent
+            } catch TronError.server(_) {
+                unconfirmedSends[sendKey] = nil          // refused or expired: it can no longer go out
+                return nil
+            }
+        case .ton(let hash, let seqno):
+            let current = try await TonAPI(isTestnet: isTestnet).wallet(owner).seqno
+            unconfirmedSends[sendKey] = nil
+            return current > seqno ? hash : nil          // the wallet moved past that seqno: the earlier message ran
+        }
     }
 
     /// Signs (Face ID) and broadcasts; returns the transaction hash / id.
     public func sendEthereum(_ plan: EthereumSendPlan) async throws -> String {
+        // Before signing again: an earlier broadcast of the same payment may already be on the network.
+        let owner = address(on: plan.asset.chain) ?? ""
+        let sendKey = "\(plan.asset.chain.rawValue)|\(owner)"
+        if let sent = try await alreadySent(sendKey: sendKey, plan: plan, owner: owner) {
+            Task { await refreshAll() }
+            return sent
+        }
         let amount = plan.amount.formatted(decimals: plan.asset.decimals, maxFraction: 8)
         let network = plan.asset.chain.name(testnet: isTestnet)
         let secret = try await loadSecret(reason: appLanguage == .english
@@ -1129,20 +1188,48 @@ extension WalletManager {
             guard let derived = EthereumKeys.address(privateKey: key),
                   EthereumAddress.checksummed(derived) == address(on: plan.asset.chain),
                   let raw = transaction.signed(privateKey: key) else { throw WalletError.secretMismatch }
-            hash = try await EthereumRPC(isTestnet: isTestnet, chain: plan.asset.chain).send(raw)
+            // Recorded before the send: if the outcome is unknown, the next attempt looks this hash up.
+            unconfirmedSends[sendKey] = UnconfirmedSend(recipient: plan.recipient, amount: plan.amount,
+                                                        proof: .evm(hash: EthereumRPC.expectedHash(of: raw)))
+            do {
+                hash = try await EthereumRPC(isTestnet: isTestnet, chain: plan.asset.chain).send(raw)
+            } catch EthereumError.server(let message) {
+                unconfirmedSends[sendKey] = nil          // the node refused it: nothing went out
+                throw EthereumError.server(message)
+            }
+            unconfirmedSends[sendKey] = nil
         case .tron(let transaction):
             let key = try WalletManager.tronKey(secret: secret, account: account)
             guard let derived = TronKeys.address(privateKey: key), derived == address(on: .tron),
                   let signed = transaction.signed(privateKey: key) else { throw WalletError.secretMismatch }
-            hash = try await TronAPI(isTestnet: isTestnet).broadcast(signed, txID: transaction.txID)
+            unconfirmedSends[sendKey] = UnconfirmedSend(recipient: plan.recipient, amount: plan.amount,
+                                                        proof: .tron(txID: transaction.txID, signed: signed))
+            do {
+                hash = try await TronAPI(isTestnet: isTestnet).broadcast(signed, txID: transaction.txID)
+            } catch TronError.server(let text) {
+                unconfirmedSends[sendKey] = nil          // refused or expired: it can no longer go out
+                throw TronError.server(text)
+            }
+            unconfirmedSends[sendKey] = nil
         case .ton(let wallet, let signing, let deploy):
             let key = try WalletManager.tonKey(secret: secret, account: account)
             guard let publicKey = TonKeys.publicKey(privateKey: key), TonWallet.address(publicKey: publicKey) == wallet,
                   let signature = TonKeys.sign(signing.hash, privateKey: key) else { throw WalletError.secretMismatch }
             let state = deploy ? TonWallet.stateInit(publicKey: publicKey) : nil
             let message = TonWallet.externalMessage(wallet: wallet, stateInit: state, signature: signature, signing: signing)
-            try await TonAPI(isTestnet: isTestnet).send(boc: TonBOC.serialize(message))
-            hash = message.hash.hexEncodedString
+            let messageHash = message.hash.hexEncodedString
+            if let seqno = plan.seqno {
+                unconfirmedSends[sendKey] = UnconfirmedSend(recipient: plan.recipient, amount: plan.amount,
+                                                            proof: .ton(hash: messageHash, seqno: seqno))
+            }
+            do {
+                try await TonAPI(isTestnet: isTestnet).send(boc: TonBOC.serialize(message))
+            } catch TonError.server(let text) {
+                unconfirmedSends[sendKey] = nil
+                throw TonError.server(text)
+            }
+            unconfirmedSends[sendKey] = nil
+            hash = messageHash
         }
         Task { await refreshAll() }
         return hash

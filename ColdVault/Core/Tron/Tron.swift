@@ -281,12 +281,20 @@ public final class TronAPI {
     /// Broadcasts a signed transaction; returns its id.
     public func broadcast(_ signed: Data, txID: Data) async throws -> String {
         let object = try await post("/wallet/broadcasthex", ["transaction": signed.hexEncodedString])
+        // Already known to the network: the same bytes and the same id, so not a second payment.
+        if (object["code"] as? String) == "DUP_TRANSACTION_ERROR" { return txID.hexEncodedString }
         guard (object["result"] as? Bool) == true else {
             var message = (object["message"] as? String) ?? (object["code"] as? String) ?? "error"
             if let bytes = message.hexDecoded, let text = String(data: bytes, encoding: .utf8) { message = text }
             throw TronError.server(message)
         }
         return txID.hexEncodedString
+    }
+
+    /// Whether TronGrid knows the transaction id (pending or confirmed).
+    public func transactionKnown(_ txID: Data) async throws -> Bool {
+        let object = try await post("/wallet/gettransactionbyid", ["value": txID.hexEncodedString, "visible": true])
+        return object["txID"] != nil
     }
 
     /// Last TRX moves of an address.
