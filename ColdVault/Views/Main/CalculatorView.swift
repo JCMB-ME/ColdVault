@@ -91,6 +91,7 @@ struct CalculatorView: View {
                     .focused($focused)
                     .lineLimit(1)
                     .minimumScaleFactor(0.4)
+                    .layoutPriority(1)
             }
             .padding(.horizontal, 16)
             .frame(height: 86)
@@ -140,9 +141,12 @@ struct CalculatorView: View {
                         Text(copied ? t("Copied", "Copiado") : t("Tap to copy", "Toca para copiar"))
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(copied ? .green : Palette.tertiary)
+                            .lineLimit(1)
+                            .fixedSize()
                     }
                 }
                 .buttonStyle(.plain)
+                .layoutPriority(1)
             }
             .padding(.horizontal, 16)
             .frame(height: 96)
@@ -178,13 +182,15 @@ struct CalculatorView: View {
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(Palette.secondary)
                     }
+                    .fixedSize()
+                    // The name gives way to the amount on small screens (iPhone mini).
                     Text(name(selection))
                         .font(.system(size: 11))
                         .foregroundColor(Palette.secondary)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
-            .fixedSize()
         }
     }
 
@@ -225,7 +231,7 @@ struct CalculatorView: View {
         case "BTC": return "Bitcoin"
         case "ETH": return "Ethereum"
         case "sats": return "Satoshis"
-        case "USD": return t("US dollar", "Dólar estadounidense")
+        case "USD": return t("US dollar", "Dólar de EE. UU.")
         case "MXN": return t("Mexican peso", "Peso mexicano")
         case "JPY": return t("Japanese yen", "Yen japonés")
         case "CNY": return t("Chinese yuan", "Yuan chino")
