@@ -46,10 +46,12 @@ final class TronTONTests: XCTestCase {
         let seed = try BIP39.mnemonicToSeed(mnemonic: mnemonic)
         let key = try XCTUnwrap(TronKeys.privateKey(seed: seed, index: 0))
         let signed = try XCTUnwrap(tx.signed(privateKey: key))
-        XCTAssertEqual(signed.prefix(2), Data([0x0a, UInt8(tx.rawData.count)]))
-        XCTAssertEqual(signed.subdata(in: 2..<(2 + tx.rawData.count)), tx.rawData)
-        XCTAssertEqual(signed.suffix(67).prefix(2), Data([0x12, 0x41]))      // field 2, 65 bytes
-        XCTAssertEqual(signed.count, 2 + tx.rawData.count + 67)
+        // Field 1 (raw, 133 bytes: varint length 0x85 0x01), then field 2 (65-byte signature).
+        XCTAssertEqual(tx.rawData.count, 133)
+        XCTAssertEqual(signed.prefix(3), Data([0x0a, 0x85, 0x01]))
+        XCTAssertEqual(signed.subdata(in: 3..<(3 + tx.rawData.count)), tx.rawData)
+        XCTAssertEqual(signed.suffix(67).prefix(2), Data([0x12, 0x41]))
+        XCTAssertEqual(signed.count, 3 + tx.rawData.count + 67)
     }
 
     /// A USDT (TRC-20) transfer on Nile, as triggersmartcontract encoded it.
