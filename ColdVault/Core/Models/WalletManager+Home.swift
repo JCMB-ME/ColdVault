@@ -177,7 +177,7 @@ extension WalletManager {
         }
         if isEthereum {
             guard homeShowFiat, let price = ethFiatPrice else { return nil }
-            let value = Double(balanceSats) / 1_000_000_000 * price
+            let value = Double(availableSats) / 1_000_000_000 * price
             return WalletManager.currencyFormatter(fiatCurrency, fractionDigits: nil).string(from: NSNumber(value: value))
         }
         guard homeShowFiat, let price = fiatPrice else { return nil }
@@ -228,7 +228,18 @@ extension WalletManager {
     }
 
     /// The balance without coins still waiting for their first confirmation.
-    public var availableSats: UInt64 { balanceSats - pendingIncomingSats }
+    public var availableSats: UInt64 {
+        // Ethereum / dollars: what the network on screen holds.
+        if isEthereum { return networkUnits }
+        return balanceSats - pendingIncomingSats
+    }
+
+    /// The history on screen: Ethereum / dollars wallets list only the chosen network.
+    public var visibleTransactions: [WalletTransaction] {
+        guard isEthereum else { return transactions }
+        let network = evmNetwork.rawValue
+        return transactions.filter { ($0.chain ?? EVMChain.ethereum.rawValue) == network }
+    }
 
     // Formatters are expensive to create: one per configuration, reused on every render.
     static let groupingFormatter: NumberFormatter = {

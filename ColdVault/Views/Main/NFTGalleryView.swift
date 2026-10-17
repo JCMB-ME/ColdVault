@@ -20,6 +20,8 @@ struct NFTGalleryView: View {
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
+    private var networkName: String { walletManager.evmNetwork.name(testnet: walletManager.isTestnet) }
+
     var body: some View {
         ZStack {
             GlassAmbientBackground()
@@ -36,8 +38,8 @@ struct NFTGalleryView: View {
                                 .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
                             Text(t("No NFTs yet", "Aún no tienes NFTs"))
                                 .font(.system(size: 17, weight: .semibold))
-                            Text(t("NFTs on Ethereum and Base sent to this address show up here.",
-                                   "Aquí aparecen los NFTs de Ethereum y Base que lleguen a esta dirección."))
+                            Text(t("NFTs on \(networkName) sent to this address show up here.",
+                                   "Aquí aparecen los NFTs de \(networkName) que lleguen a esta dirección."))
                                 .font(.system(size: 13))
                                 .foregroundColor(Palette.secondary)
                                 .multilineTextAlignment(.center)
@@ -66,7 +68,7 @@ struct NFTGalleryView: View {
             }
             .refreshable { await load() }
             .safeAreaInset(edge: .top, spacing: 0) {
-                SheetHeader(title: "NFTs")
+                SheetHeader(title: "NFTs · \(networkName)")
             }
         }
         .presentationDetents([.large])
@@ -99,7 +101,8 @@ struct NFTGalleryView: View {
     }
 
     private func load() async {
-        items = await walletManager.loadNFTs()
+        let all = await walletManager.loadNFTs()
+        items = all.filter { $0.chain == walletManager.evmNetwork }
         isLoading = false
     }
 }

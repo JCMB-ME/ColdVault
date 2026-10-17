@@ -135,6 +135,31 @@ public final class WalletManager: ObservableObject {
     @Published public internal(set) var ethPriceHistory: [PricePoint] = []
     /// ETH and tokens of the EVM account on screen, on every chain (Ethereum, Base).
     @Published public internal(set) var evmAssets: [EVMAsset] = []
+    /// The network an Ethereum / dollars wallet shows (top button, or shake the iPhone).
+    @Published public var evmNetwork: EVMChain {
+        didSet { UserDefaults.standard.set(evmNetwork.rawValue, forKey: "evmNetwork") }
+    }
+    /// Home screen blocks: tokens and NFTs (Ethereum), ordinals (bitcoin).
+    @Published public var homeShowTokens: Bool {
+        didSet { UserDefaults.standard.set(homeShowTokens, forKey: "homeShowTokens") }
+    }
+    @Published public var homeShowNFTs: Bool {
+        didSet { UserDefaults.standard.set(homeShowNFTs, forKey: "homeShowNFTs") }
+    }
+    @Published public var homeShowOrdinals: Bool {
+        didSet { UserDefaults.standard.set(homeShowOrdinals, forKey: "homeShowOrdinals") }
+    }
+    /// Manage tokens: the order chosen and the tokens hidden (asset ids "chain:contract").
+    @Published public var tokenOrder: [String] {
+        didSet { UserDefaults.standard.set(tokenOrder, forKey: "tokenOrder") }
+    }
+    @Published public var hiddenTokens: Set<String> {
+        didSet { UserDefaults.standard.set(Array(hiddenTokens), forKey: "hiddenTokens") }
+    }
+    /// What the home blocks show (nil = not loaded yet), and for which account.
+    @Published public internal(set) var homeNFTs: [EVMNFT]?
+    @Published public internal(set) var homeInscriptions: [Inscription]?
+    var homeCollectiblesKey: String?
     var lastEthHistoryFetch: Date?
     /// Full BTC/USD history (hourly recently, daily further back), oldest first.
     @Published public internal(set) var priceHistory: [PricePoint] = []
@@ -192,6 +217,12 @@ public final class WalletManager: ObservableObject {
         self.homeShowCalculator = defaults.bool(forKey: "homeShowCalculator")
         self.swipeActionButton = defaults.bool(forKey: "swipeActionButton")
         self.alwaysShowAccountDots = defaults.object(forKey: "alwaysShowAccountDots") as? Bool ?? true
+        self.evmNetwork = EVMChain(rawValue: defaults.string(forKey: "evmNetwork") ?? "") ?? .ethereum
+        self.homeShowTokens = defaults.object(forKey: "homeShowTokens") as? Bool ?? true
+        self.homeShowNFTs = defaults.object(forKey: "homeShowNFTs") as? Bool ?? true
+        self.homeShowOrdinals = defaults.object(forKey: "homeShowOrdinals") as? Bool ?? true
+        self.tokenOrder = defaults.stringArray(forKey: "tokenOrder") ?? []
+        self.hiddenTokens = Set(defaults.stringArray(forKey: "hiddenTokens") ?? [])
         let savedCurrency = defaults.string(forKey: "fiatCurrency") ?? FiatCurrency.deviceDefault
         self.fiatCurrency = FiatCurrency.supported.contains(savedCurrency) ? savedCurrency : "USD"
         loadContacts()
@@ -329,6 +360,9 @@ public final class WalletManager: ObservableObject {
         self.trackedByScript = [:]
         self.fundedAddresses = []
         self.transactions = []
+        self.homeNFTs = nil
+        self.homeInscriptions = nil
+        self.homeCollectiblesKey = nil
         loadCache()
         Task {
             await refreshAll()

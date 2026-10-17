@@ -246,6 +246,83 @@ extension WalletManager {
         lastBalanceUpdate = Date()
     }
 
+    // MARK: - Network on screen
+
+    /// ETH and tokens on the network on screen.
+    public var networkAssets: [EVMAsset] { evmAssets.filter { $0.chain == evmNetwork } }
+
+    /// Balance of the network on screen: its ETH in gwei, or (dollars) its USDC + USDT
+    /// in millionths of a dollar. Before the first load, the cached total.
+    var networkUnits: UInt64 {
+        guard !evmAssets.isEmpty else { return balanceSats }
+        let assets = networkAssets
+        if isDollars {
+            return assets.filter { !$0.isNative && $0.isStablecoin }
+                .reduce(UInt64(0)) { $0 + ($1.balance < UInt256(UInt64.max) ? $1.balance.low64 : 0) }
+        }
+        return assets.filter { $0.isNative }.reduce(UInt64(0)) { $0 + WalletManager.gwei($1.balance) }
+    }
+
+    /// Next network (top button / shake), or the one given.
+    public func switchEVMNetwork(to chain: EVMChain? = nil) {
+        let all = EVMChain.allCases
+        evmNetwork = chain ?? all[((all.firstIndex(of: evmNetwork) ?? 0) + 1) % all.count]
+    }
+
+    /// Tokens of the network on screen in the order chosen in Manage tokens (new ones
+    /// after, biggest value first); hidden ones only when asked.
+    public func orderedTokens(includeHidden: Bool = false) -> [EVMAsset] {
+        var rank = [String: Int]()
+        for (index, id) in tokenOrder.enumerated() where rank[id] == nil { rank[id] = index }
+        let sorted = networkAssets.filter { !$0.isNative }.sorted { a, b in
+            switch (rank[a.id], rank[b.id]) {
+            case let (x?, y?): return x < y
+            case (.some, nil): return true
+            case (nil, .some): return false
+            default: return (a.usdValue ?? 0) > (b.usdValue ?? 0)
+            }
+        }
+        return includeHidden ? sorted : sorted.filter { !hiddenTokens.contains($0.id) }
+    }
+
+    /// Manage tokens: moves rows of `list` (every token of the network, in order).
+    public func moveTokens(_ list: [EVMAsset], from source: IndexSet, to destination: Int) {
+        let ids = list.map { $0.id }
+        let moving = source.sorted().map { ids[$0] }
+        var rest = ids.enumerated().filter { !source.contains($0.offset) }.map { $0.element }
+        let target = destination - source.filter { $0 < destination }.count
+        rest.insert(contentsOf: moving, at: max(0, min(target, rest.count)))
+        tokenOrder = rest + tokenOrder.filter { !ids.contains($0) }
+    }
+
+    public func setToken(_ asset: EVMAsset, visible: Bool) {
+        if visible { hiddenTokens.remove(asset.id) } else { hiddenTokens.insert(asset.id) }
+    }
+
+    // MARK: - Home blocks (NFTs / ordinals)
+
+    private var collectiblesKey: String? {
+        activeRecord.map { "\($0.primaryAddress)|\($0.isTestnet)" }
+    }
+
+    /// NFTs for the home block (once per account unless `force`).
+    public func loadHomeNFTs(force: Bool = false) async {
+        guard let key = collectiblesKey, force || homeNFTs == nil || homeCollectiblesKey != key else { return }
+        homeCollectiblesKey = key
+        let list = await loadNFTs()
+        guard collectiblesKey == key else { return }
+        homeNFTs = list
+    }
+
+    /// Inscriptions for the home block (mainnet bitcoin; once per account unless `force`).
+    public func loadHomeInscriptions(force: Bool = false) async {
+        guard let key = collectiblesKey, force || homeInscriptions == nil || homeCollectiblesKey != key else { return }
+        homeCollectiblesKey = key
+        let list = (try? await loadInscriptions()) ?? []
+        guard collectiblesKey == key else { return }
+        homeInscriptions = list
+    }
+
     /// Other ERC-20 tokens (PEPE, LINK…) from Blockscout. Only tokens with a market
     /// price are listed: that hides the spam airdrops every address receives.
     private func otherTokens(chain: EVMChain, owner: String, testnet: Bool) async -> [EVMAsset] {

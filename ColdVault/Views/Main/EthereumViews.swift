@@ -25,13 +25,13 @@ struct EthReceiveView: View {
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
     private var address: String { walletManager.activeRecord?.primaryAddress ?? "" }
-    /// The same address works on every chain the app uses.
-    private var networkName: String { walletManager.isTestnet ? "Sepolia / Base Sepolia" : "Ethereum / Base" }
+    /// The network on screen (the same address works on every one).
+    private var networkName: String { walletManager.evmNetwork.name(testnet: walletManager.isTestnet) }
 
     /// EIP-681 payment request when an amount is asked, otherwise the address.
     private var qrText: String {
         guard let wei = UInt256(decimal: requestText, decimals: 18), !wei.isZero else { return address }
-        let chain = walletManager.isTestnet ? 11_155_111 : 1
+        let chain = walletManager.evmNetwork.chainId(testnet: walletManager.isTestnet)
         return "ethereum:\(address)@\(chain)?value=\(wei.description)"
     }
 
@@ -284,13 +284,16 @@ struct EthSendView: View {
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
-    /// What can be sent: ETH on each chain and every token held.
+    /// What can be sent: ETH and the tokens held on the network on screen.
     private var assets: [EVMAsset] {
-        let held = walletManager.evmAssets
-        if !held.isEmpty { return held }
-        // Not loaded yet: ETH on Ethereum with the balance on screen.
-        let wei = UInt256(walletManager.balanceSats).multiplied(by: WalletManager.weiPerGwei) ?? .zero
-        return [EVMAsset(chain: .ethereum, contract: nil, symbol: "ETH", name: "Ether", decimals: 18,
+        let held = walletManager.networkAssets
+        if !held.isEmpty {
+            let natives = held.filter { $0.isNative }
+            return natives + walletManager.orderedTokens(includeHidden: true)
+        }
+        // Not loaded yet: ETH with the balance on screen.
+        let wei = UInt256(walletManager.availableSats).multiplied(by: WalletManager.weiPerGwei) ?? .zero
+        return [EVMAsset(chain: walletManager.evmNetwork, contract: nil, symbol: "ETH", name: "Ether", decimals: 18,
                          balance: walletManager.isDollars ? .zero : wei, usdPrice: nil, iconURL: nil)]
     }
 
@@ -299,7 +302,7 @@ struct EthSendView: View {
         if let id = assetID, let match = assets.first(where: { $0.id == id }) { return match }
         if walletManager.isDollars,
            let biggest = assets.filter({ !$0.isNative }).max(by: { $0.balance < $1.balance }) { return biggest }
-        return assets.first { $0.isNative && $0.chain == .ethereum } ?? assets[0]
+        return assets.first { $0.isNative } ?? assets[0]
     }
 
     private var networkName: String { asset.chain.name(testnet: walletManager.isTestnet) }
@@ -786,23 +789,28 @@ struct EthSendView: View {
 
 // MARK: - Assets (ETH and tokens on Ethereum and Base)
 
-/// The logo of an asset: ETH, the dollars coin for USDC / USDT, the token's icon or
-/// its first letter; a small badge tells the chain.
+/// The logo of an asset: the real logo of ETH, USDC and USDT, the token's own icon
+/// (Blockscout, else Trust Wallet's list) or its first letter; a small badge with the
+/// network's logo (Base, or Ethereum for tokens).
 struct EVMAssetIcon: View {
+    @EnvironmentObject var walletManager: WalletManager
     let asset: EVMAsset
     var size: CGFloat = 40
 
     var body: some View {
         Group {
-            if asset.isNative {
-                CoinLogo(coin: .ethereum, size: size)
-            } else if asset.isStablecoin {
-                CoinLogo(coin: .dollars, size: size)
-            } else if let url = asset.iconURL {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    letter
+            if let name = asset.logoName {
+                Image(name)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+            } else if let url = asset.iconURL ?? asset.fallbackIconURL(testnet: walletManager.isTestnet) {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill()
+                    } else {
+                        letter
+                    }
                 }
                 .frame(width: size, height: size)
                 .clipShape(Circle())
@@ -811,15 +819,21 @@ struct EVMAssetIcon: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            if asset.chain == .base {
-                // Base: a small blue dot with a white ring.
-                Circle()
-                    .fill(Color(red: 0, green: 0.32, blue: 1))
-                    .frame(width: size * 0.36, height: size * 0.36)
+            if let badge {
+                Image(badge)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size * 0.38, height: size * 0.38)
+                    .background(Circle().fill(Color(uiColor: .systemBackground)))
                     .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: 1.5))
                     .offset(x: size * 0.06, y: size * 0.06)
             }
         }
+    }
+
+    private var badge: String? {
+        if asset.chain == .base { return asset.chain.logoName }
+        return asset.isNative ? nil : asset.chain.logoName
     }
 
     private var letter: some View {
@@ -831,72 +845,129 @@ struct EVMAssetIcon: View {
     }
 }
 
-/// Home screen of an Ethereum or dollars wallet: what it holds on each chain.
+/// Top of an Ethereum / dollars wallet: the network on screen. Tap (or shake the
+/// iPhone) for the next one.
+struct EVMNetworkPill: View {
+    @EnvironmentObject var walletManager: WalletManager
+
+    var body: some View {
+        Button {
+            EVMNetworkPill.switchNetwork(walletManager)
+        } label: {
+            HStack(spacing: 7) {
+                Image(walletManager.evmNetwork.logoName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 18, height: 18)
+                Text(walletManager.evmNetwork.name(testnet: walletManager.isTestnet))
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(Palette.secondary)
+            }
+            .id(walletManager.evmNetwork)
+            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            .foregroundColor(Color(uiColor: .label))
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(Capsule().fill(SettingsStyle.groupFill))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("Network"))
+    }
+
+    /// Next network, with a tap of the haptic engine.
+    static func switchNetwork(_ walletManager: WalletManager) {
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+            walletManager.switchEVMNetwork()
+        }
+    }
+}
+
+/// Home screen of an Ethereum or dollars wallet: what it holds on the network on screen.
 /// Dollars wallets list USDC / USDT and, apart, the ETH that pays the fees ("Gas").
 struct EVMAssetsCard: View {
     @EnvironmentObject var walletManager: WalletManager
     let onSend: (EVMAsset) -> Void
 
+    @State private var showNFTs = false
+    @State private var showManage = false
+
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
-    private var tokens: [EVMAsset] {
-        walletManager.evmAssets.filter { !$0.isNative }
-            .sorted { ($0.usdValue ?? 0) > ($1.usdValue ?? 0) }
-    }
-    private var natives: [EVMAsset] { walletManager.evmAssets.filter { $0.isNative } }
+    private var natives: [EVMAsset] { walletManager.networkAssets.filter { $0.isNative } }
+    private var networkName: String { walletManager.evmNetwork.name(testnet: walletManager.isTestnet) }
 
     var body: some View {
         VStack(spacing: 18) {
             if walletManager.isDollars {
-                section(t("Dollars", "Dólares"), tokens)
+                section(t("Dollars", "Dólares"),
+                        walletManager.networkAssets.filter { !$0.isNative }.sorted { ($0.usdValue ?? 0) > ($1.usdValue ?? 0) })
                 section(t("Gas (pays the fees)", "Gas (paga las comisiones)"), natives,
-                        footer: t("Each send costs a little ETH on its network. Receive ETH at this same address.",
-                                  "Cada envío cuesta un poco de ETH en su red. Recibe ETH en esta misma dirección."))
+                        footer: t("Each send costs a little ETH on \(networkName). Receive ETH at this same address.",
+                                  "Cada envío cuesta un poco de ETH en \(networkName). Recibe ETH en esta misma dirección."))
             } else {
                 section("ETH", natives)
-                if !tokens.isEmpty { section(t("Tokens", "Tokens"), tokens) }
-                nftRow
+                if walletManager.homeShowTokens { tokensSection }
+                if walletManager.homeShowNFTs { nftBlock }
             }
         }
         .sheet(isPresented: $showNFTs) {
             NFTGalleryView().environmentObject(walletManager)
         }
-    }
-
-    @State private var showNFTs = false
-
-    /// Opens the NFT gallery (Ethereum and Base).
-    private var nftRow: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showNFTs = true
-        } label: {
-            HStack(spacing: 14) {
-                Image(systemName: "photo.on.rectangle.angled")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(Color(uiColor: .label))
-                    .frame(width: 42, height: 42)
-                    .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("NFTs")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(uiColor: .label))
-                    Text("Ethereum · Base")
-                        .font(.system(size: 13))
-                        .foregroundColor(Palette.secondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Palette.tertiary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+        .sheet(isPresented: $showManage) {
+            ManageTokensView().environmentObject(walletManager)
         }
-        .buttonStyle(.plain)
     }
+
+    // MARK: Tokens
+
+    @ViewBuilder
+    private var tokensSection: some View {
+        let shown = walletManager.orderedTokens()
+        let all = walletManager.orderedTokens(includeHidden: true)
+        if !all.isEmpty {
+            VStack(spacing: 10) {
+                section(t("Tokens", "Tokens"), shown)
+                // Several tokens, or some hidden: choose which ones and their order.
+                if all.count > 1 || shown.count < all.count {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        showManage = true
+                    } label: {
+                        Label(t("Manage tokens", "Administrar tokens"), systemImage: "slider.horizontal.3")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(Color(uiColor: .label))
+                            .padding(.horizontal, 18)
+                            .frame(height: 38)
+                            .background(Capsule().fill(SettingsStyle.groupFill))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    // MARK: NFTs
+
+    private var nfts: [EVMNFT]? {
+        walletManager.homeNFTs?.filter { $0.chain == walletManager.evmNetwork }
+    }
+
+    private var nftBlock: some View {
+        CollectiblesStrip(title: "NFTs",
+                          items: (nfts ?? []).map { CollectibleThumb(id: $0.id, url: $0.imageURL, icon: "photo") },
+                          note: nfts == nil ? t("Loading…", "Cargando…")
+                              : (nfts?.isEmpty == true ? t("No NFTs on \(networkName) yet", "Aún no tienes NFTs en \(networkName)") : nil)) {
+            showNFTs = true
+        }
+        .task(id: walletManager.activeRecord?.primaryAddress) { await walletManager.loadHomeNFTs() }
+    }
+
+    // MARK: Rows
 
     @ViewBuilder
     private func section(_ title: String, _ items: [EVMAsset], footer: String? = nil) -> some View {
@@ -931,7 +1002,7 @@ struct EVMAssetsCard: View {
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
                         .lineLimit(1)
-                    Text(item.chain.name(testnet: walletManager.isTestnet))
+                    Text(item.isNative ? item.chain.name(testnet: walletManager.isTestnet) : item.name)
                         .font(.system(size: 13))
                         .foregroundColor(Palette.secondary)
                         .lineLimit(1)
@@ -957,5 +1028,158 @@ struct EVMAssetsCard: View {
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Manage tokens: which tokens of the network on screen the home shows, and in what
+/// order (drag the handles).
+struct ManageTokensView: View {
+    @EnvironmentObject var walletManager: WalletManager
+
+    private var lang: AppLanguage { walletManager.appLanguage }
+    private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+
+    var body: some View {
+        let tokens = walletManager.orderedTokens(includeHidden: true)
+        ZStack {
+            GlassAmbientBackground()
+            List {
+                Section {
+                    if tokens.isEmpty {
+                        Text(t("No tokens on this network yet.", "Aún no hay tokens en esta red."))
+                            .font(.system(size: 14))
+                            .foregroundColor(Palette.secondary)
+                            .listRowBackground(SettingsStyle.groupFill)
+                    }
+                    ForEach(tokens) { item in
+                        row(item)
+                            .listRowBackground(SettingsStyle.groupFill)
+                    }
+                    .onMove { source, destination in
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        walletManager.moveTokens(tokens, from: source, to: destination)
+                    }
+                } header: {
+                    HStack(spacing: 6) {
+                        Image(walletManager.evmNetwork.logoName)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 14, height: 14)
+                        Text(walletManager.evmNetwork.name(testnet: walletManager.isTestnet))
+                    }
+                } footer: {
+                    Text(t("Turn a token off to hide it from the home screen. Drag to change the order.",
+                           "Apaga un token para ocultarlo de la pantalla principal. Arrastra para cambiar el orden."))
+                }
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .environment(\.editMode, .constant(.active))
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SheetHeader(title: t("Manage tokens", "Administrar tokens"))
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func row(_ item: EVMAsset) -> some View {
+        HStack(spacing: 12) {
+            EVMAssetIcon(asset: item, size: 36)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.symbol)
+                    .font(.system(size: 15, weight: .semibold))
+                    .lineLimit(1)
+                Text(item.formatted() + (walletManager.fiatValue(of: item).map { " · " + $0 } ?? ""))
+                    .font(.system(size: 12))
+                    .foregroundColor(Palette.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Toggle("", isOn: Binding(
+                get: { !walletManager.hiddenTokens.contains(item.id) },
+                set: { walletManager.setToken(item, visible: $0) }))
+                .labelsHidden()
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// One picture of a home block (NFT or ordinal).
+struct CollectibleThumb: Identifiable {
+    let id: String
+    let url: URL?
+    /// Shown when there is no picture (text inscriptions…).
+    let icon: String
+}
+
+/// Home block with the first NFTs / ordinals; a tap opens the gallery.
+struct CollectiblesStrip: View {
+    let title: String
+    let items: [CollectibleThumb]
+    /// Shown instead of the pictures (loading, empty, mainnet only).
+    let note: String?
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onOpen()
+        } label: {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "photo.on.rectangle.angled")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(title)
+                        .font(.system(size: 16, weight: .semibold))
+                    if note == nil {
+                        Text("\(items.count)")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Palette.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Palette.tertiary)
+                }
+                .foregroundColor(Color(uiColor: .label))
+                if let note {
+                    Text(note)
+                        .font(.system(size: 13))
+                        .foregroundColor(Palette.secondary)
+                } else {
+                    HStack(spacing: 8) {
+                        ForEach(0..<4, id: \.self) { index in
+                            thumb(index < items.count ? items[index] : nil)
+                        }
+                    }
+                }
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func thumb(_ item: CollectibleThumb?) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        Group {
+            if let item, let url = item.url {
+                NFTImage(url: url)
+            } else if let item {
+                ZStack {
+                    Rectangle().fill(Color(uiColor: .systemBackground).opacity(0.6))
+                    Image(systemName: item.icon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(Palette.secondary)
+                }
+            } else {
+                Color.clear
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(1, contentMode: .fit)
+        .clipShape(shape)
     }
 }

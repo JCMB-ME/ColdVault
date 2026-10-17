@@ -60,6 +60,12 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// The network's logo in the asset catalog.
+    public var logoName: String { self == .base ? "BaseLogo" : "EthereumLogo" }
+
+    /// Folder of the chain in Trust Wallet's public token logos.
+    var logoFolder: String { self == .base ? "base" : "ethereum" }
+
     /// Room kept for Base's L1 data fee (charged on top of gas) when sending "everything".
     public var extraFeeReserve: UInt256 { self == .base ? UInt256(30_000_000_000_000) : .zero }   // 0.00003 ETH
 }
@@ -112,6 +118,23 @@ public struct EVMAsset: Identifiable, Equatable {
 
     public var isNative: Bool { contract == nil }
     public var isStablecoin: Bool { symbol == "USDC" || symbol == "USDT" }
+
+    /// Logo bundled with the app: ETH, USDC, USDT.
+    public var logoName: String? {
+        if isNative { return "EthereumLogo" }
+        switch symbol {
+        case "USDC": return "UsdcLogo"
+        case "USDT": return "UsdtLogo"
+        default: return nil
+        }
+    }
+
+    /// The token's real logo when Blockscout has none (Trust Wallet's public list, mainnet).
+    public func fallbackIconURL(testnet: Bool) -> URL? {
+        guard !testnet, let contract, let parsed = EthereumAddress.parse(contract) else { return nil }
+        let address = EthereumAddress.checksummed(parsed)
+        return URL(string: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/\(chain.logoFolder)/assets/\(address)/logo.png")
+    }
 
     /// Balance as a decimal number (display / fiat only).
     public var amount: Double { balance.doubleValue / pow(10, Double(decimals)) }

@@ -215,3 +215,36 @@ struct InscriptionDetailView: View {
         .padding(.vertical, 12)
     }
 }
+
+/// Home block of a bitcoin wallet with its first ordinals (Settings › Home screen).
+struct OrdinalsHomeCard: View {
+    @EnvironmentObject var walletManager: WalletManager
+    @State private var showOrdinals = false
+
+    private var lang: AppLanguage { walletManager.appLanguage }
+    private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+
+    private var note: String? {
+        if walletManager.isTestnet { return t("Mainnet only", "Solo en mainnet") }
+        guard let items = walletManager.homeInscriptions else { return t("Loading…", "Cargando…") }
+        return items.isEmpty ? t("No inscriptions yet", "Aún no tienes inscripciones") : nil
+    }
+
+    var body: some View {
+        CollectiblesStrip(title: "Ordinals",
+                          items: (walletManager.homeInscriptions ?? []).map {
+                              CollectibleThumb(id: $0.id, url: $0.isImage ? $0.contentURL : nil,
+                                               icon: $0.contentType.hasPrefix("text/") ? "doc.text" : "cube")
+                          },
+                          note: note) {
+            showOrdinals = true
+        }
+        .task(id: walletManager.activeRecord?.primaryAddress) {
+            guard !walletManager.isTestnet else { return }
+            await walletManager.loadHomeInscriptions()
+        }
+        .sheet(isPresented: $showOrdinals) {
+            OrdinalsView().environmentObject(walletManager)
+        }
+    }
+}

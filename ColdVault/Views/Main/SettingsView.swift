@@ -42,6 +42,8 @@ public struct SettingsView: View {
     @State private var showInheritance = false
     @State private var showDuress = false
     @State private var showOrdinals = false
+    @State private var showNFTs = false
+    @State private var showManageTokens = false
     @State private var showAddressList = false
     @ObservedObject private var lightning = LightningManager.shared
     @State private var showBreezKey = false
@@ -136,6 +138,28 @@ public struct SettingsView: View {
                     SettingsDivider(inset: 60)
                     SettingsRow(title: t("Calculator", "Calculadora"), icon: "plus.forwardslash.minus") {
                         Toggle("", isOn: $walletManager.homeShowCalculator).labelsHidden()
+                    }
+                    if walletManager.activeCoin == .ethereum {
+                        SettingsDivider(inset: 60)
+                        SettingsRow(title: "Tokens", icon: "circle.hexagongrid") {
+                            Toggle("", isOn: $walletManager.homeShowTokens.animation()).labelsHidden()
+                        }
+                        if walletManager.homeShowTokens {
+                            SettingsDivider(inset: 60)
+                            Button { showManageTokens = true } label: {
+                                SettingsRow(title: t("Manage tokens", "Administrar tokens"), chevron: true,
+                                            icon: "slider.horizontal.3")
+                            }
+                        }
+                        SettingsDivider(inset: 60)
+                        SettingsRow(title: "NFTs", icon: "photo.on.rectangle.angled") {
+                            Toggle("", isOn: $walletManager.homeShowNFTs).labelsHidden()
+                        }
+                    } else if walletManager.activeCoin == .bitcoin {
+                        SettingsDivider(inset: 60)
+                        SettingsRow(title: "Ordinals", icon: "photo.on.rectangle.angled") {
+                            Toggle("", isOn: $walletManager.homeShowOrdinals).labelsHidden()
+                        }
                     }
                     SettingsDivider(inset: 60)
                     SettingsRow(title: t("Account dots", "Puntos de cuentas"), icon: "ellipsis") {
@@ -236,10 +260,21 @@ public struct SettingsView: View {
                         Button { showOrdinals = true } label: {
                             SettingsRow(title: "Ordinals", chevron: true, icon: "photo.on.rectangle.angled")
                         }
+                    } else if !walletManager.isDollars {
+                        SettingsDivider(inset: 60)
+                        Button { showNFTs = true } label: {
+                            SettingsRow(title: "NFTs", chevron: true, icon: "photo.on.rectangle.angled")
+                        }
                     }
                 }
                 .sheet(isPresented: $showOrdinals) {
                     OrdinalsView().environmentObject(walletManager)
+                }
+                .sheet(isPresented: $showNFTs) {
+                    NFTGalleryView().environmentObject(walletManager)
+                }
+                .sheet(isPresented: $showManageTokens) {
+                    ManageTokensView().environmentObject(walletManager)
                 }
                 .sheet(isPresented: $showSignPSBT) {
                     SignPSBTView().environmentObject(walletManager)

@@ -17,6 +17,8 @@ struct WalletsView: View {
     @EnvironmentObject var walletManager: WalletManager
     /// Called after an account is chosen (the dashboard slides back to the balance).
     let onSelect: () -> Void
+    /// A finger is on the coin switch (the dashboard stops paging meanwhile).
+    var onSwitchDrag: (Bool) -> Void = { _ in }
 
     @State private var showAddWallet = false
     @State private var showCreate = false
@@ -31,6 +33,9 @@ struct WalletsView: View {
     @State private var draggingSlot: String?
     /// Which coin's wallets are listed (bitcoin and Ethereum are never mixed).
     @State private var coin: CoinKind = .bitcoin
+    /// Coin switch: the finger's offset and the direction of the last change.
+    @State private var switchOffset: CGFloat = 0
+    @State private var switchForward = true
     @State private var showLightning = false
     @State private var deleteAccountTarget: AccountTarget?
 
@@ -268,31 +273,82 @@ struct WalletsView: View {
     private var watchWallets: [LibraryWallet] { coinWallets.filter { isWatchOnly($0) } }
     private var testnetName: String { coin.isEVM ? "Sepolia" : "Testnet4" }
 
-    /// Bitcoin | Ethereum.
+    /// One coin at a time (Bitcoin, Ethereum, Dollars): swipe sideways for the next or
+    /// previous one, or tap for the next. Dots tell where you are.
     private var coinSwitch: some View {
-        HStack(spacing: 4) {
-            ForEach(CoinKind.allCases) { item in
-                Button {
-                    guard coin != item else { return }
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { coin = item }
-                } label: {
-                    HStack(spacing: 7) {
-                        CoinLogo(coin: item, size: 18)
-                        Text(item.title(lang))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .font(.system(size: 14, weight: coin == item ? .semibold : .regular))
-                    }
-                    .foregroundColor(coin == item ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
-                    .frame(maxWidth: .infinity, minHeight: 40)
-                    .background(Capsule().fill(coin == item ? Color(uiColor: .label) : Color.clear))
+        let all = CoinKind.allCases
+        return VStack(spacing: 8) {
+            ZStack {
+                HStack(spacing: 7) {
+                    CoinLogo(coin: coin, size: 20)
+                    Text(coin.title(lang))
+                        .font(.system(size: 15, weight: .semibold))
+                        .lineLimit(1)
                 }
-                .buttonStyle(.plain)
+                .id(coin)
+                .transition(.asymmetric(
+                    insertion: .move(edge: switchForward ? .trailing : .leading).combined(with: .opacity),
+                    removal: .move(edge: switchForward ? .leading : .trailing).combined(with: .opacity)))
+                .offset(x: switchOffset)
+
+                HStack {
+                    Image(systemName: "chevron.left")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                }
+                .font(.system(size: 12, weight: .bold))
+                .opacity(0.35)
+                .padding(.horizontal, 16)
             }
+            .foregroundColor(Color(uiColor: .systemBackground))
+            .frame(maxWidth: .infinity, minHeight: 40)
+            .background(Capsule().fill(Color(uiColor: .label)))
+            .clipShape(Capsule())
+            .padding(4)
+            .background(Capsule().fill(SettingsStyle.groupFill))
+            .contentShape(Capsule())
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        onSwitchDrag(true)
+                        switchOffset = gesture.translation.width * 0.35
+                    }
+                    .onEnded { gesture in
+                        onSwitchDrag(false)
+                        let dx = gesture.translation.width
+                        if abs(dx) < 10 && abs(gesture.translation.height) < 10 {
+                            stepCoin(1)
+                        } else if abs(dx) > 30 {
+                            stepCoin(dx < 0 ? 1 : -1)
+                        } else {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { switchOffset = 0 }
+                        }
+                    }
+            )
+
+            HStack(spacing: 5) {
+                ForEach(all) { item in
+                    Capsule()
+                        .fill(item == coin ? Color(uiColor: .label) : Color.gray.opacity(0.35))
+                        .frame(width: item == coin ? 16 : 5, height: 4)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: coin)
         }
-        .padding(4)
-        .background(Capsule().fill(SettingsStyle.groupFill))
+    }
+
+    /// Next (1) or previous (-1) coin, going round.
+    private func stepCoin(_ step: Int) {
+        let all = CoinKind.allCases
+        guard let index = all.firstIndex(of: coin) else { return }
+        let next = all[(index + step + all.count) % all.count]
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        switchForward = step > 0
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            switchOffset = 0
+            coin = next
+        }
     }
 
     // MARK: - Folding cards

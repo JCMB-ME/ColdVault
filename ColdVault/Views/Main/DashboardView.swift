@@ -113,6 +113,11 @@ public struct DashboardView: View {
             }
         }
         .onAppear { showBalancePage() }
+        // Ethereum / dollars: shaking the iPhone on the balance switches network.
+        .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
+            guard walletManager.isEthereum, onBalancePage, !anySheetOpen else { return }
+            EVMNetworkPill.switchNetwork(walletManager)
+        }
         .onChange(of: scenePhase) { phase in
             if phase == .background {
                 wasInBackground = true
@@ -150,6 +155,15 @@ public struct DashboardView: View {
         }
     }
 
+    private var onBalancePage: Bool {
+        if #available(iOS 17.0, *) { return pageID == 1 }
+        return page == 1
+    }
+
+    private var anySheetOpen: Bool {
+        showReceiveSheet || showSendSheet || showHistory || sendRecipient != nil || sendAsset != nil
+    }
+
     /// The balance is always the first screen when the app opens.
     private func showBalancePage() {
         var instant = SwiftUI.Transaction()
@@ -168,6 +182,9 @@ public struct DashboardView: View {
                 pageID = 1
                 page = 1
             }
+        }, onSwitchDrag: { dragging in
+            // Swiping the coin switch never moves the pages.
+            isPillDragging = dragging
         })
         .environmentObject(walletManager)
     }
@@ -179,6 +196,13 @@ public struct DashboardView: View {
 
     private var balancePage: some View {
         VStack(spacing: 0) {
+            // Ethereum / dollars: the network on screen (tap or shake for the next one).
+            if walletManager.isEthereum {
+                EVMNetworkPill()
+                    .environmentObject(walletManager)
+                    .padding(.top, 10)
+            }
+
             // Badges sit above the scroll view, so the pull-to-refresh spinner appears
             // below them instead of on top of "Watch-only".
             statusBadges
@@ -452,6 +476,11 @@ public struct DashboardView: View {
                 .environmentObject(walletManager)
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
+            } else if walletManager.homeShowOrdinals {
+                OrdinalsHomeCard()
+                    .environmentObject(walletManager)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
             }
 
             HomeExtrasView(onSendToContact: { contact in
@@ -555,7 +584,7 @@ public struct DashboardView: View {
                         badge(icon: "eye", text: L10n.watchOnlyBadge(lang))
                     }
                     if walletManager.isTestnet {
-                        badge(icon: "testtube.2", text: walletManager.isEthereum ? "SEPOLIA" : "TESTNET4")
+                        badge(icon: "testtube.2", text: walletManager.isEthereum ? "TESTNET" : "TESTNET4")
                     }
                 }
             }
@@ -672,14 +701,14 @@ struct HomeExtrasView: View {
     @ViewBuilder
     private var transactions: some View {
         VStack(spacing: 10) {
-            if walletManager.transactions.isEmpty {
+            if walletManager.visibleTransactions.isEmpty {
                 note(walletManager.isLoadingTransactions ? t("Loading…", "Cargando…")
                                                          : t("No transactions yet", "Aún no hay transacciones"))
             } else {
-                ForEach(walletManager.transactions.prefix(transactionLimit)) { tx in
+                ForEach(walletManager.visibleTransactions.prefix(transactionLimit)) { tx in
                     TransactionCard(transaction: tx)
                 }
-                if walletManager.transactions.count > transactionLimit {
+                if walletManager.visibleTransactions.count > transactionLimit {
                     Button(action: onShowHistory) {
                         Text(t("See all", "Ver todas"))
                             .font(.system(size: 14, weight: .semibold))
@@ -829,7 +858,7 @@ struct TransactionHistoryView: View {
             GlassAmbientBackground()
             ScrollView(showsIndicators: false) {
                 LazyVStack(spacing: 10) {
-                    ForEach(walletManager.transactions) { tx in
+                    ForEach(walletManager.visibleTransactions) { tx in
                         TransactionCard(transaction: tx)
                     }
                 }
