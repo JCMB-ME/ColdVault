@@ -401,6 +401,17 @@ public struct CreateWalletView: View {
                                      enabled: allWordsMatch) {
                     verifyAndCommit()
                 }
+                // The words can be checked later in Settings › Backup.
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    verifyAndCommit(checkWords: false)
+                } label: {
+                    Text(t("Continue without typing the words", "Continuar sin escribir las palabras"))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                }
+                .buttonStyle(.plain)
+                .disabled(isCreating)
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     errorMessage = nil
@@ -511,8 +522,8 @@ public struct CreateWalletView: View {
         withAnimation(CreateWalletView.stepAnimation) { isVerifying = true }
     }
 
-    private func verifyAndCommit() {
-        guard allWordsMatch else {
+    private func verifyAndCommit(checkWords: Bool = true) {
+        guard allWordsMatch || !checkWords else {
             errorMessage = t("The words don't match. Check your paper backup.",
                              "Las palabras no coinciden. Revisa tu respaldo en papel.")
             UINotificationFeedbackGenerator().notificationOccurred(.error)

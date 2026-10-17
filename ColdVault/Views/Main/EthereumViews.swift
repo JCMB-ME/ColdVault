@@ -1072,8 +1072,11 @@ struct EVMAssetsCard: View {
             if walletManager.activeAddress == nil {
                 NetworkUnavailableCard()
             } else if walletManager.isDollars {
-                section("Stable",
-                        walletManager.networkAssets.filter { !$0.isNative }.sorted { ($0.usdValue ?? 0) > ($1.usdValue ?? 0) })
+                // Stable: its coins in the order chosen, hidden ones left out (Manage tokens).
+                VStack(spacing: 10) {
+                    section("Stable", walletManager.orderedTokens())
+                    manageButton
+                }
                 section(t("Gas (pays the fees)", "Gas (paga las comisiones)"), natives,
                         footer: t("Each send costs a little \(network.nativeSymbol) on \(networkName). Receive it at this same address.",
                                   "Cada envío cuesta un poco de \(network.nativeSymbol) en \(networkName). Recíbelo en esta misma dirección."))
@@ -1102,19 +1105,23 @@ struct EVMAssetsCard: View {
         VStack(spacing: 10) {
             section(t("Tokens", "Tokens"), shown)
             // Always here: choose which tokens show and in what order.
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                showManage = true
-            } label: {
-                Label(t("Manage tokens", "Administrar tokens"), systemImage: "slider.horizontal.3")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(Color(uiColor: .label))
-                    .padding(.horizontal, 18)
-                    .frame(height: 38)
-                    .background(Capsule().fill(SettingsStyle.groupFill))
-            }
-            .buttonStyle(.plain)
+            manageButton
         }
+    }
+
+    private var manageButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showManage = true
+        } label: {
+            Label(t("Manage tokens", "Administrar tokens"), systemImage: "slider.horizontal.3")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(Color(uiColor: .label))
+                .padding(.horizontal, 18)
+                .frame(height: 38)
+                .background(Capsule().fill(SettingsStyle.groupFill))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: NFTs

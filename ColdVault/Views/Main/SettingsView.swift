@@ -157,6 +157,12 @@ public struct SettingsView: View {
                                 Toggle("", isOn: $walletManager.homeShowNFTs).labelsHidden()
                             }
                         }
+                    } else if walletManager.isDollars {
+                        SettingsDivider(inset: 60)
+                        Button { showManageTokens = true } label: {
+                            SettingsRow(title: t("Manage tokens", "Administrar tokens"), chevron: true,
+                                        icon: "slider.horizontal.3")
+                        }
                     } else if walletManager.activeCoin == .bitcoin {
                         SettingsDivider(inset: 60)
                         SettingsRow(title: "Ordinals", icon: "photo.on.rectangle.angled") {
@@ -1003,6 +1009,10 @@ struct BackupDetailView: View {
     @State private var showDescriptors = false
     @State private var copied = false
     @State private var errorMessage: String?
+    /// Private keys on screen (hidden like the phrase).
+    @State private var keys: [ExportedKey] = []
+    @State private var isLoadingKeys = false
+    @State private var copiedKey: String?
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -1051,6 +1061,10 @@ struct BackupDetailView: View {
                             .transition(.opacity)
                     }
 
+                    if type != .watchOnly {
+                        privateKeysSection
+                    }
+
                     if isPhraseWallet && wallet?.bundle.accounts.first?.record.coinKind == .bitcoin {
                         SettingsSection(header: t("Watch-only", "Observación"),
                                         footer: t("Public keys only: lets another device see your balance and prepare transactions, never spend.",
@@ -1086,15 +1100,16 @@ struct BackupDetailView: View {
         // page closes, and after two minutes.
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
             secret = nil
+            keys = []
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.userDidTakeScreenshotNotification)) { _ in
-            guard secret != nil, type != .watchOnly else { return }
-            withAnimation { secret = nil }
+            guard secret != nil || !keys.isEmpty, type != .watchOnly else { return }
+            withAnimation { secret = nil; keys = [] }
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             errorMessage = t("A screenshot was taken while your phrase was visible. Delete it from Photos (and from Recently Deleted), and from iCloud if it synced.",
                              "Se tomó una captura con tu frase visible. Bórrala de Fotos (y de \"Eliminados\"), y de iCloud si se sincronizó.")
         }
-        .onDisappear { secret = nil }
+        .onDisappear { secret = nil; keys = [] }
     }
 
     private func subtitle(_ wallet: LibraryWallet) -> String {
@@ -1167,7 +1182,125 @@ struct BackupDetailView: View {
                 }
             }
 
-            hideButton
+            HStack(spacing: 10) {
+                copyButton(parts.passphrase.map { parts.text + "\n\nPassphrase: " + $0 } ?? parts.text)
+                hideButton
+            }
+        }
+    }
+
+    /// Copies a secret; the clipboard is cleared after two minutes and stays on this iPhone.
+    private func copyButton(_ text: String) -> some View {
+        Button {
+            SecurePasteboard.copy(text, expiresIn: 120)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            copied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
+        } label: {
+            Label(copied ? L10n.copied(lang) : L10n.copy(lang), systemImage: copied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(Color(uiColor: .systemBackground))
+                .frame(maxWidth: .infinity)
+                .frame(height: 50)
+                .background(Capsule().fill(Color(uiColor: .label)))
+        }
+    }
+
+    // MARK: Private keys
+
+    @ViewBuilder
+    private var privateKeysSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(t("PRIVATE KEYS", "CLAVES PRIVADAS"))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(Palette.secondary)
+                .padding(.leading, 6)
+            if keys.isEmpty {
+                Text(t("The key of each account, to import it into another wallet. Whoever has it controls the funds of that account.",
+                       "La clave de cada cuenta, para importarla en otra billetera. Quien la tenga controla los fondos de esa cuenta."))
+                    .font(.system(size: 13))
+                    .foregroundColor(Palette.secondary)
+                    .padding(.horizontal, 6)
+                Button(action: loadKeys) {
+                    Group {
+                        if isLoadingKeys { ProgressView() } else {
+                            Label(t("Show private keys", "Ver claves privadas"), systemImage: "key.horizontal")
+                        }
+                    }
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(Capsule().fill(SettingsStyle.groupFill))
+                }
+                .disabled(isLoadingKeys)
+            } else {
+                ForEach(keys) { item in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.title)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(Color(uiColor: .label))
+                                Text(item.detail)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(Palette.secondary)
+                            }
+                            Spacer()
+                            Button {
+                                SecurePasteboard.copy(item.key, expiresIn: 120)
+                                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                                copiedKey = item.id
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { if copiedKey == item.id { copiedKey = nil } }
+                            } label: {
+                                Image(systemName: copiedKey == item.id ? "checkmark" : "doc.on.doc")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(Color(uiColor: .label))
+                                    .frame(width: 38, height: 38)
+                                    .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+                            }
+                        }
+                        Text(item.key)
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundColor(Color(uiColor: .label))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .concealWhenCaptured()
+                    }
+                    .padding(14)
+                    .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(SettingsStyle.groupFill))
+                }
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.easeOut(duration: 0.25)) { keys = [] }
+                } label: {
+                    Label(t("Hide", "Ocultar"), systemImage: "eye.slash")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(Capsule().fill(SettingsStyle.groupFill))
+                }
+            }
+        }
+    }
+
+    private func loadKeys() {
+        isLoadingKeys = true
+        errorMessage = nil
+        Task {
+            do {
+                let list = try await walletManager.exportPrivateKeys(slot: slot)
+                revealCount += 1
+                withAnimation(.easeOut(duration: 0.25)) { keys = list }
+                let shown = revealCount
+                DispatchQueue.main.asyncAfter(deadline: .now() + 120) {
+                    guard revealCount == shown else { return }
+                    withAnimation(.easeOut(duration: 0.25)) { keys = [] }
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isLoadingKeys = false
         }
     }
 

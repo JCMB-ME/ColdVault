@@ -162,3 +162,11 @@ public enum AppTheme: String, CaseIterable, Identifiable {
     
     public var id: String { rawValue }
 }
+
+/// One private key shown in Backup (title, derivation path / format, the key).
+public struct ExportedKey: Identifiable, Sendable {
+    public var id: String { title + detail }
+    public let title: String
+    public let detail: String
+    public let key: String
+}

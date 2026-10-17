@@ -413,6 +413,73 @@ extension WalletManager {
                                     : "Confirma tu identidad para ver tu frase semilla o clave privada").displayText
     }
 
+    /// The private keys of every account of a wallet (Face ID): bitcoin in WIF (the first
+    /// receive address of SegWit and Taproot, the fixed-address keys), the 0x / Tron keys in
+    /// hex, TON's Ed25519 key in hex.
+    public func exportPrivateKeys(slot: String) async throws -> [ExportedKey] {
+        guard let wallet = library.first(where: { $0.slot == slot }),
+              let first = wallet.bundle.accounts.first?.record, first.type != .watchOnly else {
+            throw WalletError.unsupportedForWatchOnly
+        }
+        let secret = try await loadSecret(slot: slot, reason: appLanguage == .english
+                                          ? "Confirm to show the private keys"
+                                          : "Confirma tu identidad para ver las claves privadas")
+        let accounts = wallet.bundle.accounts.map { (name: $0.name, number: $0.number, testnet: $0.record.isTestnet) }
+        let coin = first.coinKind
+        return try await Task.detached(priority: .userInitiated) {
+            try WalletManager.privateKeys(secret: secret, accounts: accounts, coin: coin)
+        }.value
+    }
+
+    nonisolated static func privateKeys(secret: WalletSecret, accounts: [(name: String, number: UInt32, testnet: Bool)],
+                                        coin: CoinKind) throws -> [ExportedKey] {
+        var result = [ExportedKey]()
+        for account in accounts {
+            switch coin {
+            case .bitcoin:
+                let keyring = try WalletKeyring.from(secret: secret, isTestnet: account.testnet, account: account.number)
+                let coinType = account.testnet ? 1 : 0
+                for key in keyring.keys {
+                    let (label, purpose): (String, Int)
+                    switch key.type {
+                    case .p2wpkh: (label, purpose) = ("SegWit", 84)
+                    case .p2tr: (label, purpose) = ("Taproot", 86)
+                    default: continue
+                    }
+                    let compressed = key.publicKey.count == 33
+                    result.append(ExportedKey(title: "\(account.name) · \(label)",
+                                              detail: secret.mnemonic == nil ? "WIF" : "m/\(purpose)'/\(coinType)'/\(account.number)'/0/0 · WIF",
+                                              key: WalletDerivation.wif(privateKey: key.privateKey, isCompressed: compressed,
+                                                                        isTestnet: account.testnet)))
+                }
+            case .ethereum, .polygon:
+                let key = try ethereumKey(secret: secret, account: account.number)
+                result.append(ExportedKey(title: "\(account.name) · \(coin.title(.english))",
+                                          detail: EthereumKeys.path(index: account.number), key: "0x" + key.hexEncodedString))
+            case .tron:
+                let key = try tronKey(secret: secret, account: account.number)
+                result.append(ExportedKey(title: "\(account.name) · Tron", detail: TronKeys.path(index: account.number),
+                                          key: key.hexEncodedString))
+            case .ton:
+                let key = try tonKey(secret: secret, account: account.number)
+                result.append(ExportedKey(title: "\(account.name) · TON", detail: TonKeys.path(index: account.number) + " · Ed25519",
+                                          key: key.hexEncodedString))
+            case .dollars:
+                let evm = try ethereumKey(secret: secret, account: account.number)
+                result.append(ExportedKey(title: "\(account.name) · Ethereum / Base / Polygon",
+                                          detail: EthereumKeys.path(index: account.number), key: "0x" + evm.hexEncodedString))
+                let tron = try tronKey(secret: secret, account: account.number)
+                result.append(ExportedKey(title: "\(account.name) · Tron", detail: TronKeys.path(index: account.number),
+                                          key: tron.hexEncodedString))
+                if let ton = try? tonKey(secret: secret, account: account.number) {
+                    result.append(ExportedKey(title: "\(account.name) · TON", detail: TonKeys.path(index: account.number) + " · Ed25519",
+                                              key: ton.hexEncodedString))
+                }
+            }
+        }
+        return result
+    }
+
     /// Account descriptors (xpub) of the selected account of any seed-phrase wallet.
     public func exportDescriptors(slot: String) async throws -> [WalletKeyring.AccountDescriptor] {
         guard let record = library.first(where: { $0.slot == slot })?.bundle.current?.record else {

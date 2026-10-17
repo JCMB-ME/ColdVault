@@ -13,7 +13,7 @@
 
 import Foundation
 
-public struct Inscription: Identifiable, Equatable {
+public struct Inscription: Identifiable, Equatable, Sendable {
     public let id: String                 // "<txid>i<index>"
     public let number: Int?
     public let contentType: String
@@ -23,7 +23,8 @@ public struct Inscription: Identifiable, Equatable {
 
     public var contentURL: URL? { URL(string: "\(OrdinalsService.base)/content/\(id)") }
     public var pageURL: URL? { URL(string: "\(OrdinalsService.base)/inscription/\(id)") }
-    public var isImage: Bool { contentType.hasPrefix("image/") }
+    /// Images, and inscriptions whose type did not load (their content is tried as a picture).
+    public var isImage: Bool { contentType.isEmpty || contentType.hasPrefix("image/") }
 }
 
 public enum OrdinalsService {
@@ -83,20 +84,41 @@ public enum OrdinalsService {
 
 extension WalletManager {
 
-    /// The inscriptions on this wallet's addresses (mainnet bitcoin wallets).
+    /// The inscriptions on this wallet's addresses (mainnet bitcoin wallets): every one
+    /// ordinals.com lists, with its details when they load (a few at a time, retried);
+    /// one whose details do not come is still shown, from its id.
     public func loadInscriptions() async throws -> [Inscription] {
         guard let record = activeRecord, record.coinKind == .bitcoin, !record.isTestnet else { return [] }
         if usesAddressRotation && fundedAddresses.isEmpty { await refreshBalance() }
-        let addresses = usesAddressRotation ? fundedAddresses.map { $0.address } : staticAddresses
+        var addresses = usesAddressRotation ? fundedAddresses.map { $0.address } : staticAddresses
+        addresses += [record.taprootAddress, record.primaryAddress].filter { !$0.isEmpty }
         var ids = [String]()
+        var answered = false
         for address in Set(addresses) {
-            ids += try await OrdinalsService.inscriptionIDs(address: address)
+            if let found = try? await OrdinalsService.inscriptionIDs(address: address) {
+                answered = true
+                ids += found
+            }
         }
+        guard answered else { throw BlockchainError.invalidResponse }
+        let unique = Array(Set(ids)).sorted()
         var result = [Inscription]()
-        for id in Array(Set(ids)).sorted().prefix(60) {
-            if let item = try? await OrdinalsService.inscription(id: id) { result.append(item) }
+        for start in stride(from: 0, to: unique.count, by: 6) {
+            let batch = unique[start..<min(start + 6, unique.count)]
+            await withTaskGroup(of: Inscription.self) { group in
+                for id in batch {
+                    group.addTask {
+                        for attempt in 0..<3 {
+                            if let item = try? await OrdinalsService.inscription(id: id) { return item }
+                            try? await Task.sleep(nanoseconds: UInt64(400_000_000 * (attempt + 1)))
+                        }
+                        return Inscription(id: id, number: nil, contentType: "", output: nil, value: nil)
+                    }
+                }
+                for await item in group { result.append(item) }
+            }
         }
-        return result.sorted { ($0.number ?? 0) > ($1.number ?? 0) }
+        return result.sorted { ($0.number ?? Int.max) > ($1.number ?? Int.max) }
     }
 
     /// Drops small coins that carry (or might carry) an inscription or a rune.
