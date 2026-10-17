@@ -307,7 +307,18 @@ extension WalletManager {
         let slot = activeSlot
         let deletedAccounts = activeWallet?.bundle.accounts.map { $0.record } ?? []
         SecureKeyStore.shared.slot = slot
-        SecureKeyStore.shared.delete()
+        // If the secret cannot be removed, the wallet stays listed: it must not come back after a restart.
+        guard SecureKeyStore.shared.delete() else {
+            balanceError = appLanguage == .english
+                ? "Could not remove the wallet from the Keychain. Nothing was deleted."
+                : "No se pudo quitar la billetera del Keychain. No se borró nada."
+            return
+        }
+        // Its own addresses leave the address book, its notes and its Lightning node go with it.
+        let ownAddresses = Set(deletedAccounts.flatMap { [$0.primaryAddress, $0.taprootAddress] })
+        forgetContacts(matching: ownAddresses)
+        purgeLabels(for: transactions.map { $0.txid })
+        Task { await LightningManager.shared.forget(slot: slot) }
         library.removeAll { $0.slot == slot }
         setWalletImage(slot: slot, data: nil)
         balanceSats = 0

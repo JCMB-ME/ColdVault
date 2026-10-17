@@ -152,13 +152,20 @@ final class NFTImageLoader {
     private var running = 0
     private var waiting: [CheckedContinuation<Void, Never>] = []
     private let lock = NSLock()
-    private let session: URLSession = {
-        let config = URLSessionConfiguration.default
+    private var sessionCache: (tor: Bool, session: URLSession)?
+    /// Rebuilt when Tor is switched on or off, so the proxy is always the current setting. No disk
+    /// cache: the pictures looked at are not recorded on the phone.
+    private var session: URLSession {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = sessionCache, cached.tor == TorProxy.isEnabled { return cached.session }
+        let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 20
-        config.requestCachePolicy = .returnCacheDataElseLoad
-        config.urlCache = URLCache(memoryCapacity: 20_000_000, diskCapacity: 150_000_000)
-        return URLSession(configuration: config)
-    }()
+        TorProxy.apply(to: config)
+        let built = URLSession(configuration: config)
+        sessionCache = (TorProxy.isEnabled, built)
+        return built
+    }
 
     static let gateways = ["https://ipfs.filebase.io/ipfs/", "https://gateway.pinata.cloud/ipfs/",
                            "https://ipfs.io/ipfs/", "https://dweb.link/ipfs/"]

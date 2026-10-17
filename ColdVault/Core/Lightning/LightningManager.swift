@@ -78,6 +78,16 @@ final class LightningManager: ObservableObject {
         try? folder.setResourceValues(values)
     }
 
+    /// The wallet is deleted: its node stops and its channel data leaves this iPhone.
+    func forget(slot: String) async {
+        if runningSlot == slot { await stop() }
+        guard let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        for kind in LightningEngineKind.allCases {
+            let storage = folder.appendingPathComponent("lightning/\(kind.rawValue)/\(slot)", isDirectory: true)
+            try? FileManager.default.removeItem(at: storage)
+        }
+    }
+
     func stop() async {
         await engine?.stop()
         engine = nil

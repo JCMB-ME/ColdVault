@@ -924,15 +924,25 @@ extension WalletManager {
         let symbols = Set(activeCoin.networks.map { $0.nativeSymbol }).subtracting(["ETH"])
         guard !symbols.isEmpty else { return }
         let pairs = symbols.sorted().map { "\($0)USD" }.joined(separator: ",")
-        guard let url = URL(string: "https://api.kraken.com/0/public/Ticker?pair=\(pairs)"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let result = object["result"] as? [String: Any] else { return }
+        guard let result = await fetchKrakenTickers(pairs) else { return }
         for symbol in symbols {
             guard let ticker = result.first(where: { $0.key.hasPrefix(symbol) })?.value as? [String: Any],
                   let text = (ticker["c"] as? [Any])?.first as? String, let price = Double(text), price > 0 else { continue }
             coinUsdPrices[symbol] = price
         }
+    }
+
+    /// Kraken tickers for the other native coins. Through Tor when it is on, like every other connection.
+    private func fetchKrakenTickers(_ pairs: String) async -> [String: Any]? {
+        guard let url = URL(string: "https://api.kraken.com/0/public/Ticker?pair=\(pairs)") else { return nil }
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 15
+        TorProxy.apply(to: config)
+        let session = URLSession(configuration: config)
+        defer { session.finishTasksAndInvalidate() }
+        guard let (data, _) = try? await session.data(from: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return object["result"] as? [String: Any]
     }
 
     /// An asset's value in the chosen currency.

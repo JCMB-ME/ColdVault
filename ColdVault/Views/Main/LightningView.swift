@@ -126,6 +126,8 @@ struct LightningView: View {
                                                                      "El estado de los canales vive en este iPhone: mantén la app y no la borres con fondos dentro."))
                     TipRow(icon: "icloud.slash", text: t("Channels are not restored from an iPhone backup. Close them or move the funds before you change phones.",
                                                          "Los canales no se restauran desde una copia del iPhone. Ciérralos o mueve los fondos antes de cambiar de teléfono."))
+                    TipRow(icon: "network", text: t("Your node reads the chain from blockstream.info (Esplora) and the routing graph from LDK's RGS server. If those servers lie, a channel can close wrongly.",
+                                                    "Tu nodo lee la cadena de blockstream.info (Esplora) y el grafo de rutas del servidor RGS de LDK. Si esos servidores mienten, un canal puede cerrarse mal."))
                 }
                 TipRow(icon: "switch.2", text: t("Change the engine in Settings › Lightning.", "Cambia el motor en Ajustes › Lightning."))
             }

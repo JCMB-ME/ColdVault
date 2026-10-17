@@ -390,6 +390,14 @@ extension WalletManager {
         try? data.write(to: url, options: [.atomic, .completeFileProtection])
     }
 
+    /// Deleting a wallet also drops the notes of its transactions.
+    func purgeLabels(for txids: [String]) {
+        guard !txids.isEmpty else { return }
+        for txid in txids { transactionLabels.removeValue(forKey: txid) }
+        guard let url = WalletManager.labelsURL, let data = try? JSONEncoder().encode(transactionLabels) else { return }
+        try? data.write(to: url, options: [.atomic, .completeFileProtection])
+    }
+
     /// BIP-329 (JSON Lines): one {"type":"tx","ref":txid,"label":…} per labelled transaction.
     public func labelsBIP329() -> String {
         transactionLabels.keys.sorted().compactMap { txid -> String? in

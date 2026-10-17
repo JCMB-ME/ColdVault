@@ -546,6 +546,14 @@ extension WalletManager {
         try data.write(to: url, options: [.atomic, .completeFileProtection])
     }
 
+    /// Deleting a wallet takes its own addresses out of the address book; other contacts stay.
+    func forgetContacts(matching addresses: Set<String>) {
+        let before = contacts.count
+        contacts.removeAll { addresses.contains($0.address) }
+        guard contacts.count != before else { return }
+        try? saveContacts()
+    }
+
     /// Adds or updates a contact after validating the address (checksum and type).
     public func saveContact(_ contact: Contact) throws {
         let name = contact.name.trimmingCharacters(in: .whitespacesAndNewlines)
