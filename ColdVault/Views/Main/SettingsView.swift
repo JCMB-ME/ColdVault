@@ -41,6 +41,7 @@ public struct SettingsView: View {
     @State private var showSignPSBT = false
     @State private var showInheritance = false
     @State private var showDuress = false
+    @State private var showOrdinals = false
     @State private var showAddressList = false
     @ObservedObject private var lightning = LightningManager.shared
     @State private var showBreezKey = false
@@ -230,6 +231,15 @@ public struct SettingsView: View {
                     Button { showInheritance = true } label: {
                         SettingsRow(title: t("Inheritance", "Herencia"), chevron: true, icon: "person.2.wave.2")
                     }
+                    if !walletManager.isEthereum {
+                        SettingsDivider(inset: 60)
+                        Button { showOrdinals = true } label: {
+                            SettingsRow(title: "Ordinals", chevron: true, icon: "photo.on.rectangle.angled")
+                        }
+                    }
+                }
+                .sheet(isPresented: $showOrdinals) {
+                    OrdinalsView().environmentObject(walletManager)
                 }
                 .sheet(isPresented: $showSignPSBT) {
                     SignPSBTView().environmentObject(walletManager)

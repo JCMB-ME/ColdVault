@@ -738,7 +738,9 @@ public final class WalletManager: ObservableObject {
                                   scriptPubKey: tracked.scriptPubKey, confirmed: $0.status?.confirmed ?? false)
                 }
             }
-            return try await verifiedCoins(coins, isTestnet: record.isTestnet)
+            // Small coins carrying an ordinal or a rune are never spent.
+            let verified = try await verifiedCoins(coins, isTestnet: record.isTestnet)
+            return await withoutInscriptions(verified, isTestnet: record.isTestnet)
         }
         for address in staticAddresses {
             guard let decoded = BitcoinAddress.decode(address), decoded.isTestnet == record.isTestnet else {
@@ -751,7 +753,8 @@ public final class WalletManager: ObservableObject {
                               scriptPubKey: decoded.scriptPubKey, confirmed: $0.status?.confirmed ?? false)
             }
         }
-        return try await verifiedCoins(coins, isTestnet: record.isTestnet)
+        let verified = try await verifiedCoins(coins, isTestnet: record.isTestnet)
+        return await withoutInscriptions(verified, isTestnet: record.isTestnet)
     }
 
     /// The server only reports coins; it is not trusted with their amounts. Each
