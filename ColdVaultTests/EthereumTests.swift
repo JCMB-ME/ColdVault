@@ -71,4 +71,18 @@ final class EthereumTests: XCTestCase {
         XCTAssertNil(UInt256.zero.subtracting(UInt256(1)))
         XCTAssertEqual(UInt256(21_000).multiplied(by: 30_000_000_000)?.description, "630000000000000")
     }
+
+    // ERC-20 calls: transfer(address,uint256) and balanceOf(address), ABI-encoded.
+    func testERC20Encoding() {
+        let to = Data(repeating: 0x11, count: 20)
+        let data = ERC20.transferData(to: to, amount: UInt256(1_000_000))
+        XCTAssertEqual(data.count, 68)
+        XCTAssertEqual(data.hexEncodedString,
+                       "a9059cbb" + String(repeating: "0", count: 24) + String(repeating: "11", count: 20)
+                       + String(repeating: "0", count: 58) + "0f4240")
+        XCTAssertEqual(ERC20.balanceOfData(to).hexEncodedString,
+                       "70a08231" + String(repeating: "0", count: 24) + String(repeating: "11", count: 20))
+        XCTAssertEqual(EVMChain.base.chainId(testnet: false), 8_453)
+        XCTAssertEqual(EVMChain.base.chainId(testnet: true), 84_532)
+    }
 }

@@ -100,6 +100,8 @@ public struct WalletTransaction: Identifiable, Equatable, Codable {
     public let net: Int64
     public let date: Date?
     public let confirmed: Bool
+    /// EVM wallets: the chain ("ethereum", "base"); nil = Ethereum / bitcoin.
+    public var chain: String? = nil
 }
 
 public enum FiatCurrency {
@@ -168,6 +170,11 @@ extension WalletManager {
 
     public var formattedFiatBalance: String? {
         // Testnet coins have no price; they are shown at the real price anyway.
+        if isDollars {
+            // Already dollars: shown only when the chosen currency is another one.
+            guard homeShowFiat, fiatCurrency != "USD" else { return nil }
+            return fiatText(units: availableSats, coin: .dollars)
+        }
         if isEthereum {
             guard homeShowFiat, let price = ethFiatPrice else { return nil }
             let value = Double(balanceSats) / 1_000_000_000 * price
@@ -197,9 +204,27 @@ extension WalletManager {
     /// An amount of the wallet's coin (sats or gwei) in the chosen currency.
     public func fiatText(units: UInt64, coin: CoinKind? = nil) -> String? {
         let kind = coin ?? activeCoin
-        guard let price = kind == .ethereum ? ethFiatPrice : fiatPrice, price > 0 else { return nil }
-        let value = Double(units) / (kind == .ethereum ? 1_000_000_000 : 100_000_000) * price
+        let value: Double
+        switch kind {
+        case .dollars:
+            guard let factor = usdToFiat else { return nil }
+            value = Double(units) / 1_000_000 * factor
+        case .ethereum:
+            guard let price = ethFiatPrice, price > 0 else { return nil }
+            value = Double(units) / 1_000_000_000 * price
+        case .bitcoin:
+            guard let price = fiatPrice, price > 0 else { return nil }
+            value = Double(units) / 100_000_000 * price
+        }
         return WalletManager.currencyFormatter(fiatCurrency, fractionDigits: 2).string(from: NSNumber(value: value))
+    }
+
+    /// US dollars → the chosen currency (from the ETH or BTC quotes).
+    public var usdToFiat: Double? {
+        if fiatCurrency == "USD" { return 1 }
+        if let fiat = ethFiatPrice, let usd = ethUsdPrice, usd > 0 { return fiat / usd }
+        if let fiat = fiatPrice, let usd = usdPrice, usd > 0 { return fiat / usd }
+        return nil
     }
 
     /// The balance without coins still waiting for their first confirmation.
@@ -379,7 +404,7 @@ extension WalletManager {
     /// Full transaction history of every used address (newest first).
     func refreshTransactions() async {
         guard let record = activeRecord else { return }
-        if record.coinKind == .ethereum {
+        if record.coinKind.isEVM {
             await refreshEthereumTransactions()
             return
         }

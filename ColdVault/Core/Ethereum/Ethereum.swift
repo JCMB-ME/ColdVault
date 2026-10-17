@@ -383,6 +383,9 @@ public enum EthereumError: LocalizedError {
     case server(String)
     case invalidAddress
     case insufficientFunds
+    case insufficientToken(String)
+    /// A token payment needs ETH on that chain for the fee.
+    case noGas(String)
 
     public var errorDescription: String? {
         let english = !(Locale.preferredLanguages.first ?? "").lowercased().hasPrefix("es")
@@ -391,22 +394,25 @@ public enum EthereumError: LocalizedError {
         case .server(let message): return (english ? "Ethereum node: " : "Nodo de Ethereum: ") + message
         case .invalidAddress: return english ? "Invalid Ethereum address (check the checksum)." : "Dirección de Ethereum inválida (revisa el checksum)."
         case .insufficientFunds: return english ? "Not enough ETH for the amount plus the network fee." : "No hay suficiente ETH para el monto más la comisión de red."
+        case .insufficientToken(let symbol): return english ? "Not enough \(symbol) for this amount." : "No tienes suficiente \(symbol) para este monto."
+        case .noGas(let chain): return english ? "You need a little ETH on \(chain) to pay the network fee. Receive it at this same address."
+                                               : "Necesitas un poco de ETH en \(chain) para pagar la comisión de red. Recíbelo en esta misma dirección."
         }
     }
 }
 
 public final class EthereumRPC {
     public let isTestnet: Bool
-    public var chainId: UInt64 { isTestnet ? 11_155_111 : 1 }      // Sepolia / mainnet
+    /// Ethereum or Base (same addresses and transactions, another chain id).
+    public let chain: EVMChain
+    public var chainId: UInt64 { chain.chainId(testnet: isTestnet) }
     private let session: URLSession
 
-    private var endpoints: [String] {
-        isTestnet ? ["https://ethereum-sepolia-rpc.publicnode.com", "https://sepolia.drpc.org"]
-                  : ["https://ethereum-rpc.publicnode.com", "https://eth.drpc.org", "https://cloudflare-eth.com"]
-    }
+    private var endpoints: [String] { chain.endpoints(testnet: isTestnet) }
 
-    public init(isTestnet: Bool) {
+    public init(isTestnet: Bool, chain: EVMChain = .ethereum) {
         self.isTestnet = isTestnet
+        self.chain = chain
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15
         TorProxy.apply(to: config)
@@ -450,6 +456,18 @@ public final class EthereumRPC {
     public func balance(_ address: String) async throws -> UInt256 {
         guard let hex = try await call("eth_getBalance", [address, "latest"]) as? String,
               let value = UInt256(hex: hex) else { throw EthereumError.unavailable }
+        return value
+    }
+
+    /// ERC-20 balance (eth_call balanceOf).
+    public func tokenBalance(contract: String, owner: String) async throws -> UInt256 {
+        guard let ownerBytes = EthereumAddress.parse(owner) else { throw EthereumError.invalidAddress }
+        let data = "0x" + ERC20.balanceOfData(ownerBytes).hexEncodedString
+        guard let hex = try await call("eth_call", [["to": contract, "data": data], "latest"]) as? String else {
+            throw EthereumError.unavailable
+        }
+        if hex == "0x" { return .zero }
+        guard let value = UInt256(hex: hex) else { throw EthereumError.unavailable }
         return value
     }
 

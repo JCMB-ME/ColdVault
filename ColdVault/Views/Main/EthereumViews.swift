@@ -25,7 +25,8 @@ struct EthReceiveView: View {
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
     private var address: String { walletManager.activeRecord?.primaryAddress ?? "" }
-    private var networkName: String { walletManager.isTestnet ? "Sepolia" : "Ethereum" }
+    /// The same address works on every chain the app uses.
+    private var networkName: String { walletManager.isTestnet ? "Sepolia / Base Sepolia" : "Ethereum / Base" }
 
     /// EIP-681 payment request when an amount is asked, otherwise the address.
     private var qrText: String {
@@ -98,7 +99,7 @@ struct EthReceiveView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
 
-                    if revealStep >= 3 {
+                    if revealStep >= 3 && !walletManager.isDollars {
                         requestRow
                             .padding(.horizontal, 24)
                             .transition(.opacity)
@@ -106,8 +107,11 @@ struct EthReceiveView: View {
 
                     if revealStep >= 4 {
                         VStack(spacing: 8) {
-                            Text(t("Only send \(networkName) ETH and tokens to this address.",
-                                   "Envía a esta dirección solo ETH y tokens de \(networkName)."))
+                            Text(walletManager.isDollars
+                                 ? t("Send USDC or USDT on \(networkName) to this address, and a little ETH there for fees.",
+                                     "Envía a esta dirección USDC o USDT de \(networkName), y un poco de ETH ahí para las comisiones.")
+                                 : t("Only send ETH and tokens on \(networkName) to this address.",
+                                     "Envía a esta dirección solo ETH y tokens de \(networkName)."))
                                 .font(.system(size: 12))
                                 .foregroundColor(Palette.secondary)
                                 .multilineTextAlignment(.center)
@@ -157,7 +161,7 @@ struct EthReceiveView: View {
             .scrollDismissesKeyboard(.interactively)
             }
             .safeAreaInset(edge: .top, spacing: 0) {
-                SheetHeader(title: t("Receive \(networkName)", "Recibir \(networkName)"))
+                SheetHeader(title: t("Receive \(walletManager.activeCoin.title(lang))", "Recibir \(walletManager.activeCoin.title(lang))"))
                     .allowsHitTesting(false)
             }
 
@@ -261,6 +265,7 @@ struct EthSendView: View {
     @Environment(\.presentationMode) var presentationMode
 
     @State private var recipient: String
+    @State private var assetID: String?
     @State private var amountText = ""
     @State private var sendAll = false
     @State private var fast = false
@@ -270,22 +275,42 @@ struct EthSendView: View {
     @State private var sentHash: String?
     @State private var showScanner = false
 
-    init(recipient: String? = nil) {
+    /// `asset` preselects what to send (tapped on the home screen's list).
+    init(recipient: String? = nil, asset: EVMAsset? = nil) {
         _recipient = State(initialValue: recipient ?? "")
+        _assetID = State(initialValue: asset?.id)
     }
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
-    private var networkName: String { walletManager.isTestnet ? "Sepolia" : "Ethereum" }
-    private var explorer: String { walletManager.isTestnet ? "https://sepolia.etherscan.io" : "https://etherscan.io" }
-    private var amountWei: UInt256? {
-        guard let wei = UInt256(decimal: amountText, decimals: 18), !wei.isZero else { return nil }
-        return wei
+    /// What can be sent: ETH on each chain and every token held.
+    private var assets: [EVMAsset] {
+        let held = walletManager.evmAssets
+        if !held.isEmpty { return held }
+        // Not loaded yet: ETH on Ethereum with the balance on screen.
+        let wei = UInt256(walletManager.balanceSats).multiplied(by: WalletManager.weiPerGwei) ?? .zero
+        return [EVMAsset(chain: .ethereum, contract: nil, symbol: "ETH", name: "Ether", decimals: 18,
+                         balance: walletManager.isDollars ? .zero : wei, usdPrice: nil, iconURL: nil)]
+    }
+
+    /// The chosen asset; by default the biggest stablecoin (dollars) or ETH on Ethereum.
+    private var asset: EVMAsset {
+        if let id = assetID, let match = assets.first(where: { $0.id == id }) { return match }
+        if walletManager.isDollars,
+           let biggest = assets.filter({ !$0.isNative }).max(by: { $0.balance < $1.balance }) { return biggest }
+        return assets.first { $0.isNative && $0.chain == .ethereum } ?? assets[0]
+    }
+
+    private var networkName: String { asset.chain.name(testnet: walletManager.isTestnet) }
+    private var amountUnits: UInt256? {
+        guard let value = UInt256(decimal: amountText, decimals: asset.decimals), !value.isZero else { return nil }
+        return value
     }
     private var trimmedRecipient: String { recipient.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var tooMuch: Bool { amountUnits.map { asset.balance < $0 } ?? false }
     private var canReview: Bool {
-        EthereumAddress.parse(trimmedRecipient) != nil && (sendAll || amountWei != nil) && !isProcessing
+        EthereumAddress.parse(trimmedRecipient) != nil && (sendAll || amountUnits != nil) && !tooMuch && !isProcessing
     }
     private var ethContacts: [Contact] { walletManager.contacts.filter { EthereumAddress.parse($0.address) != nil } }
     private var recipientContact: Contact? {
@@ -294,10 +319,24 @@ struct EthSendView: View {
         return ethContacts.first { $0.address == text }
     }
 
-    private func fiat(_ wei: UInt256) -> String? {
-        guard let price = walletManager.ethFiatPrice, !walletManager.isTestnet else { return nil }
-        return WalletManager.currencyFormatter(walletManager.fiatCurrency, fractionDigits: nil)
-            .string(from: NSNumber(value: wei.doubleValue / 1e18 * price))
+    /// An amount of `item` in the chosen currency.
+    private func fiat(_ value: UInt256, of item: EVMAsset) -> String? {
+        let amount = value.doubleValue / pow(10, Double(item.decimals))
+        let fiatValue: Double
+        if item.isNative {
+            guard let price = walletManager.ethFiatPrice, !walletManager.isTestnet else { return nil }
+            fiatValue = amount * price
+        } else {
+            guard let usd = item.usdPrice, let factor = walletManager.usdToFiat else { return nil }
+            fiatValue = amount * usd * factor
+        }
+        return WalletManager.currencyFormatter(walletManager.fiatCurrency, fractionDigits: 2)
+            .string(from: NSNumber(value: fiatValue))
+    }
+
+    /// ETH on a chain (for the fee's value).
+    private func ethAsset(_ chain: EVMChain) -> EVMAsset {
+        EVMAsset(chain: chain, contract: nil, symbol: "ETH", name: "Ether", decimals: 18, balance: .zero, usdPrice: nil, iconURL: nil)
     }
 
     var body: some View {
@@ -325,7 +364,7 @@ struct EthSendView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .top, spacing: 0) {
-                SheetHeader(title: t("Send \(networkName)", "Enviar \(networkName)"))
+                SheetHeader(title: t("Send \(asset.symbol)", "Enviar \(asset.symbol)"))
             }
         }
         .presentationDetents([.large])
@@ -336,6 +375,43 @@ struct EthSendView: View {
                 if text.lowercased().hasPrefix("ethereum:") { text = String(text.dropFirst(9)) }
                 recipient = String(text.prefix { $0 != "@" && $0 != "?" && $0 != "/" })
             }
+        }
+    }
+
+    /// ETH or token, and on which chain.
+    private var assetPicker: some View {
+        Menu {
+            ForEach(assets) { item in
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        assetID = item.id
+                        amountText = ""
+                        sendAll = false
+                    }
+                } label: {
+                    let title = "\(item.symbol) · \(item.chain.name(testnet: walletManager.isTestnet)) — \(item.formatted())"
+                    if item.id == asset.id { Label(title, systemImage: "checkmark") } else { Text(title) }
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                EVMAssetIcon(asset: asset, size: 26)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(asset.symbol)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                    Text(networkName)
+                        .font(.system(size: 11))
+                        .foregroundColor(Palette.secondary)
+                }
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Palette.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(Color(uiColor: .systemBackground).opacity(0.9)))
         }
     }
 
@@ -365,19 +441,18 @@ struct EthSendView: View {
                         .disabled(sendAll)
                         .opacity(sendAll ? 0.3 : 1)
                         .modifier(RollingDigits())
-                    Text("ETH")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(Color(uiColor: .label))
-                        .padding(.horizontal, 10)
-                        .frame(height: 30)
-                        .background(Capsule().fill(Color(uiColor: .systemBackground).opacity(0.9)))
                 }
                 .frame(maxWidth: .infinity)
                 .minimumScaleFactor(0.5)
+                assetPicker
                 Group {
                     if sendAll {
-                        Text(t("Entire balance minus the network fee", "Todo el saldo menos la comisión de red"))
-                    } else if let wei = amountWei, let value = fiat(wei) {
+                        Text(asset.isNative ? t("Entire balance minus the network fee", "Todo el saldo menos la comisión de red")
+                                            : t("Entire balance (the fee is paid in ETH)", "Todo el saldo (la comisión se paga en ETH)"))
+                    } else if tooMuch {
+                        Label(t("Not enough balance", "Saldo insuficiente"), systemImage: "exclamationmark.triangle.fill")
+                            .foregroundColor(.red)
+                    } else if let units = amountUnits, let value = fiat(units, of: asset) {
                         Text(value)
                     } else {
                         Text(t("Amount", "Monto"))
@@ -391,7 +466,7 @@ struct EthSendView: View {
                     Text(L10n.balanceLabel(lang))
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(Palette.secondary)
-                    Text("\(walletManager.formattedBalance) ETH")
+                    Text("\(asset.formatted()) \(asset.symbol)")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
                 }
@@ -502,6 +577,13 @@ struct EthSendView: View {
             }
             .padding(4)
             .background(Capsule().fill(Color(uiColor: .systemBackground).opacity(0.55)))
+            if !asset.isNative {
+                Text(t("Paid in ETH on \(networkName). Keep a little ETH there for fees.",
+                       "Se paga en ETH de \(networkName). Ten un poco de ETH ahí para las comisiones."))
+                    .font(.system(size: 12))
+                    .foregroundColor(Palette.secondary)
+                    .multilineTextAlignment(.center)
+            }
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
@@ -545,15 +627,15 @@ struct EthSendView: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(Palette.secondary)
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(plan.transaction.value.formatted(decimals: 18, maxFraction: 8))
+                        Text(plan.amount.formatted(decimals: plan.asset.decimals, maxFraction: 8))
                             .font(.system(size: 40, weight: .bold))
                             .lineLimit(1)
                             .minimumScaleFactor(0.5)
-                        Text("ETH")
+                        Text(plan.asset.symbol)
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundColor(Palette.secondary)
                     }
-                    if let value = fiat(plan.transaction.value) {
+                    if let value = fiat(plan.amount, of: plan.asset) {
                         Text("≈ \(value)")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(Palette.secondary)
@@ -564,10 +646,7 @@ struct EthSendView: View {
                         ContactAvatar(contact: contact, size: 48)
                         Text(contact.name).font(.system(size: 16, weight: .semibold))
                     } else {
-                        Image("EthereumLogo")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 48, height: 48)
+                        EVMAssetIcon(asset: plan.asset, size: 48)
                     }
                     Text(plan.recipient)
                         .font(.system(size: 13, weight: .medium, design: .monospaced))
@@ -576,11 +655,15 @@ struct EthSendView: View {
                         .padding(.horizontal, 12)
                 }
                 VStack(spacing: 0) {
-                    row(t("Max network fee", "Comisión máxima"), "\(plan.maxFee.formatted(decimals: 18, maxFraction: 8)) ETH")
+                    row(t("Max network fee", "Comisión máxima"), "\(plan.maxFee.formatted(decimals: 18, maxFraction: 8)) ETH",
+                        detail: fiat(plan.maxFee, of: ethAsset(plan.asset.chain)).map { "≈ \($0)" })
                     SettingsDivider(inset: 14)
-                    row(t("Network", "Red"), networkName)
-                    SettingsDivider(inset: 14)
-                    row(t("Total (at most)", "Total (como máximo)"), "\(plan.total.formatted(decimals: 18, maxFraction: 8)) ETH", bold: true)
+                    row(t("Network", "Red"), plan.asset.chain.name(testnet: walletManager.isTestnet))
+                    if plan.asset.isNative {
+                        SettingsDivider(inset: 14)
+                        row(t("Total (at most)", "Total (como máximo)"), "\(plan.total.formatted(decimals: 18, maxFraction: 8)) ETH",
+                            bold: true, detail: fiat(plan.total, of: plan.asset).map { "≈ \($0)" })
+                    }
                 }
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
                 Text(t("Usually the fee ends up lower than the maximum.", "Normalmente la comisión final es menor que la máxima."))
@@ -611,13 +694,20 @@ struct EthSendView: View {
         }
     }
 
-    private func row(_ title: String, _ value: String, bold: Bool = false) -> some View {
-        HStack {
+    private func row(_ title: String, _ value: String, bold: Bool = false, detail: String? = nil) -> some View {
+        HStack(alignment: .firstTextBaseline) {
             Text(title)
                 .font(.system(size: 14, weight: bold ? .semibold : .regular))
                 .foregroundColor(bold ? Color(uiColor: .label) : Palette.secondary)
             Spacer(minLength: 8)
-            Text(value).font(.system(size: 14, weight: bold ? .bold : .semibold))
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(value).font(.system(size: 14, weight: bold ? .bold : .semibold))
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Palette.secondary)
+                }
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -638,9 +728,9 @@ struct EthSendView: View {
                     .foregroundColor(Palette.secondary)
                     .multilineTextAlignment(.center)
                     .textSelection(.enabled)
-                if let url = URL(string: "\(explorer)/tx/\(hash)") {
+                if let url = URL(string: "\(asset.chain.explorer(testnet: walletManager.isTestnet))/tx/\(hash)") {
                     Link(destination: url) {
-                        Label("Etherscan", systemImage: "safari")
+                        Label(asset.chain == .base ? "Basescan" : "Etherscan", systemImage: "safari")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(Color(uiColor: .label))
                             .padding(.horizontal, 16)
@@ -663,11 +753,12 @@ struct EthSendView: View {
         errorMessage = nil
         isProcessing = true
         let to = trimmedRecipient
-        let amount = sendAll ? nil : amountWei
+        let amount = sendAll ? nil : amountUnits
         let isFast = fast
+        let chosen = asset
         Task {
             do {
-                let prepared = try await walletManager.prepareEthereumSend(to: to, amount: amount, fast: isFast)
+                let prepared = try await walletManager.prepareEVMSend(asset: chosen, to: to, amount: amount, fast: isFast)
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { plan = prepared }
             } catch {
                 errorMessage = error.localizedDescription
@@ -690,5 +781,143 @@ struct EthSendView: View {
             }
             isProcessing = false
         }
+    }
+}
+
+// MARK: - Assets (ETH and tokens on Ethereum and Base)
+
+/// The logo of an asset: ETH, the dollars coin for USDC / USDT, the token's icon or
+/// its first letter; a small badge tells the chain.
+struct EVMAssetIcon: View {
+    let asset: EVMAsset
+    var size: CGFloat = 40
+
+    var body: some View {
+        Group {
+            if asset.isNative {
+                CoinLogo(coin: .ethereum, size: size)
+            } else if asset.isStablecoin {
+                CoinLogo(coin: .dollars, size: size)
+            } else if let url = asset.iconURL {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    letter
+                }
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+            } else {
+                letter
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if asset.chain == .base {
+                // Base: a small blue dot with a white ring.
+                Circle()
+                    .fill(Color(red: 0, green: 0.32, blue: 1))
+                    .frame(width: size * 0.36, height: size * 0.36)
+                    .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: 1.5))
+                    .offset(x: size * 0.06, y: size * 0.06)
+            }
+        }
+    }
+
+    private var letter: some View {
+        Text(String(asset.symbol.prefix(1)))
+            .font(.system(size: size * 0.42, weight: .bold))
+            .foregroundColor(Color(uiColor: .label))
+            .frame(width: size, height: size)
+            .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+    }
+}
+
+/// Home screen of an Ethereum or dollars wallet: what it holds on each chain.
+/// Dollars wallets list USDC / USDT and, apart, the ETH that pays the fees ("Gas").
+struct EVMAssetsCard: View {
+    @EnvironmentObject var walletManager: WalletManager
+    let onSend: (EVMAsset) -> Void
+
+    private var lang: AppLanguage { walletManager.appLanguage }
+    private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+
+    private var tokens: [EVMAsset] {
+        walletManager.evmAssets.filter { !$0.isNative }
+            .sorted { ($0.usdValue ?? 0) > ($1.usdValue ?? 0) }
+    }
+    private var natives: [EVMAsset] { walletManager.evmAssets.filter { $0.isNative } }
+
+    var body: some View {
+        VStack(spacing: 18) {
+            if walletManager.isDollars {
+                section(t("Dollars", "Dólares"), tokens)
+                section(t("Gas (pays the fees)", "Gas (paga las comisiones)"), natives,
+                        footer: t("Each send costs a little ETH on its network. Receive ETH at this same address.",
+                                  "Cada envío cuesta un poco de ETH en su red. Recibe ETH en esta misma dirección."))
+            } else {
+                section("ETH", natives)
+                if !tokens.isEmpty { section(t("Tokens", "Tokens"), tokens) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func section(_ title: String, _ items: [EVMAsset], footer: String? = nil) -> some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title.uppercased())
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Palette.secondary)
+                    .padding(.leading, 6)
+                VStack(spacing: 10) {
+                    ForEach(items) { item in row(item) }
+                }
+                if let footer {
+                    Text(footer)
+                        .font(.system(size: 12))
+                        .foregroundColor(Palette.secondary)
+                        .padding(.horizontal, 6)
+                }
+            }
+        }
+    }
+
+    private func row(_ item: EVMAsset) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onSend(item)
+        } label: {
+            HStack(spacing: 14) {
+                EVMAssetIcon(asset: item, size: 42)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.symbol)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                        .lineLimit(1)
+                    Text(item.chain.name(testnet: walletManager.isTestnet))
+                        .font(.system(size: 13))
+                        .foregroundColor(Palette.secondary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(item.formatted())
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    if let fiat = walletManager.fiatValue(of: item) {
+                        Text(fiat)
+                            .font(.system(size: 12))
+                            .foregroundColor(Palette.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .layoutPriority(1)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+        }
+        .buttonStyle(.plain)
     }
 }

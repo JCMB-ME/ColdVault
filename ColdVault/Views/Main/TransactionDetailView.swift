@@ -31,6 +31,8 @@ struct TransactionDetailView: View {
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
     private var received: Bool { transaction.net >= 0 }
+    /// EVM wallets: the chain the transaction is on.
+    private var chain: EVMChain { transaction.chain.flatMap { EVMChain(rawValue: $0) } ?? .ethereum }
     private var canSpeedUp: Bool {
         !transaction.confirmed && !walletManager.isWatchOnly && !walletManager.isEthereum && newTxid == nil
     }
@@ -74,7 +76,7 @@ struct TransactionDetailView: View {
         .onDisappear { walletManager.setLabel(note, for: transaction.txid) }
         .task {
             guard !walletManager.isEthereum else {
-                feeInfo = try? await walletManager.ethereumTransactionInfo(hash: transaction.txid)
+                feeInfo = try? await walletManager.ethereumTransactionInfo(hash: transaction.txid, chain: chain)
                 return
             }
             feeInfo = try? await walletManager.feeInfo(txid: transaction.txid)
@@ -151,7 +153,12 @@ struct TransactionDetailView: View {
                         ? "\(walletManager.format(units: info.fee, coin: .ethereum)) ETH"
                         : "\(SendView.satsText(info.fee)) sats · \(String(format: "%.1f", info.feeRate)) sat/vB"
                 } ?? "…",
-                detail: feeInfo.flatMap { walletManager.fiatText(units: $0.fee) }.map { "≈ \($0)" })
+                detail: feeInfo.flatMap { walletManager.fiatText(units: $0.fee, coin: walletManager.isEthereum ? .ethereum : .bitcoin) }
+                    .map { "≈ \($0)" })
+            if walletManager.isEthereum {
+                SettingsDivider(inset: 16)
+                row(t("Network", "Red"), chain.name(testnet: walletManager.isTestnet))
+            }
             SettingsDivider(inset: 16)
             Button {
                 SecurePasteboard.copy(transaction.txid)
@@ -376,7 +383,7 @@ struct TransactionDetailView: View {
     private var explorerURL: String {
         let txid = newTxid ?? transaction.txid
         if walletManager.isEthereum {
-            return "https://\(walletManager.isTestnet ? "sepolia." : "")etherscan.io/tx/\(txid)"
+            return "\(chain.explorer(testnet: walletManager.isTestnet))/tx/\(txid)"
         }
         return "https://mempool.space/\(walletManager.isTestnet ? "testnet4/" : "")tx/\(txid)"
     }

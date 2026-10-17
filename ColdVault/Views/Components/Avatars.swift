@@ -353,11 +353,21 @@ struct CoinLogo: View {
     var size: CGFloat = 17
 
     var body: some View {
-        Image(coin == .ethereum ? "EthereumLogo" : "BitcoinLogo")
-            .resizable()
-            .scaledToFit()
-            .frame(width: size, height: size)
-            .accessibilityLabel(Text(coin == .ethereum ? "Ethereum" : "Bitcoin"))
+        if coin == .dollars {
+            // Dollars: a green coin with "$".
+            Image(systemName: "dollarsign")
+                .font(.system(size: size * 0.55, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: size, height: size)
+                .background(Circle().fill(Color(red: 0.15, green: 0.63, blue: 0.48)))
+                .accessibilityLabel(Text("USD"))
+        } else {
+            Image(coin == .ethereum ? "EthereumLogo" : "BitcoinLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+                .accessibilityLabel(Text(coin == .ethereum ? "Ethereum" : "Bitcoin"))
+        }
     }
 }
 

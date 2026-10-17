@@ -16,9 +16,26 @@ public enum WalletSecurityType: String, Codable {
 
 /// The coin of a wallet. Bitcoin wallets made before Ethereum existed have none (nil).
 public enum CoinKind: String, Codable, CaseIterable, Identifiable {
-    case bitcoin, ethereum
+    /// `dollars`: an Ethereum account shown as USDC / USDT on Ethereum and Base.
+    case bitcoin, ethereum, dollars
     public var id: String { rawValue }
-    public var symbol: String { self == .bitcoin ? "BTC" : "ETH" }
+    public var symbol: String {
+        switch self {
+        case .bitcoin: return "BTC"
+        case .ethereum: return "ETH"
+        case .dollars: return "USD"
+        }
+    }
+    /// Ethereum and dollars wallets: same keys, addresses and networks.
+    public var isEVM: Bool { self != .bitcoin }
+
+    public func title(_ lang: AppLanguage) -> String {
+        switch self {
+        case .bitcoin: return "Bitcoin"
+        case .ethereum: return "Ethereum"
+        case .dollars: return lang == .english ? "Dollars" : "Dólares"
+        }
+    }
 }
 
 public struct StoredWalletRecord: Codable, Equatable {

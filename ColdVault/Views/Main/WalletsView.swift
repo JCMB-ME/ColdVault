@@ -63,8 +63,7 @@ struct WalletsView: View {
                 coinSwitch
 
                 if keyWallets.isEmpty && watchWallets.isEmpty {
-                    Text(coin == .ethereum ? t("No Ethereum wallets yet.", "Aún no tienes billeteras de Ethereum.")
-                                           : t("No bitcoin wallets yet.", "Aún no tienes billeteras de bitcoin."))
+                    Text(t("No \(coin.title(lang)) wallets yet.", "Aún no tienes billeteras de \(coin.title(lang))."))
                         .font(.system(size: 14))
                         .foregroundColor(Palette.secondary)
                         .frame(maxWidth: .infinity)
@@ -267,7 +266,7 @@ struct WalletsView: View {
     }
     private var keyWallets: [LibraryWallet] { coinWallets.filter { !isWatchOnly($0) } }
     private var watchWallets: [LibraryWallet] { coinWallets.filter { isWatchOnly($0) } }
-    private var testnetName: String { coin == .ethereum ? "Sepolia" : "Testnet4" }
+    private var testnetName: String { coin.isEVM ? "Sepolia" : "Testnet4" }
 
     /// Bitcoin | Ethereum.
     private var coinSwitch: some View {
@@ -280,7 +279,9 @@ struct WalletsView: View {
                 } label: {
                     HStack(spacing: 7) {
                         CoinLogo(coin: item, size: 18)
-                        Text(item == .bitcoin ? "Bitcoin" : "Ethereum")
+                        Text(item.title(lang))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                             .font(.system(size: 14, weight: coin == item ? .semibold : .regular))
                     }
                     .foregroundColor(coin == item ? Color(uiColor: .systemBackground) : Color(uiColor: .label))

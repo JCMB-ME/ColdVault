@@ -53,7 +53,9 @@ public struct ImportWalletView: View {
                 } label: {
                     HStack(spacing: 7) {
                         CoinLogo(coin: item, size: 18)
-                        Text(item == .bitcoin ? "Bitcoin" : "Ethereum")
+                        Text(item.title(lang))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                             .font(.system(size: 14, weight: coin == item ? .semibold : .regular))
                     }
                     .foregroundColor(coin == item ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
@@ -115,7 +117,7 @@ public struct ImportWalletView: View {
     }
 
     private var isMnemonic: Bool {
-        if coin == .ethereum { return BIP39.validateMnemonic(inputText.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        if coin.isEVM { return BIP39.validateMnemonic(inputText.trimmingCharacters(in: .whitespacesAndNewlines)) }
         if case .mnemonic = detection.payload { return true }
         return false
     }
@@ -145,7 +147,7 @@ public struct ImportWalletView: View {
                         .padding(.horizontal, 20)
 
                     Group {
-                        if coin == .ethereum { ethDetectionCard } else { detectionCard }
+                        if coin.isEVM { ethDetectionCard } else { detectionCard }
                     }
                         .padding(.horizontal, 20)
                         .animation(.spring(response: 0.45, dampingFraction: 0.82), value: detectionKey)
@@ -401,7 +403,7 @@ public struct ImportWalletView: View {
     // MARK: - Import
 
     private var canImport: Bool {
-        if coin == .ethereum { return ethKind != nil }
+        if coin.isEVM { return ethKind != nil }
         if let descriptors = detection.descriptors {
             if case .success = descriptors { return true }
             return false
@@ -418,7 +420,7 @@ public struct ImportWalletView: View {
         let input = inputText
         let chosenCoin = coin
         let isSecret: Bool
-        if chosenCoin == .ethereum {
+        if chosenCoin.isEVM {
             isSecret = EthereumAddress.parse(input.trimmingCharacters(in: .whitespacesAndNewlines)) == nil
         } else {
             switch detection.payload {

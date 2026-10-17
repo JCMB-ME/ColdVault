@@ -41,6 +41,8 @@ public struct DashboardView: View {
 
     // Send to a contact from the home screen.
     @State private var sendRecipient: SendRecipient?
+    /// EVM wallets: an asset tapped in the list (opens Send with it chosen).
+    @State private var sendAsset: EVMAsset?
 
     // Swiping the balance moves to the next / previous account (then wallet).
     @State private var balanceOffset: CGFloat = 0
@@ -137,6 +139,10 @@ public struct DashboardView: View {
                 if walletManager.isEthereum { EthSendView(recipient: recipient.address) } else { SendView(recipient: recipient.address) }
             }
             .environmentObject(walletManager)
+        }
+        .sheet(item: $sendAsset) { asset in
+            EthSendView(asset: asset)
+                .environmentObject(walletManager)
         }
         .sheet(isPresented: $showHistory) {
             TransactionHistoryView()
@@ -437,6 +443,17 @@ public struct DashboardView: View {
 
             balanceStatus
 
+            // Ethereum / dollars: ETH and tokens on Ethereum and Base.
+            if walletManager.isEthereum {
+                EVMAssetsCard(onSend: { asset in
+                    guard !walletManager.isWatchOnly else { return }
+                    sendAsset = asset
+                })
+                .environmentObject(walletManager)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+            }
+
             HomeExtrasView(onSendToContact: { contact in
                 sendRecipient = SendRecipient(address: contact.address)
             }, onShowHistory: {
@@ -643,7 +660,7 @@ struct HomeExtrasView: View {
             if walletManager.homeShowTransactions {
                 transactions
             }
-            if walletManager.homeShowPriceChart {
+            if walletManager.homeShowPriceChart && !walletManager.isDollars {
                 MinimalPriceChart()
                     .environmentObject(walletManager)
             }

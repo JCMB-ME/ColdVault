@@ -1004,7 +1004,7 @@ struct BackupDetailView: View {
                             .transition(.opacity)
                     }
 
-                    if isPhraseWallet && wallet?.bundle.accounts.first?.record.coinKind != .ethereum {
+                    if isPhraseWallet && wallet?.bundle.accounts.first?.record.coinKind == .bitcoin {
                         SettingsSection(header: t("Watch-only", "Observación"),
                                         footer: t("Public keys only: lets another device see your balance and prepare transactions, never spend.",
                                                   "Solo claves públicas: permite a otro dispositivo ver tu saldo y preparar transacciones, nunca gastar.")) {
