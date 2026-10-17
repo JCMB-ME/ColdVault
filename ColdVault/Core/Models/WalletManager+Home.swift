@@ -189,6 +189,19 @@ extension WalletManager {
         return pending <= balanceSats ? pending : 0
     }
 
+    /// Contacts whose address belongs to the coin of the wallet on screen.
+    public var coinContacts: [Contact] {
+        contacts.filter { (EthereumAddress.parse($0.address) != nil) == isEthereum }
+    }
+
+    /// An amount of the wallet's coin (sats or gwei) in the chosen currency.
+    public func fiatText(units: UInt64, coin: CoinKind? = nil) -> String? {
+        let kind = coin ?? activeCoin
+        guard let price = kind == .ethereum ? ethFiatPrice : fiatPrice, price > 0 else { return nil }
+        let value = Double(units) / (kind == .ethereum ? 1_000_000_000 : 100_000_000) * price
+        return WalletManager.currencyFormatter(fiatCurrency, fractionDigits: 2).string(from: NSNumber(value: value))
+    }
+
     /// The balance without coins still waiting for their first confirmation.
     public var availableSats: UInt64 { balanceSats - pendingIncomingSats }
 

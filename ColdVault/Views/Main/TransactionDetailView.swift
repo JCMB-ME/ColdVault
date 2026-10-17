@@ -45,6 +45,10 @@ struct TransactionDetailView: View {
                     summary
                     noteField
                     details
+                    if let info = feeInfo, !info.inputs.isEmpty {
+                        partiesCard(t("From", "De"), info.inputs, outgoing: false)
+                        partiesCard(t("To", "Para"), info.outputs, outgoing: true)
+                    }
                     if canSpeedUp { speedUpCard }
                     if let txid = newTxid { replacedCard(txid) }
                     if let error = errorMessage {
@@ -69,7 +73,10 @@ struct TransactionDetailView: View {
         .onAppear { note = walletManager.label(for: transaction.txid) ?? "" }
         .onDisappear { walletManager.setLabel(note, for: transaction.txid) }
         .task {
-            guard !walletManager.isEthereum else { return }
+            guard !walletManager.isEthereum else {
+                feeInfo = try? await walletManager.ethereumTransactionInfo(hash: transaction.txid)
+                return
+            }
             feeInfo = try? await walletManager.feeInfo(txid: transaction.txid)
             if let info = feeInfo { bumpRate = Int(info.feeRate.rounded(.down)) + 2 }
         }
@@ -95,6 +102,11 @@ struct TransactionDetailView: View {
                     .minimumScaleFactor(0.5)
                 Text(walletManager.unitLabel(walletManager.activeCoin))
                     .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(Palette.secondary)
+            }
+            if let fiat = walletManager.fiatText(units: UInt64(abs(transaction.net))) {
+                Text("≈ \(fiat)")
+                    .font(.system(size: 15, weight: .medium))
                     .foregroundColor(Palette.secondary)
             }
             HStack(spacing: 6) {
@@ -133,11 +145,14 @@ struct TransactionDetailView: View {
                 row(t("Date", "Fecha"), date.formatted(date: .abbreviated, time: .shortened))
                 SettingsDivider(inset: 16)
             }
-            if !walletManager.isEthereum {
-                row(t("Network fee", "Comisión"),
-                    feeInfo.map { "\(SendView.satsText($0.fee)) sats · \(String(format: "%.1f", $0.feeRate)) sat/vB" } ?? "…")
-                SettingsDivider(inset: 16)
-            }
+            row(t("Network fee", "Comisión"),
+                feeInfo.map { info in
+                    walletManager.isEthereum
+                        ? "\(walletManager.format(units: info.fee, coin: .ethereum)) ETH"
+                        : "\(SendView.satsText(info.fee)) sats · \(String(format: "%.1f", info.feeRate)) sat/vB"
+                } ?? "…",
+                detail: feeInfo.flatMap { walletManager.fiatText(units: $0.fee) }.map { "≈ \($0)" })
+            SettingsDivider(inset: 16)
             Button {
                 SecurePasteboard.copy(transaction.txid)
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -167,19 +182,87 @@ struct TransactionDetailView: View {
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
     }
 
-    private func row(_ title: String, _ value: String) -> some View {
-        HStack {
+    private func row(_ title: String, _ value: String, detail: String? = nil) -> some View {
+        HStack(alignment: .firstTextBaseline) {
             Text(title)
                 .font(.system(size: 14))
                 .foregroundColor(Palette.secondary)
             Spacer(minLength: 10)
-            Text(value)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(Color(uiColor: .label))
-                .multilineTextAlignment(.trailing)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(value)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .label))
+                    .multilineTextAlignment(.trailing)
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(Palette.secondary)
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 13)
+    }
+
+    // MARK: - From / To
+
+    /// The addresses that paid in ("From") or received ("To"), yours marked.
+    private func partiesCard(_ title: String, _ parties: [TxParty], outgoing: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title.uppercased())
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(Palette.secondary)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 6)
+            ForEach(parties) { party in
+                if party.id > 0 { SettingsDivider(inset: 16) }
+                Button {
+                    SecurePasteboard.copy(party.address)
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                } label: {
+                    HStack(alignment: .center, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(party.address)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(Color(uiColor: .label))
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if party.isOwn {
+                                // Yours: in "To" of a payment you sent, it is your change.
+                                Text(outgoing && !received ? t("Your change", "Tu cambio") : t("You", "Tú"))
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(.green)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(Color.green.opacity(0.14)))
+                            }
+                        }
+                        Spacer(minLength: 8)
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("\(walletManager.format(units: party.value, coin: walletManager.activeCoin)) \(walletManager.unitLabel(walletManager.activeCoin))")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(Color(uiColor: .label))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                            if let fiat = walletManager.fiatText(units: party.value) {
+                                Text("≈ \(fiat)")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(Palette.secondary)
+                            }
+                        }
+                        .layoutPriority(1)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 11)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.bottom, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
     }
 
     // MARK: - Speed up

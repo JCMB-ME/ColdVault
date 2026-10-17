@@ -34,102 +34,159 @@ struct EthReceiveView: View {
         return "ethereum:\(address)@\(chain)?value=\(wei.description)"
     }
 
+    /// Same opening as Bitcoin's Receive: only the QR, centered; a tap raises it and
+    /// the details come in one after another.
+    @State private var qrRaised = false
+    @State private var revealStep = 0
+    private static let qrSize: CGFloat = 230
+    private static let qrBlock: CGFloat = qrSize + 36
+
     var body: some View {
         ZStack {
             GlassAmbientBackground()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: reveal)
+
+            GeometryReader { geo in
             ScrollView(showsIndicators: false) {
-                VStack(spacing: 20) {
-                    PixelRevealQRCode(text: qrText, size: 230)
+                VStack(spacing: 22) {
+                    PixelRevealQRCode(text: qrText, size: EthReceiveView.qrSize)
                         .id(qrText)
+                        .onTapGesture(perform: reveal)
 
-                    Button(action: copy) {
-                        HStack(spacing: 8) {
-                            Text(address)
-                                .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                .foregroundColor(Color(uiColor: .label))
-                                .multilineTextAlignment(.center)
-                                .lineLimit(2)
-                            Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
-                                .foregroundColor(copied ? .green : Palette.secondary)
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .glassCard(cornerRadius: 14)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 24)
-
-                    HStack(spacing: 12) {
+                    if revealStep >= 1 {
                         Button(action: copy) {
-                            Label(copied ? L10n.copied(lang) : L10n.copy(lang), systemImage: copied ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundColor(Color(uiColor: .label))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 48)
-                                .modifier(GlassPillModifier(isEmphasized: false))
+                            HStack(spacing: 8) {
+                                Text(address)
+                                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                    .foregroundColor(Color(uiColor: .label))
+                                    .multilineTextAlignment(.center)
+                                    .lineLimit(2)
+                                Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
+                                    .foregroundColor(copied ? .green : Palette.secondary)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .glassCard(cornerRadius: 14)
                         }
                         .buttonStyle(.plain)
-                        ShareLink(item: qrText) {
-                            Label(L10n.share(lang), systemImage: "square.and.arrow.up")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 48)
-                                .modifier(GlassPillModifier(isEmphasized: true))
-                        }
-                    }
-                    .padding(.horizontal, 24)
-
-                    requestRow.padding(.horizontal, 24)
-
-                    Text(t("Only send \(networkName) ETH to this address.", "Envía a esta dirección solo ETH de \(networkName)."))
-                        .font(.system(size: 12))
-                        .foregroundColor(Palette.secondary)
-
-                    if let record = walletManager.activeRecord {
-                        Text(EthereumKeys.path(index: record.accountNumber ?? 0))
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(Palette.tertiary)
+                        .padding(.horizontal, 24)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
 
-                    if walletManager.canAddAccounts {
-                        VStack(spacing: 8) {
-                            if let account = walletManager.activeWallet?.bundle.current {
-                                Text(t("Receiving in: \(account.name)", "Recibiendo en: \(account.name)"))
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(Palette.secondary)
-                            }
-                            Button(action: addAccount) {
-                                Group {
-                                    if isAddingAccount { ProgressView() } else {
-                                        Label(t("New account", "Nueva cuenta"), systemImage: "plus.circle")
-                                    }
-                                }
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundColor(Color(uiColor: .label))
-                                .padding(.horizontal, 18)
-                                .frame(height: 40)
-                                .background(Capsule().fill(SettingsStyle.groupFill))
+                    if revealStep >= 2 {
+                        HStack(spacing: 12) {
+                            Button(action: copy) {
+                                Label(copied ? L10n.copied(lang) : L10n.copy(lang), systemImage: copied ? "checkmark" : "doc.on.doc")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundColor(Color(uiColor: .label))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 48)
+                                    .modifier(GlassPillModifier(isEmphasized: false))
                             }
                             .buttonStyle(.plain)
-                            .disabled(isAddingAccount)
-                            if let error = accountError {
-                                Text(error).font(.system(size: 12)).foregroundColor(.red)
+                            ShareLink(item: qrText) {
+                                Label(L10n.share(lang), systemImage: "square.and.arrow.up")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 48)
+                                    .modifier(GlassPillModifier(isEmphasized: true))
                             }
+                        }
+                        .padding(.horizontal, 24)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+
+                    if revealStep >= 3 {
+                        requestRow
+                            .padding(.horizontal, 24)
+                            .transition(.opacity)
+                    }
+
+                    if revealStep >= 4 {
+                        VStack(spacing: 8) {
+                            Text(t("Only send \(networkName) ETH and tokens to this address.",
+                                   "Envía a esta dirección solo ETH y tokens de \(networkName)."))
+                                .font(.system(size: 12))
+                                .foregroundColor(Palette.secondary)
+                                .multilineTextAlignment(.center)
+                            if let record = walletManager.activeRecord {
+                                Text(EthereumKeys.path(index: record.accountNumber ?? 0))
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(Palette.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .transition(.opacity)
+
+                        if walletManager.canAddAccounts {
+                            VStack(spacing: 8) {
+                                if let account = walletManager.activeWallet?.bundle.current {
+                                    Text(t("Receiving in: \(account.name)", "Recibiendo en: \(account.name)"))
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundColor(Palette.secondary)
+                                }
+                                Button(action: addAccount) {
+                                    Group {
+                                        if isAddingAccount { ProgressView() } else {
+                                            Label(t("New account", "Nueva cuenta"), systemImage: "plus.circle")
+                                        }
+                                    }
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundColor(Color(uiColor: .label))
+                                    .padding(.horizontal, 18)
+                                    .frame(height: 40)
+                                    .background(Capsule().fill(SettingsStyle.groupFill))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(isAddingAccount)
+                                if let error = accountError {
+                                    Text(error).font(.system(size: 12)).foregroundColor(.red)
+                                }
+                            }
+                            .transition(.opacity)
                         }
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.top, 14)
+                .padding(.top, qrRaised ? 14 : max(14, (geo.size.height - EthReceiveView.qrBlock) / 2 - 24))
                 .padding(.bottom, 28)
             }
+            .scrollDisabled(revealStep == 0)
             .scrollDismissesKeyboard(.interactively)
+            }
             .safeAreaInset(edge: .top, spacing: 0) {
                 SheetHeader(title: t("Receive \(networkName)", "Recibir \(networkName)"))
+                    .allowsHitTesting(false)
+            }
+
+            if revealStep == 0 {
+                VStack {
+                    Spacer()
+                    Text(t("Tap for details", "Toca para ver los detalles"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(Palette.tertiary)
+                        .padding(.bottom, 18)
+                }
+                .allowsHitTesting(false)
+                .transition(.opacity)
             }
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+    }
+
+    /// Raises the QR, then shows the details one after another.
+    private func reveal() {
+        guard revealStep == 0, !qrRaised else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.spring(response: 0.6, dampingFraction: 0.86)) { qrRaised = true }
+        for step in 1...4 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.42 + 0.09 * Double(step)) {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) { revealStep = step }
+            }
+        }
     }
 
     @ViewBuilder

@@ -202,7 +202,7 @@ public struct SettingsView: View {
                     SettingsDivider(inset: 60)
                     Button { route = .contacts } label: {
                         SettingsRow(title: t("Contacts", "Contactos"),
-                                    value: walletManager.contacts.isEmpty ? nil : "\(walletManager.contacts.count)", chevron: true,
+                                    value: walletManager.coinContacts.isEmpty ? nil : "\(walletManager.coinContacts.count)", chevron: true,
                                     icon: "person.crop.circle")
                     }
                     SettingsDivider(inset: 60)
@@ -600,7 +600,7 @@ public struct SettingsView: View {
     private var contactsContent: some View {
         SettingsTitle(text: t("Contacts", "Contactos"), topPadding: 0)
 
-        if walletManager.contacts.isEmpty {
+        if walletManager.coinContacts.isEmpty {
             VStack(spacing: 12) {
                 Image(systemName: "person.2")
                     .font(.system(size: 24, weight: .semibold))
@@ -622,7 +622,7 @@ public struct SettingsView: View {
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
         } else {
             VStack(spacing: 4) {
-                ForEach(walletManager.contacts) { contact in
+                ForEach(walletManager.coinContacts) { contact in
                     Button { editingContact = contact } label: {
                         HStack(spacing: 12) {
                             ContactAvatar(contact: contact, size: 44)
@@ -1254,9 +1254,10 @@ struct ContactEditorView: View {
                                 .padding(.horizontal, 16)
                                 .frame(minHeight: 52)
                         }
-                        SettingsSection(header: t("Bitcoin address", "Dirección Bitcoin"), footer: nil) {
+                        SettingsSection(header: walletManager.isEthereum ? t("Ethereum address", "Dirección Ethereum")
+                                                                         : t("Bitcoin address", "Dirección Bitcoin"), footer: nil) {
                             HStack(spacing: 14) {
-                                TextField("bc1…", text: $contact.address)
+                                TextField(walletManager.isEthereum ? "0x…" : "bc1…", text: $contact.address)
                                     .font(.system(size: 14, design: .monospaced))
                                     .textInputAutocapitalization(.never)
                                     .autocorrectionDisabled(true)

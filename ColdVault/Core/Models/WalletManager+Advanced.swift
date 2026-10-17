@@ -40,10 +40,21 @@ public enum BumpError: LocalizedError {
 }
 
 /// What the detail screen needs to offer a speed-up.
+/// One side of a transaction: an address and what it put in or got.
+public struct TxParty: Identifiable {
+    public let id: Int
+    public let address: String
+    public let value: UInt64          // sats, or gwei for Ethereum
+    public let isOwn: Bool
+}
+
 public struct TransactionFeeInfo {
     public let fee: UInt64
     public let vsize: Int
     public var feeRate: Double { vsize > 0 ? Double(fee) / Double(vsize) : 0 }
+    /// Where the money came from and where it went.
+    public var inputs: [TxParty] = []
+    public var outputs: [TxParty] = []
 }
 
 extension WalletManager {
@@ -101,7 +112,17 @@ extension WalletManager {
         let inputTotal = prevouts.reduce(UInt64(0)) { $0 + $1.value }
         let outputTotal = tx.outputs.reduce(UInt64(0)) { $0 + $1.value }
         guard inputTotal >= outputTotal else { throw BlockchainError.invalidResponse }
-        return TransactionFeeInfo(fee: inputTotal - outputTotal, vsize: tx.virtualSize)
+        let tracked = ownTrackedAddresses()
+        let isTestnet = record.isTestnet
+        func party(_ index: Int, _ output: TxOutput) -> TxParty {
+            TxParty(id: index,
+                    address: BitcoinAddress.address(for: output.scriptPubKey, isTestnet: isTestnet) ?? output.scriptPubKey.hexEncodedString,
+                    value: output.value, isOwn: isOwnScript(output.scriptPubKey, tracked: tracked))
+        }
+        var info = TransactionFeeInfo(fee: inputTotal - outputTotal, vsize: tx.virtualSize)
+        info.inputs = prevouts.enumerated().map { party($0.offset, $0.element) }
+        info.outputs = tx.outputs.enumerated().map { party($0.offset, $0.element) }
+        return info
     }
 
     // MARK: - RBF

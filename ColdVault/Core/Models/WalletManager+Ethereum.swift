@@ -222,6 +222,33 @@ extension WalletManager {
         transactions = WalletManager.sorted(list)
     }
 
+    /// Sender, recipient and fee of an Ethereum transaction (Blockscout).
+    public func ethereumTransactionInfo(hash: String) async throws -> TransactionFeeInfo {
+        guard let record = activeRecord, hash.hasPrefix("0x"), hash.count == 66,
+              hash.dropFirst(2).allSatisfy({ $0.isHexDigit }) else { throw EthereumError.invalidAddress }
+        let base = record.isTestnet ? "https://eth-sepolia.blockscout.com" : "https://eth.blockscout.com"
+        guard let url = URL(string: "\(base)/api/v2/transactions/\(hash)") else { throw EthereumError.invalidAddress }
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = TorProxy.isEnabled ? 45 : 20
+        TorProxy.apply(to: config)
+        let session = URLSession(configuration: config)
+        defer { session.finishTasksAndInvalidate() }
+        let (data, response) = try await session.data(from: url)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let item = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw BlockchainError.invalidResponse
+        }
+        let me = record.primaryAddress.lowercased()
+        let from = ((item["from"] as? [String: Any])?["hash"] as? String) ?? ""
+        let to = ((item["to"] as? [String: Any])?["hash"] as? String) ?? ""
+        let value = WalletManager.gwei(UInt256(decimal: item["value"] as? String ?? "0", decimals: 0) ?? .zero)
+        let fee = WalletManager.gwei(UInt256(decimal: (item["fee"] as? [String: Any])?["value"] as? String ?? "0", decimals: 0) ?? .zero)
+        var info = TransactionFeeInfo(fee: fee, vsize: 0)
+        info.inputs = [TxParty(id: 0, address: from, value: value + fee, isOwn: from.lowercased() == me)]
+        info.outputs = [TxParty(id: 0, address: to, value: value, isOwn: to.lowercased() == me)]
+        return info
+    }
+
     /// Live ETH price in the chosen currency.
     func refreshEthereumPrice() async {
         if let prices = try? await BlockchainService.shared.fetchSpotPrices(base: "ETH") {

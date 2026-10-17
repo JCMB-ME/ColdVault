@@ -261,6 +261,10 @@ public struct SendView: View {
                 Group {
                     if sendAll {
                         Text(t("Entire balance minus the network fee", "Todo el saldo menos la comisión de red"))
+                    } else if let sats = amountSats, sats > walletManager.balanceSats {
+                        // Said right away, not only after "Review".
+                        Label(t("Not enough balance", "Saldo insuficiente"), systemImage: "exclamationmark.triangle.fill")
+                            .foregroundColor(.red)
                     } else if let sats = amountSats {
                         Text(([unit == .btc ? "\(SendView.satsText(sats)) sats" : "\(SendView.btcText(sats)) BTC"]
                               + [fiatText(sats)].compactMap { $0 }).joined(separator: " · "))
@@ -343,10 +347,10 @@ public struct SendView: View {
                     .padding(.leading, 4)
             }
 
-            if !walletManager.contacts.isEmpty {
+            if !walletManager.coinContacts.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 14) {
-                        ForEach(walletManager.contacts) { contact in
+                        ForEach(walletManager.coinContacts) { contact in
                             let selected = contact.address == trimmedRecipient
                             Button {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -386,11 +390,19 @@ public struct SendView: View {
                 if fees == nil && !feesUnavailable {
                     ProgressView().scaleEffect(0.8)
                 } else {
-                    Text("\(feeRate) sat/vB")
-                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                        .foregroundColor(Color(uiColor: .label))
-                        .modifier(RollingDigits())
-                        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: feeRate)
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text("\(feeRate) sat/vB")
+                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                            .foregroundColor(Color(uiColor: .label))
+                            .modifier(RollingDigits())
+                            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: feeRate)
+                        // A typical payment (1 input, 2 outputs) is about 141 vB.
+                        if let fiat = walletManager.fiatText(units: feeRate * 141, coin: .bitcoin) {
+                            Text("≈ \(fiat)")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(Palette.secondary)
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 4)
@@ -533,7 +545,8 @@ public struct SendView: View {
                 // Details.
                 VStack(spacing: 0) {
                     detailRow(t("Network fee", "Comisión"), "\(SendView.satsText(plan.fee)) sats",
-                              detail: "\(plan.feeRate) sat/vB · ~\(plan.estimatedVSize) vB")
+                              detail: ([walletManager.fiatText(units: plan.fee, coin: .bitcoin).map { "≈ \($0)" }].compactMap { $0 }
+                                       + ["\(plan.feeRate) sat/vB · ~\(plan.estimatedVSize) vB"]).joined(separator: "\n"))
                     if plan.change > 0 {
                         SettingsDivider(inset: 14)
                         detailRow(t("Change (back to you)", "Cambio (vuelve a ti)"), amountText(plan.change))
@@ -541,7 +554,9 @@ public struct SendView: View {
                     SettingsDivider(inset: 14)
                     detailRow(t("Inputs", "Entradas"), "\(plan.coins.count)")
                     SettingsDivider(inset: 14)
-                    detailRow(t("Total debited", "Total descontado"), amountText(plan.totalSpent), emphasized: true)
+                    detailRow(t("Total debited", "Total descontado"), amountText(plan.totalSpent),
+                              detail: walletManager.fiatText(units: plan.totalSpent, coin: .bitcoin).map { "≈ \($0)" },
+                              emphasized: true)
                 }
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
 
@@ -611,6 +626,7 @@ public struct SendView: View {
                     Text(detail)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(Palette.secondary)
+                        .multilineTextAlignment(.trailing)
                 }
             }
         }
