@@ -111,7 +111,7 @@ struct InheritanceView: View {
     // MARK: - Letter
 
     private var walletLines: [String] {
-        walletManager.library.compactMap { wallet in
+        walletManager.visibleLibrary.compactMap { wallet in
             guard let record = wallet.bundle.accounts.first?.record else { return nil }
             let kind: String
             switch record.type {

@@ -26,6 +26,8 @@ struct TransactionDetailView: View {
     @State private var isWorking = false
     @State private var errorMessage: String?
     @State private var newTxid: String?
+    /// An address from the history that is not a saved contact: copied only after confirming.
+    @State private var unsavedCopy: String?
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -81,6 +83,20 @@ struct TransactionDetailView: View {
             }
             feeInfo = try? await walletManager.feeInfo(txid: transaction.txid)
             if let info = feeInfo { bumpRate = Int(info.feeRate.rounded(.down)) + 2 }
+        }
+        .alert(t("Copy an address you haven't saved?", "¿Copiar una dirección que no tienes guardada?"),
+               isPresented: Binding(get: { unsavedCopy != nil }, set: { if !$0 { unsavedCopy = nil } })) {
+            Button(t("Copy", "Copiar")) {
+                if let address = unsavedCopy {
+                    SecurePasteboard.copy(address)
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                }
+                unsavedCopy = nil
+            }
+            Button(t("Cancel", "Cancelar"), role: .cancel) { unsavedCopy = nil }
+        } message: {
+            Text(t("Someone can send you a dust amount from a look-alike address so it shows up here (address poisoning). Check it against the source before you use it.",
+                   "Alguien puede enviarte un importe mínimo desde una dirección parecida para que aparezca aquí (envenenamiento de direcciones). Compárala con la fuente antes de usarla."))
         }
     }
 
@@ -225,8 +241,15 @@ struct TransactionDetailView: View {
             ForEach(parties) { party in
                 if party.id > 0 { SettingsDivider(inset: 16) }
                 Button {
-                    SecurePasteboard.copy(party.address)
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    // Your own addresses and saved contacts copy at once; anything else may be a look-alike.
+                    if party.isOwn || walletManager.contacts.contains(where: {
+                        $0.address.caseInsensitiveCompare(party.address) == .orderedSame
+                    }) {
+                        SecurePasteboard.copy(party.address)
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    } else {
+                        unsavedCopy = party.address
+                    }
                 } label: {
                     HStack(alignment: .center, spacing: 10) {
                         VStack(alignment: .leading, spacing: 4) {

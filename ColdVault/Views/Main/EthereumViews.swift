@@ -280,6 +280,8 @@ struct EthSendView: View {
     @State private var errorMessage: String?
     @State private var sentHash: String?
     @State private var showScanner = false
+    /// Set by the node before review: a native send to a contract can lose the coins.
+    @State private var recipientIsContract = false
 
     /// `asset` preselects what to send (tapped on the home screen's list).
     init(recipient: String? = nil, asset: EVMAsset? = nil) {
@@ -314,6 +316,13 @@ struct EthSendView: View {
         return assets.first { $0.isNative } ?? assets[0]
     }
 
+    /// The saved contact this recipient imitates (address poisoning), when it is not one of them.
+    private var lookalikeContact: Contact? {
+        guard recipientContact == nil,
+              let match = AddressLookalike.match(trimmedRecipient, known: walletManager.contacts.map { $0.address })
+        else { return nil }
+        return walletManager.contacts.first { $0.address == match }
+    }
     private var networkName: String { asset.chain.name(testnet: walletManager.isTestnet) }
     private var amountUnits: UInt256? {
         guard let value = UInt256(decimal: amountText, decimals: asset.decimals), !value.isZero else { return nil }
@@ -391,12 +400,7 @@ struct EthSendView: View {
         .presentationDragIndicator(.visible)
         .sheet(isPresented: $showScanner) {
             QRScannerView { code in
-                var text = code
-                for prefix in ["ethereum:", "tron:", "ton://transfer/", "ton:"] where text.lowercased().hasPrefix(prefix) {
-                    text = String(text.dropFirst(prefix.count))
-                    break
-                }
-                recipient = String(text.prefix { $0 != "@" && $0 != "?" && $0 != "/" })
+                readScannedCode(code)
             }
         }
     }
@@ -652,6 +656,68 @@ struct EthSendView: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: QR
+
+    /// Reads a scanned code. An EIP-681 request is honoured or refused, never guessed.
+    private func readScannedCode(_ code: String) {
+        if code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("ethereum:") {
+            readPaymentRequest(code)
+            return
+        }
+        var text = code
+        for prefix in ["tron:", "ton://transfer/", "ton:"] where text.lowercased().hasPrefix(prefix) {
+            text = String(text.dropFirst(prefix.count))
+            break
+        }
+        recipient = String(text.prefix { $0 != "@" && $0 != "?" && $0 != "/" })
+    }
+
+    private func readPaymentRequest(_ code: String) {
+        guard asset.chain.isEVM else {
+            errorMessage = t("This is an Ethereum-style request. Switch to an EVM network to use it.",
+                             "Esta es una solicitud tipo Ethereum. Cambia a una red EVM para usarla.")
+            return
+        }
+        guard let request = try? EIP681.parse(code) else {
+            errorMessage = t("This payment request can't be read safely, so nothing was filled in.",
+                             "Esta solicitud de pago no se puede leer con seguridad; no se ha rellenado nada.")
+            return
+        }
+        if let chainId = request.chainId, chainId != asset.chain.chainId(testnet: walletManager.isTestnet) {
+            errorMessage = t("This request is for another network (chain ID \(chainId)).",
+                             "Esta solicitud es para otra red (chain ID \(chainId)).")
+            return
+        }
+        if request.isTokenTransfer {
+            // The token must be one the wallet holds here: the token contract is never the recipient.
+            let contract = request.target.lowercased()
+            guard let token = assets.first(where: { $0.chain == asset.chain && $0.contract?.lowercased() == contract }) else {
+                errorMessage = t("This request pays a token you don't hold on this network.",
+                                 "Esta solicitud paga un token que no tienes en esta red.")
+                return
+            }
+            assetID = token.id
+            recipient = request.recipient ?? ""
+            amountText = request.amountUnits.flatMap { EIP681.decimalAmount($0, decimals: token.decimals) } ?? ""
+        } else {
+            // A plain request moves the native coin, whatever token was selected before.
+            assetID = assets.first(where: { $0.chain == asset.chain && $0.isNative })?.id
+            recipient = request.target
+            amountText = request.amountUnits.flatMap { EIP681.decimalAmount($0, decimals: asset.chain.nativeDecimals) } ?? ""
+        }
+        sendAll = false
+        errorMessage = nil
+    }
+
+    /// A native send to a contract can lose the coins, so the node is asked before the review.
+    private func checkContract(_ plan: EthereumSendPlan) async {
+        recipientIsContract = false
+        guard plan.asset.isNative, plan.asset.chain.isEVM else { return }
+        let rpc = EthereumRPC(isTestnet: walletManager.isTestnet, chain: plan.asset.chain)
+        let code = (try? await rpc.call("eth_getCode", [plan.recipient, "latest"])) as? String
+        recipientIsContract = (code ?? "0x").count > 2
+    }
+
     // MARK: Review
 
     private func reviewCard(_ plan: EthereumSendPlan) -> some View {
@@ -706,6 +772,22 @@ struct EthSendView: View {
                 Text(t("Usually the fee ends up lower than the maximum.", "Normalmente la comisión final es menor que la máxima."))
                     .font(.system(size: 11))
                     .foregroundColor(Palette.secondary)
+                if let similar = lookalikeContact {
+                    Label(t("This address looks like \(similar.name) but isn't the same. Compare every character before you send.",
+                            "Esta dirección se parece a \(similar.name) pero no es la misma. Compara cada carácter antes de enviar."),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.orange)
+                        .multilineTextAlignment(.center)
+                }
+                if recipientIsContract {
+                    Label(t("This address is a smart contract. Sending coins to a contract can lose them.",
+                            "Esta dirección es un contrato. Enviar monedas a un contrato puede hacer que se pierdan."),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.orange)
+                        .multilineTextAlignment(.center)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 22)
@@ -714,6 +796,7 @@ struct EthSendView: View {
 
             SlideToConfirm(title: t("Slide to send", "Desliza para enviar"), isLoading: isProcessing) { confirm(plan) }
                 .padding(.top, 4)
+                .task(id: plan.recipient) { await checkContract(plan) }
             Button {
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { self.plan = nil }
             } label: {

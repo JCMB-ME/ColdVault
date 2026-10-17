@@ -290,7 +290,30 @@ public struct CreateWalletView: View {
         }
     }
 
+    /// Why a set of rolls is refused, or nil when it can be used. The phrase itself does not change.
+    private func diceProblem(_ quality: DiceRollCheck.Quality) -> String? {
+        switch quality {
+        case .ok:
+            return nil
+        case .oneFaceOnly:
+            return t("Every roll shows the same face. Roll again.", "Todas las tiradas son la misma cara. Vuelve a tirar.")
+        case .fewFaces:
+            return t("Only two or three faces come up. Roll again with a real die.",
+                     "Solo salen dos o tres caras. Vuelve a tirar con un dado real.")
+        case .longRun:
+            return t("The same face repeats too many times in a row. Roll again.",
+                     "La misma cara se repite demasiadas veces seguidas. Vuelve a tirar.")
+        case .repeatingPattern:
+            return t("The rolls repeat a short pattern. Roll again with a real die.",
+                     "Las tiradas repiten un patrón corto. Vuelve a tirar con un dado real.")
+        }
+    }
+
     private func useDice(_ rolls: [Int]) {
+        if let problem = diceProblem(DiceRollCheck.check(rolls)) {
+            errorMessage = problem
+            return
+        }
         guard let phrase = try? BIP39.mnemonicFromDiceRolls(rolls, wordCount: wordCountSelection) else {
             errorMessage = t("Couldn't create the phrase from those rolls.", "No se pudo crear la frase con esas tiradas.")
             return

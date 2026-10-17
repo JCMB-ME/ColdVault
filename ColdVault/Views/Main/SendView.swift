@@ -149,6 +149,13 @@ public struct SendView: View {
     private var recipientContact: Contact? {
         walletManager.contacts.first { $0.address == trimmedRecipient }
     }
+    /// The saved contact this recipient imitates (address poisoning), when it is not one of them.
+    private var lookalikeContact: Contact? {
+        guard recipientContact == nil,
+              let match = AddressLookalike.match(trimmedRecipient, known: walletManager.contacts.map { $0.address })
+        else { return nil }
+        return walletManager.contacts.first { $0.address == match }
+    }
 
     // MARK: - Body
     public var body: some View {
@@ -560,6 +567,14 @@ public struct SendView: View {
                 }
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
 
+                if let similar = lookalikeContact {
+                    Label(t("This address looks like \(similar.name) but isn't the same. Compare every character before you send.",
+                            "Esta dirección se parece a \(similar.name) pero no es la misma. Compara cada carácter antes de enviar."),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.orange)
+                        .multilineTextAlignment(.center)
+                }
                 if highFee {
                     Label(t("The fee is more than 10% of the amount.", "La comisión supera el 10% del monto."),
                           systemImage: "exclamationmark.triangle.fill")

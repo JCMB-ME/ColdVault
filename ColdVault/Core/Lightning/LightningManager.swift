@@ -59,10 +59,23 @@ final class LightningManager: ObservableObject {
             throw LightningError.notStarted
         }
         let storage = folder.appendingPathComponent("lightning/\(kind.rawValue)/\(slot)", isDirectory: true)
+        // Channel state must not come back from an iCloud or Finder backup: an old copy restored
+        // by hand could make the node publish a stale channel state. Excluded before the engine writes.
+        LightningManager.excludeFromBackups(folder.appendingPathComponent("lightning", isDirectory: true))
+        LightningManager.excludeFromBackups(storage)
         try await engine.start(mnemonic: mnemonic, passphrase: secret.passphrase, storage: storage)
         self.engine = engine
         runningSlot = slot
         runningKind = kind
+    }
+
+    /// Creates `url` if needed and keeps it out of iCloud and Finder backups.
+    private static func excludeFromBackups(_ url: URL) {
+        var folder = url
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? folder.setResourceValues(values)
     }
 
     func stop() async {

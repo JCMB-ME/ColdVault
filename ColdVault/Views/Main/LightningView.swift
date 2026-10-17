@@ -124,6 +124,8 @@ struct LightningView: View {
                                                                    "Para pagar, recárgalo on-chain y abre un canal (Recargar). Para recibir necesitas capacidad entrante (gasta primero o usa un LSP)."))
                     TipRow(icon: "exclamationmark.triangle", text: t("Channel state lives on this iPhone: keep the app updated and don't delete it with funds inside.",
                                                                      "El estado de los canales vive en este iPhone: mantén la app y no la borres con fondos dentro."))
+                    TipRow(icon: "icloud.slash", text: t("Channels are not restored from an iPhone backup. Close them or move the funds before you change phones.",
+                                                         "Los canales no se restauran desde una copia del iPhone. Ciérralos o mueve los fondos antes de cambiar de teléfono."))
                 }
                 TipRow(icon: "switch.2", text: t("Change the engine in Settings › Lightning.", "Cambia el motor en Ajustes › Lightning."))
             }
