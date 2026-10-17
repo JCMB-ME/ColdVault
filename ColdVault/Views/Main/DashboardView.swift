@@ -771,7 +771,8 @@ struct TransactionCard: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                 }
-                Spacer(minLength: 8)
+                // Takes the room the amount leaves, so "Sent" / "3 hours ago" are not cut.
+                .frame(maxWidth: .infinity, alignment: .leading)
                 // Always one line: the amount shrinks a little instead of wrapping.
                 VStack(alignment: .trailing, spacing: 3) {
                     Text("\(received ? "+" : "−")\(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin))")
@@ -806,23 +807,26 @@ struct TransactionHistoryView: View {
     private var lang: AppLanguage { walletManager.appLanguage }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                GlassAmbientBackground()
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(walletManager.transactions) { tx in
-                            TransactionCard(transaction: tx)
-                        }
+        // Same translucent header strip as every other sheet.
+        ZStack {
+            GlassAmbientBackground()
+            ScrollView(showsIndicators: false) {
+                LazyVStack(spacing: 10) {
+                    ForEach(walletManager.transactions) { tx in
+                        TransactionCard(transaction: tx)
                     }
-                    .padding(20)
                 }
-                .refreshable { await walletManager.refreshHomeData(force: true) }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 32)
             }
-            .navigationTitle(lang == .english ? "Transactions" : "Transacciones")
-            .navigationBarTitleDisplayMode(.inline)
+            .refreshable { await walletManager.refreshHomeData(force: true) }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SheetHeader(title: lang == .english ? "Transactions" : "Transacciones")
+            }
         }
         .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
     }
 }
 
