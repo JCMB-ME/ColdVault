@@ -150,10 +150,10 @@ struct TransactionDetailView: View {
             row(t("Network fee", "Comisión"),
                 feeInfo.map { info in
                     walletManager.isEthereum
-                        ? "\(walletManager.format(units: info.fee, coin: .ethereum)) ETH"
+                        ? "\(walletManager.format(units: info.fee, coin: chain.feeCoin)) \(chain.nativeSymbol)"
                         : "\(SendView.satsText(info.fee)) sats · \(String(format: "%.1f", info.feeRate)) sat/vB"
                 } ?? "…",
-                detail: feeInfo.flatMap { walletManager.fiatText(units: $0.fee, coin: walletManager.isEthereum ? .ethereum : .bitcoin) }
+                detail: feeInfo.flatMap { walletManager.fiatText(units: $0.fee, coin: walletManager.isEthereum ? chain.feeCoin : .bitcoin) }
                     .map { "≈ \($0)" })
             if walletManager.isEthereum {
                 SettingsDivider(inset: 16)
@@ -383,7 +383,7 @@ struct TransactionDetailView: View {
     private var explorerURL: String {
         let txid = newTxid ?? transaction.txid
         if walletManager.isEthereum {
-            return "\(chain.explorer(testnet: walletManager.isTestnet))/tx/\(txid)"
+            return chain.transactionURL(txid, testnet: walletManager.isTestnet)?.absoluteString ?? ""
         }
         return "https://mempool.space/\(walletManager.isTestnet ? "testnet4/" : "")tx/\(txid)"
     }

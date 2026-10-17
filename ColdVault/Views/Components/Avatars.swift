@@ -362,11 +362,21 @@ struct CoinLogo: View {
                 .background(Circle().fill(Color(red: 0.15, green: 0.63, blue: 0.48)))
                 .accessibilityLabel(Text("USD"))
         } else {
-            Image(coin == .ethereum ? "EthereumLogo" : "BitcoinLogo")
+            Image(CoinLogo.imageName(coin))
                 .resizable()
                 .scaledToFit()
                 .frame(width: size, height: size)
-                .accessibilityLabel(Text(coin == .ethereum ? "Ethereum" : "Bitcoin"))
+                .accessibilityLabel(Text(coin.title(.english)))
+        }
+    }
+
+    static func imageName(_ coin: CoinKind) -> String {
+        switch coin {
+        case .bitcoin, .dollars: return "BitcoinLogo"
+        case .ethereum: return "EthereumLogo"
+        case .polygon: return "PolygonLogo"
+        case .tron: return "TronLogo"
+        case .ton: return "TonLogo"
         }
     }
 }

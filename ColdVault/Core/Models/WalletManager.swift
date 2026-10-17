@@ -135,7 +135,12 @@ public final class WalletManager: ObservableObject {
     @Published public internal(set) var ethPriceHistory: [PricePoint] = []
     /// ETH and tokens of the EVM account on screen, on every chain (Ethereum, Base).
     @Published public internal(set) var evmAssets: [EVMAsset] = []
-    /// The network an Ethereum / dollars wallet shows (top button, or shake the iPhone).
+    /// POL, TRX and TON in US dollars (Kraken).
+    @Published public internal(set) var coinUsdPrices: [String: Double] = [:]
+    /// Price history of POL, TRX and TON (Kraken), for the chart.
+    @Published public internal(set) var coinPriceHistory: [String: [PricePoint]] = [:]
+    var coinHistoryFetch: [String: Date] = [:]
+    /// The network an account-based wallet shows (top selector, or shake the iPhone).
     @Published public var evmNetwork: EVMChain {
         didSet { UserDefaults.standard.set(evmNetwork.rawValue, forKey: "evmNetwork") }
     }
@@ -345,7 +350,7 @@ public final class WalletManager: ObservableObject {
     /// Whether this wallet can build transactions (watch-only P2SH/P2WSH cannot).
     public var canBuildTransactions: Bool {
         guard let record = activeRecord else { return false }
-        if record.coinKind.isEVM { return record.type != .watchOnly }
+        if record.coinKind.isAccountBased { return record.type != .watchOnly }
         if usesAddressRotation { return !derivers(for: record).isEmpty }
         guard let decoded = BitcoinAddress.decode(record.primaryAddress) else { return false }
         return decoded.type.isSpendable
@@ -416,7 +421,7 @@ public final class WalletManager: ObservableObject {
     @discardableResult
     public func importWallet(input: String, passphrase: String = "", isTestnet requested: Bool? = nil,
                              coin: CoinKind = .bitcoin) async throws -> StoredWalletRecord {
-        if coin.isEVM {
+        if coin.isAccountBased {
             return try await importEthereum(input: input, passphrase: passphrase, isTestnet: requested ?? false, coin: coin)
         }
         // Watch-only HD wallet from output descriptors / zpub (public keys only).
@@ -492,7 +497,7 @@ public final class WalletManager: ObservableObject {
     // MARK: - Refresh Balance (all addresses of the wallet)
     public func refreshBalance() async {
         guard let record = activeRecord else { return }
-        if record.coinKind.isEVM {
+        if record.coinKind.isAccountBased {
             await refreshEthereumBalance()
             return
         }
@@ -700,7 +705,7 @@ public final class WalletManager: ObservableObject {
     /// Re-derives the addresses for the other network. Needs the secret, so it asks for authentication.
     public func setNetwork(isTestnet: Bool) async throws {
         guard let record = activeRecord, record.isTestnet != isTestnet else { return }
-        if record.coinKind.isEVM {
+        if record.coinKind.isAccountBased {
             try setEthereumNetwork(isTestnet: isTestnet)
             return
         }

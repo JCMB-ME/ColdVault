@@ -139,9 +139,9 @@ public struct SettingsView: View {
                     SettingsRow(title: t("Calculator", "Calculadora"), icon: "plus.forwardslash.minus") {
                         Toggle("", isOn: $walletManager.homeShowCalculator).labelsHidden()
                     }
-                    if walletManager.activeCoin == .ethereum {
+                    if walletManager.showsTokenList {
                         SettingsDivider(inset: 60)
-                        SettingsRow(title: "Tokens", icon: "circle.hexagongrid") {
+                        SettingsRow(title: t("Coins and tokens", "Monedas y tokens"), icon: "circle.hexagongrid") {
                             Toggle("", isOn: $walletManager.homeShowTokens.animation()).labelsHidden()
                         }
                         if walletManager.homeShowTokens {
@@ -151,9 +151,11 @@ public struct SettingsView: View {
                                             icon: "slider.horizontal.3")
                             }
                         }
-                        SettingsDivider(inset: 60)
-                        SettingsRow(title: "NFTs", icon: "photo.on.rectangle.angled") {
-                            Toggle("", isOn: $walletManager.homeShowNFTs).labelsHidden()
+                        if walletManager.supportsNFTs {
+                            SettingsDivider(inset: 60)
+                            SettingsRow(title: "NFTs", icon: "photo.on.rectangle.angled") {
+                                Toggle("", isOn: $walletManager.homeShowNFTs).labelsHidden()
+                            }
                         }
                     } else if walletManager.activeCoin == .bitcoin {
                         SettingsDivider(inset: 60)
@@ -260,7 +262,7 @@ public struct SettingsView: View {
                         Button { showOrdinals = true } label: {
                             SettingsRow(title: "Ordinals", chevron: true, icon: "photo.on.rectangle.angled")
                         }
-                    } else if !walletManager.isDollars {
+                    } else if walletManager.supportsNFTs {
                         SettingsDivider(inset: 60)
                         Button { showNFTs = true } label: {
                             SettingsRow(title: "NFTs", chevron: true, icon: "photo.on.rectangle.angled")
@@ -376,7 +378,7 @@ public struct SettingsView: View {
                                     icon: "server.rack")
                     }
                     SettingsDivider(inset: 60)
-                    SettingsRow(title: walletManager.isEthereum ? "Sepolia" : "Testnet4", icon: "testtube.2") {
+                    SettingsRow(title: walletManager.isEthereum ? "Testnet" : "Testnet4", icon: "testtube.2") {
                         if isSwitchingNetwork {
                             ProgressView()
                         } else {
@@ -1299,10 +1301,11 @@ struct ContactEditorView: View {
                                 .padding(.horizontal, 16)
                                 .frame(minHeight: 52)
                         }
-                        SettingsSection(header: walletManager.isEthereum ? t("Ethereum address", "Dirección Ethereum")
-                                                                         : t("Bitcoin address", "Dirección Bitcoin"), footer: nil) {
+                        SettingsSection(header: t("\(walletManager.activeNetworkTitle) address", "Dirección \(walletManager.activeNetworkTitle)"),
+                                        footer: nil) {
                             HStack(spacing: 14) {
-                                TextField(walletManager.isEthereum ? "0x…" : "bc1…", text: $contact.address)
+                                TextField(walletManager.isEthereum ? walletManager.activeNetwork.addressPlaceholder : "bc1…",
+                                          text: $contact.address)
                                     .font(.system(size: 14, design: .monospaced))
                                     .textInputAutocapitalization(.never)
                                     .autocorrectionDisabled(true)

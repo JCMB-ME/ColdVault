@@ -176,8 +176,8 @@ extension WalletManager {
             return fiatText(units: availableSats, coin: .dollars)
         }
         if isEthereum {
-            guard homeShowFiat, let price = ethFiatPrice else { return nil }
-            let value = Double(availableSats) / 1_000_000_000 * price
+            guard homeShowFiat, let price = nativeFiatPrice(activeCoin.symbol) else { return nil }
+            let value = Double(availableSats) / activeCoin.unitsPerCoin * price
             return WalletManager.currencyFormatter(fiatCurrency, fractionDigits: nil).string(from: NSNumber(value: value))
         }
         guard homeShowFiat, let price = fiatPrice else { return nil }
@@ -198,7 +198,15 @@ extension WalletManager {
 
     /// Contacts whose address belongs to the coin of the wallet on screen.
     public var coinContacts: [Contact] {
-        contacts.filter { (EthereumAddress.parse($0.address) != nil) == isEthereum }
+        contacts.filter { contact in
+            switch activeCoin {
+            case .bitcoin: return BitcoinAddress.decode(contact.address) != nil
+            case .tron: return TronAddress.isValid(contact.address)
+            case .ton: return TonAddress.parse(contact.address) != nil
+            case .ethereum, .polygon: return EthereumAddress.parse(contact.address) != nil
+            case .dollars: return activeNetwork.isValidAddress(contact.address)
+            }
+        }
     }
 
     /// An amount of the wallet's coin (sats or gwei) in the chosen currency.
@@ -209,9 +217,9 @@ extension WalletManager {
         case .dollars:
             guard let factor = usdToFiat else { return nil }
             value = Double(units) / 1_000_000 * factor
-        case .ethereum:
-            guard let price = ethFiatPrice, price > 0 else { return nil }
-            value = Double(units) / 1_000_000_000 * price
+        case .ethereum, .polygon, .ton, .tron:
+            guard let price = nativeFiatPrice(kind.symbol), price > 0 else { return nil }
+            value = Double(units) / kind.unitsPerCoin * price
         case .bitcoin:
             guard let price = fiatPrice, price > 0 else { return nil }
             value = Double(units) / 100_000_000 * price
@@ -237,7 +245,7 @@ extension WalletManager {
     /// The history on screen: Ethereum / dollars wallets list only the chosen network.
     public var visibleTransactions: [WalletTransaction] {
         guard isEthereum else { return transactions }
-        let network = evmNetwork.rawValue
+        let network = activeNetwork.rawValue
         return transactions.filter { ($0.chain ?? EVMChain.ethereum.rawValue) == network }
     }
 
@@ -297,6 +305,17 @@ extension WalletManager {
             if let price = prices[currency] { fiatPrice = price }
         }
         guard homeShowPriceChart else { return }
+        if isEthereum && activeCoin != .ethereum {
+            let symbol = activeCoin.symbol
+            guard symbol != "USD" else { return }
+            let stale = coinHistoryFetch[symbol].map { Date().timeIntervalSince($0) > 12 * 3_600 } ?? true
+            if stale || coinPriceHistory[symbol] == nil,
+               let history = try? await BlockchainService.shared.fetchKrakenHistory(pair: "\(symbol)USD") {
+                coinPriceHistory[symbol] = history
+                coinHistoryFetch[symbol] = Date()
+            }
+            return
+        }
         if isEthereum {
             let staleEth = lastEthHistoryFetch.map { Date().timeIntervalSince($0) > 12 * 3_600 } ?? true
             if staleEth || ethPriceHistory.isEmpty,
@@ -328,12 +347,18 @@ extension WalletManager {
     /// 6M → 5 days, 1Y → 1 week, All → 1 month. Built from the price history.
     public func priceCandles(_ period: PricePeriod) -> [PriceCandle] {
         // The coin of the wallet on screen.
-        let history = isEthereum ? ethPriceHistory : priceHistory
-        let usd = isEthereum ? ethUsdPrice : usdPrice
-        let fiat = isEthereum ? ethFiatPrice : fiatPrice
+        let symbol = activeCoin.symbol
+        let history: [PricePoint]
+        let usd: Double?
+        let fiat: Double?
+        switch activeCoin {
+        case .bitcoin: (history, usd, fiat) = (priceHistory, usdPrice, fiatPrice)
+        case .ethereum: (history, usd, fiat) = (ethPriceHistory, ethUsdPrice, ethFiatPrice)
+        default: (history, usd, fiat) = (coinPriceHistory[symbol] ?? [], nativeUsdPrice(symbol), nativeFiatPrice(symbol))
+        }
         guard !history.isEmpty else { return [] }
         // Built once per data change (the chart re-renders on every published change).
-        let key = "\(isEthereum)-\(period.rawValue)-\(history.count)-\(history.last?.date.timeIntervalSince1970 ?? 0)-\(usd ?? 0)-\(fiat ?? 0)"
+        let key = "\(symbol)-\(period.rawValue)-\(history.count)-\(history.last?.date.timeIntervalSince1970 ?? 0)-\(usd ?? 0)-\(fiat ?? 0)"
         if let cached = WalletManager.candleCache[key] { return cached }
         let candles = buildCandles(period, history: history, usdPrice: usd, fiatPrice: fiat)
         if WalletManager.candleCache.count > 12 { WalletManager.candleCache.removeAll() }
@@ -415,7 +440,7 @@ extension WalletManager {
     /// Full transaction history of every used address (newest first).
     func refreshTransactions() async {
         guard let record = activeRecord else { return }
-        if record.coinKind.isEVM {
+        if record.coinKind.isAccountBased {
             await refreshEthereumTransactions()
             return
         }

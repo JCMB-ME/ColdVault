@@ -271,7 +271,7 @@ struct WalletsView: View {
     }
     private var keyWallets: [LibraryWallet] { coinWallets.filter { !isWatchOnly($0) } }
     private var watchWallets: [LibraryWallet] { coinWallets.filter { isWatchOnly($0) } }
-    private var testnetName: String { coin.isEVM ? "Sepolia" : "Testnet4" }
+    private var testnetName: String { coin.isAccountBased ? "Testnet" : "Testnet4" }
 
     /// One coin at a time (Bitcoin, Ethereum, Dollars): swipe sideways for the next or
     /// previous one, or tap for the next. Dots tell where you are.

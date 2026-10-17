@@ -115,7 +115,7 @@ public struct DashboardView: View {
         .onAppear { showBalancePage() }
         // Ethereum / dollars: shaking the iPhone on the balance switches network.
         .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
-            guard walletManager.isEthereum, onBalancePage, !anySheetOpen else { return }
+            guard walletManager.isEthereum, walletManager.activeCoin.networks.count > 1, onBalancePage, !anySheetOpen else { return }
             EVMNetworkPill.switchNetwork(walletManager)
         }
         .onChange(of: scenePhase) { phase in
@@ -201,6 +201,7 @@ public struct DashboardView: View {
                 EVMNetworkPill()
                     .environmentObject(walletManager)
                     .padding(.top, 10)
+                    .zIndex(10)                       // its list opens over the balance
             }
 
             // Badges sit above the scroll view, so the pull-to-refresh spinner appears
@@ -727,9 +728,7 @@ struct HomeExtrasView: View {
     }
 
     /// Contacts whose address belongs to the coin on screen.
-    private var coinContacts: [Contact] {
-        walletManager.contacts.filter { (EthereumAddress.parse($0.address) != nil) == walletManager.isEthereum }
-    }
+    private var coinContacts: [Contact] { walletManager.coinContacts }
 
     // MARK: Contacts (tap to send)
     private var contactsRow: some View {
@@ -894,8 +893,8 @@ struct MinimalPriceChart: View {
     var body: some View {
         let candles = walletManager.priceCandles(period)
         VStack(spacing: 6) {
-            Text((walletManager.isEthereum ? t("Ethereum price · ", "Precio de Ethereum · ")
-                                           : t("Bitcoin price · ", "Precio de Bitcoin · ")) + period.title(lang))
+            Text(t("\(walletManager.activeCoin.title(lang)) price · ", "Precio de \(walletManager.activeCoin.title(lang)) · ")
+                 + period.title(lang))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(Palette.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)

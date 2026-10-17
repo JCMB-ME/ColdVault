@@ -122,8 +122,11 @@ public struct CreateWalletView: View {
             VStack(spacing: 12) {
                 coinCard(.bitcoin, title: "Bitcoin", detail: t("BTC · SegWit, Taproot, Lightning", "BTC · SegWit, Taproot, Lightning"))
                 coinCard(.ethereum, title: "Ethereum", detail: t("ETH and tokens · Ethereum and Base", "ETH y tokens · Ethereum y Base"))
-                coinCard(.dollars, title: t("Dollars", "Dólares"),
-                         detail: t("USDC and USDT · Ethereum and Base", "USDC y USDT · Ethereum y Base"))
+                coinCard(.dollars, title: "Stable",
+                         detail: t("USDT and USDC · Ethereum, Base, Polygon, Tron, TON", "USDT y USDC · Ethereum, Base, Polygon, Tron, TON"))
+                coinCard(.ton, title: "TON", detail: t("Toncoin, jettons and NFTs", "Toncoin, jettons y NFTs"))
+                coinCard(.tron, title: "Tron", detail: t("TRX and USDT (TRC-20)", "TRX y USDT (TRC-20)"))
+                coinCard(.polygon, title: "Polygon", detail: t("POL, tokens and NFTs", "POL, tokens y NFTs"))
             }
             .padding(.horizontal, 20)
         }

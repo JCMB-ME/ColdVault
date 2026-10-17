@@ -20,7 +20,7 @@ struct NFTGalleryView: View {
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
-    private var networkName: String { walletManager.evmNetwork.name(testnet: walletManager.isTestnet) }
+    private var networkName: String { walletManager.activeNetwork.name(testnet: walletManager.isTestnet) }
 
     var body: some View {
         ZStack {
@@ -102,7 +102,7 @@ struct NFTGalleryView: View {
 
     private func load() async {
         let all = await walletManager.loadNFTs()
-        items = all.filter { $0.chain == walletManager.evmNetwork }
+        items = all.filter { $0.chain == walletManager.activeNetwork }
         isLoading = false
     }
 }
@@ -179,7 +179,7 @@ struct NFTDetailView: View {
                         row(t("Contract", "Contrato"), item.contract)
                     }
                     .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
-                    if let url = URL(string: "\(item.chain.explorer(testnet: walletManager.isTestnet))/nft/\(item.contract)/\(item.tokenId)") {
+                    if let url = item.chain.nftURL(contract: item.contract, tokenId: item.tokenId, testnet: walletManager.isTestnet) {
                         Link(destination: url) {
                             Label(t("View in explorer", "Ver en el explorador"), systemImage: "safari")
                                 .font(.system(size: 14, weight: .semibold))

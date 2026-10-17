@@ -384,8 +384,8 @@ public enum EthereumError: LocalizedError {
     case invalidAddress
     case insufficientFunds
     case insufficientToken(String)
-    /// A token payment needs ETH on that chain for the fee.
-    case noGas(String)
+    /// A token payment needs the network's coin (ETH, POL, TRX, TON) for the fee.
+    case noGas(String, String)
 
     public var errorDescription: String? {
         let english = !(Locale.preferredLanguages.first ?? "").lowercased().hasPrefix("es")
@@ -393,10 +393,10 @@ public enum EthereumError: LocalizedError {
         case .unavailable: return english ? "No Ethereum node answered. Try again." : "Ningún nodo de Ethereum respondió. Inténtalo de nuevo."
         case .server(let message): return (english ? "Ethereum node: " : "Nodo de Ethereum: ") + message
         case .invalidAddress: return english ? "Invalid Ethereum address (check the checksum)." : "Dirección de Ethereum inválida (revisa el checksum)."
-        case .insufficientFunds: return english ? "Not enough ETH for the amount plus the network fee." : "No hay suficiente ETH para el monto más la comisión de red."
+        case .insufficientFunds: return english ? "Not enough balance for the amount plus the network fee." : "No hay saldo suficiente para el monto más la comisión de red."
         case .insufficientToken(let symbol): return english ? "Not enough \(symbol) for this amount." : "No tienes suficiente \(symbol) para este monto."
-        case .noGas(let chain): return english ? "You need a little ETH on \(chain) to pay the network fee. Receive it at this same address."
-                                               : "Necesitas un poco de ETH en \(chain) para pagar la comisión de red. Recíbelo en esta misma dirección."
+        case .noGas(let chain, let coin): return english ? "You need a little \(coin) on \(chain) to pay the network fee. Receive it at this same address."
+                                                         : "Necesitas un poco de \(coin) en \(chain) para pagar la comisión de red. Recíbelo en esta misma dirección."
         }
     }
 }

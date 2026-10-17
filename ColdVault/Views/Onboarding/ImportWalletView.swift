@@ -32,19 +32,29 @@ public struct ImportWalletView: View {
         _coin = State(initialValue: coin)
     }
 
-    /// Ethereum input: phrase, 64-hex private key or 0x address (watch-only).
+    /// Account-based input: phrase, 64-hex private key (not TON) or an address of the
+    /// coin (watch-only).
     private var ethKind: String? {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
-        if EthereumAddress.parse(text) != nil { return t("Ethereum address (watch-only)", "Dirección de Ethereum (solo observación)") }
+        let isAddress: Bool
+        switch coin {
+        case .tron: isAddress = TronAddress.isValid(text)
+        case .ton: isAddress = TonAddress.parse(text) != nil
+        default: isAddress = EthereumAddress.parse(text) != nil
+        }
+        if isAddress { return t("\(coin.title(lang)) address (watch-only)", "Dirección de \(coin.title(lang)) (solo observación)") }
         if BIP39.validateMnemonic(text) { return t("Recovery phrase", "Frase de recuperación") }
         let hex = text.lowercased().replacingOccurrences(of: "0x", with: "")
-        if hex.count == 64, let key = hex.hexDecoded, Secp256k1.isValidPrivateKey(key) { return t("Private key", "Clave privada") }
+        if coin != .ton, hex.count == 64, let key = hex.hexDecoded, Secp256k1.isValidPrivateKey(key) {
+            return t("Private key", "Clave privada")
+        }
         return nil
     }
 
     private var coinPicker: some View {
-        HStack(spacing: 4) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)],
+                  spacing: 4) {
             ForEach(CoinKind.allCases) { item in
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -66,7 +76,7 @@ public struct ImportWalletView: View {
             }
         }
         .padding(4)
-        .background(Capsule().fill(SettingsStyle.groupFill))
+        .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(SettingsStyle.groupFill))
     }
 
     @ViewBuilder
@@ -78,7 +88,7 @@ public struct ImportWalletView: View {
                     .foregroundColor(.white)
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(ethKind == nil ? Color.orange : Color.green))
-                Text(ethKind ?? t("Not a phrase, private key or Ethereum address.", "No es una frase, clave privada ni dirección de Ethereum."))
+                Text(ethKind ?? t("Not a phrase, private key or \(coin.title(lang)) address.", "No es una frase, clave privada ni dirección de \(coin.title(lang))."))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Color(uiColor: .label))
                 Spacer()
@@ -117,7 +127,7 @@ public struct ImportWalletView: View {
     }
 
     private var isMnemonic: Bool {
-        if coin.isEVM { return BIP39.validateMnemonic(inputText.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        if coin.isAccountBased { return BIP39.validateMnemonic(inputText.trimmingCharacters(in: .whitespacesAndNewlines)) }
         if case .mnemonic = detection.payload { return true }
         return false
     }
@@ -147,7 +157,7 @@ public struct ImportWalletView: View {
                         .padding(.horizontal, 20)
 
                     Group {
-                        if coin.isEVM { ethDetectionCard } else { detectionCard }
+                        if coin.isAccountBased { ethDetectionCard } else { detectionCard }
                     }
                         .padding(.horizontal, 20)
                         .animation(.spring(response: 0.45, dampingFraction: 0.82), value: detectionKey)
@@ -403,7 +413,7 @@ public struct ImportWalletView: View {
     // MARK: - Import
 
     private var canImport: Bool {
-        if coin.isEVM { return ethKind != nil }
+        if coin.isAccountBased { return ethKind != nil }
         if let descriptors = detection.descriptors {
             if case .success = descriptors { return true }
             return false
@@ -420,7 +430,7 @@ public struct ImportWalletView: View {
         let input = inputText
         let chosenCoin = coin
         let isSecret: Bool
-        if chosenCoin.isEVM {
+        if chosenCoin.isAccountBased {
             isSecret = EthereumAddress.parse(input.trimmingCharacters(in: .whitespacesAndNewlines)) == nil
         } else {
             switch detection.payload {

@@ -16,24 +16,51 @@ public enum WalletSecurityType: String, Codable {
 
 /// The coin of a wallet. Bitcoin wallets made before Ethereum existed have none (nil).
 public enum CoinKind: String, Codable, CaseIterable, Identifiable {
-    /// `dollars`: an Ethereum account shown as USDC / USDT on Ethereum and Base.
-    case bitcoin, ethereum, dollars
+    /// `dollars` ("Stable"): stablecoins (USDC / USDT…) on every network the app knows.
+    case bitcoin, ethereum, dollars, ton, tron, polygon
     public var id: String { rawValue }
     public var symbol: String {
         switch self {
         case .bitcoin: return "BTC"
         case .ethereum: return "ETH"
         case .dollars: return "USD"
+        case .ton: return "TON"
+        case .tron: return "TRX"
+        case .polygon: return "POL"
         }
     }
-    /// Ethereum and dollars wallets: same keys, addresses and networks.
-    public var isEVM: Bool { self != .bitcoin }
+    /// Every coin but bitcoin: one account address, balances per network, tokens.
+    public var isAccountBased: Bool { self != .bitcoin }
+
+    /// Smallest units the app keeps per coin (sats, gwei, sun, nanotons, millionths of a dollar).
+    public var unitsPerCoin: Double {
+        switch self {
+        case .bitcoin: return 100_000_000
+        case .ethereum, .polygon, .ton: return 1_000_000_000
+        case .tron, .dollars: return 1_000_000
+        }
+    }
+
+    /// The networks a wallet of this coin shows (top selector).
+    public var networks: [EVMChain] {
+        switch self {
+        case .bitcoin: return []
+        case .ethereum: return [.ethereum, .base]
+        case .polygon: return [.polygon]
+        case .tron: return [.tron]
+        case .ton: return [.ton]
+        case .dollars: return [.ethereum, .base, .polygon, .tron, .ton]
+        }
+    }
 
     public func title(_ lang: AppLanguage) -> String {
         switch self {
         case .bitcoin: return "Bitcoin"
         case .ethereum: return "Ethereum"
-        case .dollars: return lang == .english ? "Dollars" : "Dólares"
+        case .dollars: return "Stable"
+        case .ton: return "TON"
+        case .tron: return "Tron"
+        case .polygon: return "Polygon"
         }
     }
 }
@@ -58,6 +85,9 @@ public struct StoredWalletRecord: Codable, Equatable {
     /// nil = bitcoin. Ethereum records: primaryAddress is the account's 0x address
     /// (m/44'/60'/0'/0/n), isTestnet means Sepolia.
     public var coin: CoinKind?
+    /// Addresses of the same account on other kinds of network ("tron": "T…",
+    /// "ton": "UQ…"), for Stable wallets. nil for older records (derived later).
+    public var chainAddresses: [String: String]?
 
     public var coinKind: CoinKind { coin ?? .bitcoin }
 

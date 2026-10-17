@@ -2,51 +2,63 @@
 //  WalletManager+Ethereum.swift
 //  ColdVault
 //
-//  Ethereum wallets work like the bitcoin ones (same library, accounts, names,
-//  pictures, backup, home screen), with their own coin:
-//   • a wallet = a recovery phrase (or a private key / watch-only 0x address);
-//   • account n = m/44'/60'/0'/0/n, the addresses MetaMask, Ledger and Trezor show
-//     for the same words; testnet = Sepolia;
-//   • balance from public nodes (EthereumRPC), history from Blockscout (no API key);
-//   • amounts are kept in gwei (10⁹ per ETH) where the app keeps sats, so balances,
-//     caches and history reuse the bitcoin plumbing; sends use exact wei.
+//  Account-based wallets (Ethereum, Polygon, Tron, TON and Stable) work like the
+//  bitcoin ones (same library, accounts, names, pictures, backup, home screen):
+//   • a wallet = a recovery phrase (or a private key / watch-only address);
+//   • account n = m/44'/60'/0'/0/n (0x), m/44'/195'/0'/0/n (Tron), m/44'/607'/n' (TON):
+//     what MetaMask, Trust Wallet, TronLink and Ledger show for the same words;
+//   • each coin shows one network at a time (Ethereum and Base for ETH; every
+//     network for Stable); balances, history and sends follow it;
+//   • amounts are kept in the coin's small unit where the app keeps sats (gwei,
+//     sun, nanotons, millionths of a dollar); sends use exact units.
 //
 
 import Foundation
 
+/// A payment ready to be signed, on one network.
+public enum ChainTransaction {
+    case evm(EthereumTransaction)
+    case tron(TronTransaction)
+    /// TON: what the key signs; the StateInit is added when the wallet is not deployed.
+    case ton(wallet: TonAddress, signing: TonCell, deploy: Bool)
+}
+
 public struct EthereumSendPlan {
-    public let transaction: EthereumTransaction
+    public let payload: ChainTransaction
     public let recipient: String
-    /// Most the network fee can be (gas limit × max fee); usually it is less. In ETH.
+    /// The network fee in the network's own coin (smallest units): the most it can be
+    /// on EVM chains, an estimate on Tron and TON.
     public let maxFee: UInt256
-    /// ETH leaving the account at most (amount + fee for ETH, the fee for a token).
+    /// Native coin leaving the account at most (amount + fee, or the fee for a token).
     public let total: UInt256
-    /// What is sent (ETH or a token, on one chain) and how much, in its own units.
+    /// What is sent (a native coin or a token, on one network) and how much.
     public let asset: EVMAsset
     public let amount: UInt256
+    public var feeIsEstimate: Bool { !asset.chain.isEVM }
 }
 
 extension WalletManager {
 
     nonisolated static let weiPerGwei: UInt64 = 1_000_000_000
 
-    /// Ethereum or dollars wallet (both are EVM accounts).
-    public var isEthereum: Bool { activeRecord?.coinKind.isEVM ?? false }
+    /// Any account-based wallet (Ethereum, Polygon, Tron, TON, Stable).
+    public var isEthereum: Bool { activeRecord?.coinKind.isAccountBased ?? false }
     public var isDollars: Bool { activeRecord?.coinKind == .dollars }
     public var activeCoin: CoinKind { activeRecord?.coinKind ?? .bitcoin }
 
-    // MARK: - Amounts (gwei)
+    // MARK: - Amounts
 
-    /// "0.0123" ETH from gwei, with the chosen decimals (automatic: up to 6).
-    public func formatEther(gwei: UInt64) -> String {
+    /// "0.0123" from units with `decimals` places, with the chosen decimals (automatic: up to 6).
+    public func formatUnits(_ units: UInt64, decimals: Int) -> String {
         let separator = Locale.current.decimalSeparator ?? "."
-        let whole = WalletManager.groupingFormatter.string(from: NSNumber(value: gwei / WalletManager.weiPerGwei))
-            ?? "\(gwei / WalletManager.weiPerGwei)"
-        let exact = String(gwei % WalletManager.weiPerGwei)
-        var fraction = String(repeating: "0", count: 9 - exact.count) + exact
-        if let decimals = displayDecimals {
-            if decimals == 0 { return whole }
-            fraction = decimals <= 9 ? String(fraction.prefix(decimals)) : fraction + String(repeating: "0", count: decimals - 9)
+        var divisor: UInt64 = 1
+        for _ in 0..<decimals { divisor *= 10 }
+        let whole = WalletManager.groupingFormatter.string(from: NSNumber(value: units / divisor)) ?? "\(units / divisor)"
+        let exact = String(units % divisor)
+        var fraction = String(repeating: "0", count: decimals - exact.count) + exact
+        if let chosen = displayDecimals {
+            if chosen == 0 { return whole }
+            fraction = chosen <= decimals ? String(fraction.prefix(chosen)) : fraction + String(repeating: "0", count: chosen - decimals)
             return whole + separator + fraction
         }
         fraction = String(fraction.prefix(6))
@@ -54,10 +66,14 @@ extension WalletManager {
         return fraction.isEmpty ? whole : whole + separator + fraction
     }
 
-    /// An amount of a coin in its own units (sats for bitcoin, gwei for ether).
+    /// "0.0123" ETH from gwei.
+    public func formatEther(gwei: UInt64) -> String { formatUnits(gwei, decimals: 9) }
+
+    /// An amount of a coin in its own units (sats, gwei, sun, nanotons, micro-dollars).
     public func format(units: UInt64, coin: CoinKind) -> String {
         switch coin {
-        case .ethereum: return formatEther(gwei: units)
+        case .ethereum, .polygon, .ton: return formatUnits(units, decimals: 9)
+        case .tron: return formatUnits(units, decimals: 6)
         case .dollars: return formatDollars(micro: units)
         case .bitcoin: return format(sats: units)
         }
@@ -73,11 +89,7 @@ extension WalletManager {
     }
 
     public func unitLabel(_ coin: CoinKind) -> String {
-        switch coin {
-        case .ethereum: return "ETH"
-        case .dollars: return "USD"
-        case .bitcoin: return displayUnit.rawValue
-        }
+        coin == .bitcoin ? displayUnit.rawValue : coin.symbol
     }
 
     nonisolated static func gwei(_ wei: UInt256) -> UInt64 {
@@ -85,7 +97,24 @@ extension WalletManager {
         return value < UInt256(UInt64.max) ? value.low64 : UInt64.max
     }
 
+    /// A native balance in the units the app keeps (gwei for EVM chains).
+    nonisolated static func units(_ native: UInt256, chain: EVMChain) -> UInt64 {
+        if chain.isEVM { return gwei(native) }
+        return native < UInt256(UInt64.max) ? native.low64 : UInt64.max
+    }
+
     // MARK: - Keys and addresses
+
+    nonisolated private static func seed(_ secret: WalletSecret) throws -> Data? {
+        guard let mnemonic = secret.mnemonic else { return nil }
+        return try BIP39.mnemonicToSeed(mnemonic: mnemonic, passphrase: secret.passphrase ?? "")
+    }
+
+    nonisolated private static func hexKey(_ secret: WalletSecret) -> Data? {
+        guard let hex = secret.privateKey?.lowercased().replacingOccurrences(of: "0x", with: ""),
+              hex.count == 64, let key = hex.hexDecoded, Secp256k1.isValidPrivateKey(key) else { return nil }
+        return key
+    }
 
     /// The account's 0x address (EIP-55) for a phrase or a hex private key.
     nonisolated static func ethereumAddress(secret: WalletSecret, account: UInt32) throws -> String {
@@ -95,39 +124,151 @@ extension WalletManager {
     }
 
     nonisolated static func ethereumKey(secret: WalletSecret, account: UInt32) throws -> Data {
-        if let mnemonic = secret.mnemonic {
-            let seed = try BIP39.mnemonicToSeed(mnemonic: mnemonic, passphrase: secret.passphrase ?? "")
+        if let seed = try seed(secret) {
             guard let key = EthereumKeys.privateKey(seed: seed, index: account) else { throw WalletError.derivationFailed }
             return key
         }
-        if let hex = secret.privateKey?.lowercased().replacingOccurrences(of: "0x", with: ""),
-           hex.count == 64, let key = hex.hexDecoded, Secp256k1.isValidPrivateKey(key) {
-            return key
-        }
+        if let key = hexKey(secret) { return key }
         throw WalletError.derivationFailed
     }
 
+    /// Tron key: m/44'/195'/0'/0/n of the phrase, or the same hex private key.
+    nonisolated static func tronKey(secret: WalletSecret, account: UInt32) throws -> Data {
+        if let seed = try seed(secret) {
+            guard let key = TronKeys.privateKey(seed: seed, index: account) else { throw WalletError.derivationFailed }
+            return key
+        }
+        if let key = hexKey(secret) { return key }
+        throw WalletError.derivationFailed
+    }
+
+    /// TON key: m/44'/607'/n' of the phrase (Ed25519; there is none for a hex key).
+    nonisolated static func tonKey(secret: WalletSecret, account: UInt32) throws -> Data {
+        guard let seed = try seed(secret) else { throw WalletError.derivationFailed }
+        return TonKeys.privateKey(seed: seed, index: account)
+    }
+
+    /// The main address of an account of `coin`, and (Stable) its Tron and TON addresses.
+    nonisolated static func accountAddresses(secret: WalletSecret, account: UInt32,
+                                             coin: CoinKind) throws -> (primary: String, extra: [String: String]?) {
+        let seed = try seed(secret)
+        let hex = hexKey(secret)
+        func evm() throws -> String {
+            let key = seed.flatMap { EthereumKeys.privateKey(seed: $0, index: account) } ?? hex
+            guard let key, let address = EthereumKeys.address(privateKey: key) else { throw WalletError.derivationFailed }
+            return EthereumAddress.checksummed(address)
+        }
+        func tron() throws -> String {
+            let key = seed.flatMap { TronKeys.privateKey(seed: $0, index: account) } ?? hex
+            guard let key, let address = TronKeys.address(privateKey: key) else { throw WalletError.derivationFailed }
+            return address
+        }
+        func ton() -> String? {
+            guard let seed, let publicKey = TonKeys.publicKey(privateKey: TonKeys.privateKey(seed: seed, index: account)) else {
+                return nil
+            }
+            return TonWallet.displayAddress(publicKey: publicKey, testnet: false)
+        }
+        switch coin {
+        case .ethereum, .polygon, .bitcoin: return (try evm(), nil)
+        case .tron: return (try tron(), nil)
+        case .ton:
+            guard let address = ton() else { throw WalletError.derivationFailed }
+            return (address, nil)
+        case .dollars:
+            var extra = ["tron": try tron()]
+            extra["ton"] = ton()
+            return (try evm(), extra)
+        }
+    }
+
     private func ethereumRecord(type: WalletSecurityType, address: String, isTestnet: Bool, account: UInt32,
-                                coin: CoinKind = .ethereum) -> StoredWalletRecord {
+                                coin: CoinKind = .ethereum, extra: [String: String]? = nil) -> StoredWalletRecord {
         var record = StoredWalletRecord(type: type, secretPayload: type == .watchOnly ? address : "",
                                         primaryAddress: address, taprootAddress: address, legacyAddress: address,
                                         createdAt: Date(), isTestnet: isTestnet)
         record.accountNumber = account
         record.coin = coin
+        record.chainAddresses = extra
         return record
+    }
+
+    /// The account's address on a network (nil: that network is not available to it).
+    /// TON addresses are shown in their testnet form on testnet.
+    public func address(on chain: EVMChain, record given: StoredWalletRecord? = nil) -> String? {
+        guard let record = given ?? activeRecord else { return nil }
+        func tonForm(_ text: String?) -> String? {
+            guard let text, let parsed = TonAddress.parse(text) else { return nil }
+            return parsed.friendly(bounceable: false, testnet: record.isTestnet)
+        }
+        switch record.coinKind {
+        case .bitcoin: return nil
+        case .ethereum, .polygon: return chain.isEVM ? record.primaryAddress : nil
+        case .tron: return chain == .tron ? record.primaryAddress : nil
+        case .ton: return chain == .ton ? tonForm(record.primaryAddress) : nil
+        case .dollars:
+            if chain.isEVM { return record.primaryAddress }
+            let stored = record.chainAddresses?[chain.rawValue]
+            return chain == .ton ? tonForm(stored) : stored
+        }
+    }
+
+    /// The network on screen: the one chosen if this coin has it, else its first.
+    public var activeNetwork: EVMChain {
+        let networks = activeCoin.networks
+        return networks.contains(evmNetwork) ? evmNetwork : (networks.first ?? .ethereum)
+    }
+
+    /// "Bitcoin", or the network on screen ("Tron", "TON"…) for contacts.
+    public var activeNetworkTitle: String {
+        isEthereum ? activeNetwork.name(testnet: false) : "Bitcoin"
+    }
+
+    /// The address on the network on screen.
+    public var activeAddress: String? { address(on: activeNetwork) }
+
+    /// Stable wallets made before Tron and TON: their addresses there need the phrase once.
+    public var canDeriveActiveNetwork: Bool {
+        guard let record = activeRecord, record.type == .mnemonic12 || record.type == .mnemonic24 else { return false }
+        return activeAddress == nil && record.coinKind == .dollars
+    }
+
+    /// Derives the Tron and TON addresses of every account of this Stable wallet (Face ID).
+    public func deriveNetworkAddresses() async throws {
+        guard let wallet = activeWallet else { throw WalletError.derivationFailed }
+        let secret = try await loadSecret(reason: appLanguage == .english ? "Confirm to add Tron and TON to this wallet"
+                                                                          : "Confirma para añadir Tron y TON a esta billetera")
+        var bundle = wallet.bundle
+        for position in bundle.accounts.indices {
+            let number = bundle.accounts[position].number
+            let result = try await Task.detached(priority: .userInitiated) {
+                try WalletManager.accountAddresses(secret: secret, account: number, coin: .dollars)
+            }.value
+            guard result.primary == bundle.accounts[position].record.primaryAddress else { throw WalletError.secretMismatch }
+            bundle.accounts[position].record.chainAddresses = result.extra
+        }
+        guard let index = library.firstIndex(where: { $0.slot == wallet.slot }) else { return }
+        library[index].bundle = bundle
+        writeMetadata(bundle, slot: wallet.slot)
+        selectWallet(slot: wallet.slot, account: bundle.selected)
     }
 
     // MARK: - Create / import
 
-    /// Stores an Ethereum wallet from a phrase, a 64-hex private key or a 0x address
+    /// Stores an account-based wallet from a phrase, a 64-hex private key or an address
     /// (watch-only) and selects it.
     @discardableResult
     func importEthereum(input: String, passphrase: String, isTestnet: Bool, coin: CoinKind = .ethereum) async throws -> StoredWalletRecord {
         try await ensureSelfTest()
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let address = EthereumAddress.parse(trimmed) {
-            let record = ethereumRecord(type: .watchOnly, address: EthereumAddress.checksummed(address),
-                                        isTestnet: isTestnet, account: 0, coin: coin)
+        var watchAddress: String?
+        switch coin {
+        case .tron: if TronAddress.isValid(trimmed) { watchAddress = trimmed }
+        case .ton: watchAddress = TonAddress.parse(trimmed)?.friendly(bounceable: false, testnet: false)
+        default: watchAddress = EthereumAddress.parse(trimmed).map { EthereumAddress.checksummed($0) }
+        }
+        if let watched = watchAddress {
+            let record = ethereumRecord(type: .watchOnly, address: watched, isTestnet: isTestnet, account: 0, coin: coin)
             let stored = try persist(record, secret: nil)
             renameNewEthereumWallet(coin)
             activate(stored)
@@ -140,26 +281,28 @@ extension WalletManager {
             secret = WalletSecret(mnemonic: words.joined(separator: " "), passphrase: passphrase.isEmpty ? nil : passphrase)
             type = words.count == 24 ? .mnemonic24 : .mnemonic12
         } else {
+            guard coin != .ton else { throw WalletError.derivationFailed }      // TON keys come from a phrase
             secret = WalletSecret(privateKey: trimmed.lowercased().replacingOccurrences(of: "0x", with: ""))
             type = .privateKey
         }
-        let address = try await Task.detached(priority: .userInitiated) {
-            try WalletManager.ethereumAddress(secret: secret, account: 0)
+        let result = try await Task.detached(priority: .userInitiated) {
+            try WalletManager.accountAddresses(secret: secret, account: 0, coin: coin)
         }.value
-        let stored = try persist(ethereumRecord(type: type, address: address, isTestnet: isTestnet, account: 0, coin: coin),
+        let stored = try persist(ethereumRecord(type: type, address: result.primary, isTestnet: isTestnet, account: 0,
+                                                coin: coin, extra: result.extra),
                                  secret: secret)
         renameNewEthereumWallet(coin)
         activate(stored)
         return stored
     }
 
-    /// "Ethereum n" / "Dólares n" instead of "Wallet n" for the wallet just stored.
+    /// "Ethereum n" / "Stable n" / "TON n"… instead of "Wallet n" for the wallet just stored.
     private func renameNewEthereumWallet(_ coin: CoinKind) {
         let count = library.filter { $0.bundle.accounts.first?.record.coinKind == coin }.count
         renameWallet(slot: activeSlot, to: "\(coin.title(appLanguage)) \(count)")
     }
 
-    /// Account n+1 of an Ethereum phrase wallet.
+    /// Account n+1 of a phrase wallet.
     func addEthereumAccount(name: String?) async throws {
         guard let wallet = activeWallet, let record = activeRecord, canAddAccounts else {
             throw WalletError.unsupportedForWatchOnly
@@ -170,11 +313,12 @@ extension WalletManager {
         var number: UInt32 = 0
         while used.contains(number) { number += 1 }
         let account = number
-        let address = try await Task.detached(priority: .userInitiated) {
-            try WalletManager.ethereumAddress(secret: secret, account: account)
+        let coin = record.coinKind
+        let result = try await Task.detached(priority: .userInitiated) {
+            try WalletManager.accountAddresses(secret: secret, account: account, coin: coin)
         }.value
-        let newRecord = ethereumRecord(type: record.type, address: address, isTestnet: record.isTestnet, account: number,
-                                       coin: record.coinKind)
+        let newRecord = ethereumRecord(type: record.type, address: result.primary, isTestnet: record.isTestnet, account: number,
+                                       coin: coin, extra: result.extra)
         guard let index = library.firstIndex(where: { $0.slot == wallet.slot }) else { return }
         let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         library[index].bundle.accounts.append(AccountSlot(number: number,
@@ -183,7 +327,7 @@ extension WalletManager {
         selectWallet(slot: wallet.slot, account: library[index].bundle.accounts.count - 1)
     }
 
-    /// Mainnet ⇄ Sepolia: same addresses, so nothing to derive.
+    /// Mainnet ⇄ testnet: same keys and addresses, so nothing to derive.
     func setEthereumNetwork(isTestnet: Bool) throws {
         guard let wallet = activeWallet else { throw WalletError.derivationFailed }
         var bundle = wallet.bundle
@@ -194,79 +338,135 @@ extension WalletManager {
         selectWallet(slot: wallet.slot, account: bundle.selected)
     }
 
-    // MARK: - Balance and history
+    // MARK: - Balance
 
-    /// ETH and tokens on every chain. Ethereum wallets: the balance is all the ETH;
-    /// dollars wallets: all the USDC + USDT (in millionths of a dollar).
-    /// A chain that does not answer keeps what it had, so the total never drops by mistake.
+    /// Coins and tokens on every network of the wallet. The balance is the native coin
+    /// (all its networks), or for Stable all the USDC + USDT (in millionths of a dollar).
+    /// A network that does not answer keeps what it had, so the total never drops by mistake.
     func refreshEthereumBalance() async {
         guard let record = activeRecord else { return }
         isLoadingBalance = true
         defer { isLoadingBalance = false }
-        let owner = record.primaryAddress
         let testnet = record.isTestnet
         let kind = record.coinKind
         var assets = [EVMAsset]()
         var failed = [EVMChain]()
-        for chain in EVMChain.allCases {
-            let rpc = EthereumRPC(isTestnet: testnet, chain: chain)
+        var tried = 0
+        for chain in kind.networks {
+            guard let owner = address(on: chain, record: record) else { continue }
+            tried += 1
             do {
-                let wei = try await rpc.balance(owner)
-                assets.append(EVMAsset(chain: chain, contract: nil, symbol: "ETH", name: "Ether", decimals: 18,
-                                       balance: wei, usdPrice: ethUsdPrice, iconURL: nil))
-                for token in KnownToken.stablecoins(testnet: testnet) where token.chain == chain {
-                    let value = (try? await rpc.tokenBalance(contract: token.contract, owner: owner)) ?? .zero
-                    if !value.isZero || kind == .dollars {
-                        assets.append(EVMAsset(chain: chain, contract: token.contract, symbol: token.symbol, name: token.name,
-                                               decimals: token.decimals, balance: value, usdPrice: 1, iconURL: nil))
-                    }
-                }
-                if kind == .ethereum {
-                    assets += await otherTokens(chain: chain, owner: owner, testnet: testnet)
+                switch chain {
+                case .tron: assets += try await tronAssets(owner: owner, testnet: testnet, kind: kind)
+                case .ton: assets += try await tonAssets(owner: owner, testnet: testnet, kind: kind)
+                default: assets += try await evmAssets(chain: chain, owner: owner, testnet: testnet, kind: kind)
                 }
             } catch {
                 failed.append(chain)
             }
         }
         guard activeRecord?.primaryAddress == record.primaryAddress, activeRecord?.coinKind == kind else { return }
-        if failed.count == EVMChain.allCases.count {
+        if tried > 0 && failed.count == tried {
             balanceError = EthereumError.unavailable.localizedDescription
             return
         }
-        // Keep the last known assets of a chain that did not answer.
+        // Keep the last known assets of a network that did not answer.
         assets += evmAssets.filter { failed.contains($0.chain) }
         evmAssets = assets
-        if kind == .dollars {
-            balanceSats = assets.filter { !$0.isNative && $0.isStablecoin }
-                .reduce(UInt64(0)) { $0 + ($1.balance < UInt256(UInt64.max) ? $1.balance.low64 : 0) }
-        } else {
-            balanceSats = assets.filter { $0.isNative }.reduce(UInt64(0)) { $0 + WalletManager.gwei($1.balance) }
-        }
+        balanceSats = WalletManager.balanceUnits(assets, dollars: kind == .dollars)
         balanceError = nil
         lastBalanceUpdate = Date()
     }
 
-    // MARK: - Network on screen
-
-    /// ETH and tokens on the network on screen.
-    public var networkAssets: [EVMAsset] { evmAssets.filter { $0.chain == evmNetwork } }
-
-    /// Balance of the network on screen: its ETH in gwei, or (dollars) its USDC + USDT
-    /// in millionths of a dollar. Before the first load, the cached total.
-    var networkUnits: UInt64 {
-        guard !evmAssets.isEmpty else { return balanceSats }
-        let assets = networkAssets
-        if isDollars {
+    /// Stable: USDC + USDT in millionths of a dollar; otherwise the native coins.
+    nonisolated static func balanceUnits(_ assets: [EVMAsset], dollars: Bool) -> UInt64 {
+        if dollars {
             return assets.filter { !$0.isNative && $0.isStablecoin }
                 .reduce(UInt64(0)) { $0 + ($1.balance < UInt256(UInt64.max) ? $1.balance.low64 : 0) }
         }
-        return assets.filter { $0.isNative }.reduce(UInt64(0)) { $0 + WalletManager.gwei($1.balance) }
+        return assets.filter { $0.isNative }.reduce(UInt64(0)) { $0 + units($1.balance, chain: $1.chain) }
     }
 
-    /// Next network (top button / shake), or the one given.
+    private func evmAssets(chain: EVMChain, owner: String, testnet: Bool, kind: CoinKind) async throws -> [EVMAsset] {
+        let rpc = EthereumRPC(isTestnet: testnet, chain: chain)
+        let wei = try await rpc.balance(owner)
+        var list = [EVMAsset(chain: chain, contract: nil, symbol: chain.nativeSymbol, name: chain.nativeName, decimals: 18,
+                             balance: wei, usdPrice: nativeUsdPrice(chain.nativeSymbol), iconURL: nil)]
+        for token in KnownToken.stablecoins(testnet: testnet) where token.chain == chain {
+            let value = (try? await rpc.tokenBalance(contract: token.contract, owner: owner)) ?? .zero
+            if !value.isZero || kind == .dollars {
+                list.append(EVMAsset(chain: chain, contract: token.contract, symbol: token.symbol, name: token.name,
+                                     decimals: token.decimals, balance: value, usdPrice: 1, iconURL: nil))
+            }
+        }
+        if kind != .dollars {
+            list += await otherTokens(chain: chain, owner: owner, testnet: testnet)
+        }
+        return list
+    }
+
+    private func tronAssets(owner: String, testnet: Bool, kind: CoinKind) async throws -> [EVMAsset] {
+        let account = try await TronAPI(isTestnet: testnet).account(owner)
+        var list = [EVMAsset(chain: .tron, contract: nil, symbol: "TRX", name: "Tron", decimals: 6,
+                             balance: UInt256(UInt64(max(0, account.sun))), usdPrice: nativeUsdPrice("TRX"), iconURL: nil)]
+        for token in KnownToken.stablecoins(testnet: testnet) where token.chain == .tron {
+            let value = account.tokens[token.contract] ?? .zero
+            if !value.isZero || kind == .dollars {
+                list.append(EVMAsset(chain: .tron, contract: token.contract, symbol: token.symbol, name: token.name,
+                                     decimals: token.decimals, balance: value, usdPrice: 1, iconURL: nil))
+            }
+        }
+        return list
+    }
+
+    /// TON and its jettons. Only genuine (tonapi whitelist) jettons with a price are
+    /// listed, which hides the scam airdrops; Stable lists USDT only.
+    private func tonAssets(owner: String, testnet: Bool, kind: CoinKind) async throws -> [EVMAsset] {
+        let api = TonAPI(isTestnet: testnet)
+        let wallet = try await api.wallet(owner)
+        var list = [EVMAsset(chain: .ton, contract: nil, symbol: "TON", name: "Toncoin", decimals: 9,
+                             balance: wallet.balance, usdPrice: nativeUsdPrice("TON"), iconURL: nil)]
+        let jettons = (try? await api.jettons(owner)) ?? []
+        var hasStable = false
+        for jetton in jettons {
+            let master = jetton.master.lowercased()
+            let stable = KnownToken.isStablecoin(master, chain: .ton, testnet: testnet)
+            if kind == .dollars {
+                guard stable else { continue }
+            } else {
+                guard stable || (jetton.verified && (jetton.usdPrice ?? 0) > 0), !jetton.balance.isZero else { continue }
+            }
+            hasStable = hasStable || stable
+            list.append(EVMAsset(chain: .ton, contract: master, symbol: stable ? "USDT" : String(jetton.symbol.prefix(11)),
+                                 name: stable ? "Tether USD" : jetton.name, decimals: jetton.decimals, balance: jetton.balance,
+                                 usdPrice: stable ? 1 : jetton.usdPrice, iconURL: stable ? nil : jetton.image,
+                                 tokenWallet: jetton.wallet))
+        }
+        if kind == .dollars && !hasStable,
+           let usdt = KnownToken.stablecoins(testnet: testnet).first(where: { $0.chain == .ton }) {
+            list.append(EVMAsset(chain: .ton, contract: usdt.contract, symbol: "USDT", name: usdt.name, decimals: 6,
+                                 balance: .zero, usdPrice: 1, iconURL: nil))
+        }
+        return list
+    }
+
+    // MARK: - Network on screen
+
+    /// Coins and tokens on the network on screen.
+    public var networkAssets: [EVMAsset] { evmAssets.filter { $0.chain == activeNetwork } }
+
+    /// Balance of the network on screen (its native coin, or Stable: its USDC + USDT).
+    /// Before the first load, the cached total.
+    var networkUnits: UInt64 {
+        guard !evmAssets.isEmpty else { return balanceSats }
+        return WalletManager.balanceUnits(networkAssets, dollars: isDollars)
+    }
+
+    /// Next network of this coin (top button / shake), or the one given.
     public func switchEVMNetwork(to chain: EVMChain? = nil) {
-        let all = EVMChain.allCases
-        evmNetwork = chain ?? all[((all.firstIndex(of: evmNetwork) ?? 0) + 1) % all.count]
+        let all = activeCoin.networks
+        guard !all.isEmpty else { return }
+        evmNetwork = chain ?? all[((all.firstIndex(of: activeNetwork) ?? 0) + 1) % all.count]
     }
 
     /// Tokens of the network on screen in the order chosen in Manage tokens (new ones
@@ -299,6 +499,10 @@ extension WalletManager {
         if visible { hiddenTokens.remove(asset.id) } else { hiddenTokens.insert(asset.id) }
     }
 
+    /// The coin lists its coins and tokens (Stable's list is its balance, always shown).
+    public var showsTokenList: Bool { isEthereum && !isDollars }
+    public var supportsNFTs: Bool { activeCoin == .ethereum || activeCoin == .polygon || activeCoin == .ton }
+
     // MARK: - Home blocks (NFTs / ordinals)
 
     private var collectiblesKey: String? {
@@ -323,10 +527,13 @@ extension WalletManager {
         homeInscriptions = list
     }
 
+    // MARK: - Tokens and NFTs from explorers
+
     /// Other ERC-20 tokens (PEPE, LINK…) from Blockscout. Only tokens with a market
     /// price are listed: that hides the spam airdrops every address receives.
     private func otherTokens(chain: EVMChain, owner: String, testnet: Bool) async -> [EVMAsset] {
-        guard let url = URL(string: "\(chain.blockscout(testnet: testnet))/api/v2/addresses/\(owner)/token-balances"),
+        guard let base = chain.blockscout(testnet: testnet),
+              let url = URL(string: "\(base)/api/v2/addresses/\(owner)/token-balances"),
               let data = await blockscoutData(url),
               let items = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return [] }
         return items.compactMap { item -> EVMAsset? in
@@ -345,101 +552,102 @@ extension WalletManager {
         }
     }
 
-    /// NFTs on every chain (Blockscout), newest collections first as Blockscout lists them.
+    /// NFTs on every network of the wallet: Blockscout (every page, up to 300) on EVM
+    /// chains, tonapi on TON.
     public func loadNFTs() async -> [EVMNFT] {
-        guard let record = activeRecord, record.coinKind.isEVM else { return [] }
+        guard let record = activeRecord, record.coinKind.isAccountBased else { return [] }
         var result = [EVMNFT]()
-        for chain in EVMChain.allCases {
-            let base = chain.blockscout(testnet: record.isTestnet)
-            guard let url = URL(string: "\(base)/api/v2/addresses/\(record.primaryAddress)/nft?type=ERC-721,ERC-1155"),
-                  let data = await blockscoutData(url),
-                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                  let items = object["items"] as? [[String: Any]] else { continue }
-            for item in items {
-                guard let token = item["token"] as? [String: Any],
-                      let contract = (token["address_hash"] as? String) ?? (token["address"] as? String),
-                      let tokenId = (item["id"] as? String) ?? (item["id"] as? NSNumber)?.stringValue else { continue }
-                let metadata = item["metadata"] as? [String: Any]
-                let collection = (token["name"] as? String) ?? (token["symbol"] as? String) ?? "NFT"
-                let name = (metadata?["name"] as? String) ?? "\(collection) #\(tokenId.prefix(12))"
-                let image = EVMNFT.webURL(item["image_url"] as? String) ?? EVMNFT.webURL(metadata?["image"] as? String)
-                let standard = (item["token_type"] as? String) ?? (token["type"] as? String) ?? "ERC-721"
-                result.append(EVMNFT(chain: chain, contract: contract, tokenId: tokenId, name: name,
-                                     collection: collection, details: (metadata?["description"] as? String) ?? "",
-                                     imageURL: image, standard: standard))
+        for chain in record.coinKind.networks {
+            guard let owner = address(on: chain, record: record) else { continue }
+            if chain == .ton {
+                result += await tonNFTs(owner: owner, testnet: record.isTestnet)
+                continue
+            }
+            guard let base = chain.blockscout(testnet: record.isTestnet) else { continue }
+            var query = "type=ERC-721,ERC-1155"
+            for _ in 0..<6 {
+                guard let url = URL(string: "\(base)/api/v2/addresses/\(owner)/nft?\(query)"),
+                      let data = await blockscoutData(url),
+                      let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                      let items = object["items"] as? [[String: Any]] else { break }
+                for item in items {
+                    guard let token = item["token"] as? [String: Any],
+                          let contract = (token["address_hash"] as? String) ?? (token["address"] as? String),
+                          let tokenId = (item["id"] as? String) ?? (item["id"] as? NSNumber)?.stringValue else { continue }
+                    let metadata = item["metadata"] as? [String: Any]
+                    let collection = (token["name"] as? String) ?? (token["symbol"] as? String) ?? "NFT"
+                    let name = (metadata?["name"] as? String) ?? "\(collection) #\(tokenId.prefix(12))"
+                    let image = EVMNFT.webURL(item["image_url"] as? String) ?? EVMNFT.webURL(metadata?["image"] as? String)
+                    let standard = (item["token_type"] as? String) ?? (token["type"] as? String) ?? "ERC-721"
+                    result.append(EVMNFT(chain: chain, contract: contract, tokenId: tokenId, name: name,
+                                         collection: collection, details: (metadata?["description"] as? String) ?? "",
+                                         imageURL: image, standard: standard))
+                }
+                // Next page: Blockscout returns the parameters to ask for it.
+                guard let next = object["next_page_params"] as? [String: Any], !next.isEmpty else { break }
+                var components = URLComponents()
+                components.queryItems = [URLQueryItem(name: "type", value: "ERC-721,ERC-1155")]
+                    + next.map { URLQueryItem(name: $0.key, value: "\($0.value)") }
+                guard let text = components.percentEncodedQuery else { break }
+                query = text
             }
         }
         return result
     }
 
+    private func tonNFTs(owner: String, testnet: Bool) async -> [EVMNFT] {
+        let items = (try? await TonAPI(isTestnet: testnet).nfts(owner)) ?? []
+        return items.compactMap { item in
+            guard let address = item["address"] as? String, (item["trust"] as? String) != "blacklist" else { return nil }
+            let metadata = item["metadata"] as? [String: Any]
+            let collection = ((item["collection"] as? [String: Any])?["name"] as? String) ?? "NFT"
+            let previews = (item["previews"] as? [[String: Any]]) ?? []
+            let preview = previews.first { ($0["resolution"] as? String) == "500x500" } ?? previews.last
+            let image = EVMNFT.webURL(preview?["url"] as? String) ?? EVMNFT.webURL(metadata?["image"] as? String)
+            return EVMNFT(chain: .ton, contract: address, tokenId: String((item["index"] as? NSNumber)?.int64Value ?? 0),
+                          name: (metadata?["name"] as? String) ?? collection, collection: collection,
+                          details: (metadata?["description"] as? String) ?? "", imageURL: image, standard: "TON NFT")
+        }
+    }
+
+    /// Blockscout behind Cloudflare turns away requests that do not look like a browser
+    /// (Base and Polygon answer 403), so it is asked like Safari would.
     private func blockscoutData(_ url: URL) async -> Data? {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = TorProxy.isEnabled ? 45 : 20
         TorProxy.apply(to: config)
         let session = URLSession(configuration: config)
         defer { session.finishTasksAndInvalidate() }
-        guard let (data, response) = try? await session.data(from: url),
+        var request = URLRequest(url: url)
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                         forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard let (data, response) = try? await session.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return data
     }
 
-    /// History from Blockscout on every chain. Ethereum wallets: ETH moves (received
-    /// value, or value + fee sent), in gwei. Dollars wallets: USDC / USDT transfers.
+    // MARK: - History
+
+    /// History on every network. Native wallets: moves of the native coin (received
+    /// value, or value + fee sent). Stable: USDC / USDT transfers.
     func refreshEthereumTransactions() async {
         guard let record = activeRecord else { return }
         isLoadingTransactions = true
         defer { isLoadingTransactions = false }
-        let me = record.primaryAddress.lowercased()
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         var list = [WalletTransaction]()
         var answered = false
-        for chain in EVMChain.allCases {
-            let base = chain.blockscout(testnet: record.isTestnet)
-            if record.coinKind == .dollars {
-                guard let url = URL(string: "\(base)/api/v2/addresses/\(record.primaryAddress)/token-transfers?type=ERC-20"),
-                      let data = await blockscoutData(url),
-                      let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                      let items = object["items"] as? [[String: Any]] else { continue }
+        for chain in record.coinKind.networks {
+            guard let owner = address(on: chain, record: record) else { continue }
+            let found: [WalletTransaction]?
+            switch chain {
+            case .tron: found = await tronHistory(owner: owner, record: record)
+            case .ton: found = await tonHistory(owner: owner, record: record)
+            default: found = await evmHistory(chain: chain, owner: owner, record: record)
+            }
+            if let found {
                 answered = true
-                var byHash = [String: WalletTransaction]()
-                for item in items {
-                    guard let hash = (item["transaction_hash"] as? String) ?? (item["tx_hash"] as? String),
-                          let token = item["token"] as? [String: Any],
-                          let contract = (token["address_hash"] as? String) ?? (token["address"] as? String),
-                          KnownToken.isStablecoin(contract, chain: chain, testnet: record.isTestnet),
-                          let total = item["total"] as? [String: Any],
-                          let value = UInt256(decimal: total["value"] as? String ?? "", decimals: 0),
-                          value < UInt256(UInt64(Int64.max)) else { continue }
-                    let from = ((item["from"] as? [String: Any])?["hash"] as? String)?.lowercased()
-                    let to = ((item["to"] as? [String: Any])?["hash"] as? String)?.lowercased()
-                    var net = byHash[hash]?.net ?? 0
-                    if to == me { net += Int64(value.low64) }
-                    if from == me { net -= Int64(value.low64) }
-                    let date = (item["timestamp"] as? String).flatMap { iso.date(from: $0) }
-                    byHash[hash] = WalletTransaction(txid: hash, net: net, date: date, confirmed: true, chain: chain.rawValue)
-                }
-                list += byHash.values
-            } else {
-                guard let url = URL(string: "\(base)/api/v2/addresses/\(record.primaryAddress)/transactions"),
-                      let data = await blockscoutData(url),
-                      let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                      let items = object["items"] as? [[String: Any]] else { continue }
-                answered = true
-                list += items.compactMap { item in
-                    guard let hash = item["hash"] as? String else { return nil }
-                    let from = ((item["from"] as? [String: Any])?["hash"] as? String)?.lowercased()
-                    let to = ((item["to"] as? [String: Any])?["hash"] as? String)?.lowercased()
-                    let value = WalletManager.gwei(UInt256(decimal: item["value"] as? String ?? "0", decimals: 0) ?? .zero)
-                    let fee = WalletManager.gwei(UInt256(decimal: (item["fee"] as? [String: Any])?["value"] as? String ?? "0", decimals: 0) ?? .zero)
-                    let failed = (item["status"] as? String) == "error"
-                    var net: Int64 = 0
-                    if to == me && !failed { net += Int64(clamping: value) }
-                    if from == me { net -= Int64(clamping: (failed ? 0 : value) + fee) }
-                    let date = (item["timestamp"] as? String).flatMap { iso.date(from: $0) }
-                    let confirmed = !(item["block_number"] is NSNull) && item["block_number"] != nil
-                    return WalletTransaction(txid: hash, net: net, date: date, confirmed: confirmed, chain: chain.rawValue)
-                }
+                list += found
             }
         }
         // Nothing answered: keep the list on screen.
@@ -447,17 +655,160 @@ extension WalletManager {
         transactions = WalletManager.sorted(list)
     }
 
-    /// Sender, recipient and fee of a transaction (Blockscout). Dollars wallets show the
-    /// USDC / USDT transfer; the fee is always in gwei of ETH.
+    private func evmHistory(chain: EVMChain, owner: String, record: StoredWalletRecord) async -> [WalletTransaction]? {
+        guard let base = chain.blockscout(testnet: record.isTestnet) else { return nil }
+        let me = owner.lowercased()
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if record.coinKind == .dollars {
+            guard let url = URL(string: "\(base)/api/v2/addresses/\(owner)/token-transfers?type=ERC-20"),
+                  let data = await blockscoutData(url),
+                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let items = object["items"] as? [[String: Any]] else { return nil }
+            var byHash = [String: WalletTransaction]()
+            for item in items {
+                guard let hash = (item["transaction_hash"] as? String) ?? (item["tx_hash"] as? String),
+                      let token = item["token"] as? [String: Any],
+                      let contract = (token["address_hash"] as? String) ?? (token["address"] as? String),
+                      KnownToken.isStablecoin(contract, chain: chain, testnet: record.isTestnet),
+                      let total = item["total"] as? [String: Any],
+                      let value = UInt256(decimal: total["value"] as? String ?? "", decimals: 0),
+                      value < UInt256(UInt64(Int64.max)) else { continue }
+                let from = ((item["from"] as? [String: Any])?["hash"] as? String)?.lowercased()
+                let to = ((item["to"] as? [String: Any])?["hash"] as? String)?.lowercased()
+                var net = byHash[hash]?.net ?? 0
+                if to == me { net += Int64(value.low64) }
+                if from == me { net -= Int64(value.low64) }
+                let date = (item["timestamp"] as? String).flatMap { iso.date(from: $0) }
+                byHash[hash] = WalletTransaction(txid: hash, net: net, date: date, confirmed: true, chain: chain.rawValue)
+            }
+            return Array(byHash.values)
+        }
+        guard let url = URL(string: "\(base)/api/v2/addresses/\(owner)/transactions"),
+              let data = await blockscoutData(url),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let items = object["items"] as? [[String: Any]] else { return nil }
+        return items.compactMap { item in
+            guard let hash = item["hash"] as? String else { return nil }
+            let from = ((item["from"] as? [String: Any])?["hash"] as? String)?.lowercased()
+            let to = ((item["to"] as? [String: Any])?["hash"] as? String)?.lowercased()
+            let value = WalletManager.gwei(UInt256(decimal: item["value"] as? String ?? "0", decimals: 0) ?? .zero)
+            let fee = WalletManager.gwei(UInt256(decimal: (item["fee"] as? [String: Any])?["value"] as? String ?? "0", decimals: 0) ?? .zero)
+            let failed = (item["status"] as? String) == "error"
+            var net: Int64 = 0
+            if to == me && !failed { net += Int64(clamping: value) }
+            if from == me { net -= Int64(clamping: (failed ? 0 : value) + fee) }
+            let date = (item["timestamp"] as? String).flatMap { iso.date(from: $0) }
+            let confirmed = !(item["block_number"] is NSNull) && item["block_number"] != nil
+            return WalletTransaction(txid: hash, net: net, date: date, confirmed: confirmed, chain: chain.rawValue)
+        }
+    }
+
+    private func tronHistory(owner: String, record: StoredWalletRecord) async -> [WalletTransaction]? {
+        let api = TronAPI(isTestnet: record.isTestnet)
+        if record.coinKind == .dollars {
+            guard let items = try? await api.tokenTransfers(owner) else { return nil }
+            var byID = [String: WalletTransaction]()
+            for item in items {
+                guard let id = item["transaction_id"] as? String,
+                      let contract = (item["token_info"] as? [String: Any])?["address"] as? String,
+                      KnownToken.isStablecoin(contract, chain: .tron, testnet: record.isTestnet),
+                      let value = UInt256(decimal: (item["value"] as? String) ?? "", decimals: 0),
+                      value < UInt256(UInt64(Int64.max)) else { continue }
+                var net = byID[id]?.net ?? 0
+                if (item["to"] as? String) == owner { net += Int64(value.low64) }
+                if (item["from"] as? String) == owner { net -= Int64(value.low64) }
+                let date = (item["block_timestamp"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
+                byID[id] = WalletTransaction(txid: id, net: net, date: date, confirmed: true, chain: EVMChain.tron.rawValue)
+            }
+            return Array(byID.values)
+        }
+        guard let items = try? await api.transactions(owner),
+              let ownerBytes = TronAddress.parse(owner) else { return nil }
+        let me = ownerBytes.hexEncodedString.lowercased()
+        return items.compactMap { item in
+            guard let id = item["txID"] as? String,
+                  let contract = ((item["raw_data"] as? [String: Any])?["contract"] as? [[String: Any]])?.first,
+                  let value = (contract["parameter"] as? [String: Any])?["value"] as? [String: Any] else { return nil }
+            let result = (item["ret"] as? [[String: Any]])?.first
+            let fee = (result?["fee"] as? NSNumber)?.int64Value ?? 0
+            let failed = (result?["contractRet"] as? String).map { $0 != "SUCCESS" } ?? false
+            let from = (value["owner_address"] as? String)?.lowercased()
+            var net: Int64 = 0
+            if (contract["type"] as? String) == "TransferContract" {
+                let amount = (value["amount"] as? NSNumber)?.int64Value ?? 0
+                if (value["to_address"] as? String)?.lowercased() == me && !failed { net += amount }
+                if from == me { net -= (failed ? 0 : amount) + fee }
+            } else if from == me {
+                net -= fee                                     // contract calls: the TRX burnt
+            } else {
+                return nil
+            }
+            guard net != 0 else { return nil }
+            let date = (item["block_timestamp"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
+            return WalletTransaction(txid: id, net: net, date: date, confirmed: true, chain: EVMChain.tron.rawValue)
+        }
+    }
+
+    /// tonapi events: TON transfers (plus the fee, in the event's "extra"), or USDT
+    /// jetton transfers for Stable.
+    private func tonHistory(owner: String, record: StoredWalletRecord) async -> [WalletTransaction]? {
+        guard let me = TonAddress.parse(owner)?.raw.lowercased(),
+              let events = try? await TonAPI(isTestnet: record.isTestnet).events(owner) else { return nil }
+        let usdt = KnownToken.stablecoins(testnet: record.isTestnet).first { $0.chain == .ton }?.contract.lowercased()
+        return events.compactMap { event in
+            guard let id = event["event_id"] as? String else { return nil }
+            var net: Int64 = 0
+            var touched = false
+            for action in (event["actions"] as? [[String: Any]]) ?? [] {
+                guard (action["status"] as? String) != "failed" else { continue }
+                if record.coinKind == .dollars {
+                    guard let transfer = action["JettonTransfer"] as? [String: Any],
+                          ((transfer["jetton"] as? [String: Any])?["address"] as? String)?.lowercased() == usdt,
+                          let amount = Int64((transfer["amount"] as? String) ?? "") else { continue }
+                    let sender = ((transfer["sender"] as? [String: Any])?["address"] as? String)?.lowercased()
+                    let recipient = ((transfer["recipient"] as? [String: Any])?["address"] as? String)?.lowercased()
+                    if recipient == me { net += amount; touched = true }
+                    if sender == me { net -= amount; touched = true }
+                } else if let transfer = action["TonTransfer"] as? [String: Any] {
+                    let amount = (transfer["amount"] as? NSNumber)?.int64Value ?? 0
+                    let sender = ((transfer["sender"] as? [String: Any])?["address"] as? String)?.lowercased()
+                    let recipient = ((transfer["recipient"] as? [String: Any])?["address"] as? String)?.lowercased()
+                    if recipient == me { net += amount; touched = true }
+                    if sender == me { net -= amount; touched = true }
+                }
+            }
+            if record.coinKind != .dollars {
+                // What the account paid in fees (or got back as excess) in this event.
+                let extra = (event["extra"] as? NSNumber)?.int64Value ?? 0
+                if extra != 0 { net += extra; touched = true }
+            }
+            guard touched, net != 0 else { return nil }
+            let date = (event["timestamp"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) }
+            return WalletTransaction(txid: id, net: net, date: date, confirmed: !((event["in_progress"] as? Bool) ?? false),
+                                     chain: EVMChain.ton.rawValue)
+        }
+    }
+
+    // MARK: - One transaction
+
+    /// Sender, recipient and fee of a transaction. Stable shows the USDC / USDT transfer;
+    /// the fee is in the network's coin (gwei on EVM chains, sun, nanotons).
     public func ethereumTransactionInfo(hash: String, chain: EVMChain = .ethereum) async throws -> TransactionFeeInfo {
-        guard let record = activeRecord, hash.hasPrefix("0x"), hash.count == 66,
+        switch chain {
+        case .tron: return try await tronTransactionInfo(id: hash)
+        case .ton: return try await tonTransactionInfo(id: hash)
+        default: break
+        }
+        guard let record = activeRecord, let owner = address(on: chain), hash.hasPrefix("0x"), hash.count == 66,
               hash.dropFirst(2).allSatisfy({ $0.isHexDigit }) else { throw EthereumError.invalidAddress }
-        guard let url = URL(string: "\(chain.blockscout(testnet: record.isTestnet))/api/v2/transactions/\(hash)"),
+        guard let base = chain.blockscout(testnet: record.isTestnet),
+              let url = URL(string: "\(base)/api/v2/transactions/\(hash)"),
               let data = await blockscoutData(url),
               let item = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             throw BlockchainError.invalidResponse
         }
-        let me = record.primaryAddress.lowercased()
+        let me = owner.lowercased()
         let fee = WalletManager.gwei(UInt256(decimal: (item["fee"] as? [String: Any])?["value"] as? String ?? "0", decimals: 0) ?? .zero)
         var info = TransactionFeeInfo(fee: fee, vsize: 0)
         if record.coinKind == .dollars, let transfers = item["token_transfers"] as? [[String: Any]] {
@@ -479,7 +830,72 @@ extension WalletManager {
         return info
     }
 
-    /// Live ETH price in the chosen currency (and in dollars, for token values).
+    private func tronTransactionInfo(id: String) async throws -> TransactionFeeInfo {
+        guard let record = activeRecord, let owner = address(on: .tron), id.count == 64, id.allSatisfy({ $0.isHexDigit }) else {
+            throw TronError.invalidAddress
+        }
+        let (tx, receipt) = try await TronAPI(isTestnet: record.isTestnet).transaction(id: id)
+        let fee = UInt64(max(0, (receipt["fee"] as? NSNumber)?.int64Value ?? 0))
+        var info = TransactionFeeInfo(fee: fee, vsize: 0)
+        guard let contract = ((tx["raw_data"] as? [String: Any])?["contract"] as? [[String: Any]])?.first,
+              let value = (contract["parameter"] as? [String: Any])?["value"] as? [String: Any],
+              let fromHex = value["owner_address"] as? String, let from = TronAPI.base58(hex: fromHex) else { return info }
+        if (contract["type"] as? String) == "TransferContract",
+           let toHex = value["to_address"] as? String, let to = TronAPI.base58(hex: toHex) {
+            let amount = UInt64(max(0, (value["amount"] as? NSNumber)?.int64Value ?? 0))
+            info.inputs = [TxParty(id: 0, address: from, value: amount + fee, isOwn: from == owner)]
+            info.outputs = [TxParty(id: 0, address: to, value: amount, isOwn: to == owner)]
+        } else if let data = (value["data"] as? String)?.hexDecoded, data.count == 68,
+                  data.prefix(4) == Data([0xa9, 0x05, 0x9c, 0xbb]),
+                  let to = TronAPI.base58(hex: "41" + data.subdata(in: 16..<36).hexEncodedString) {
+            // A TRC-20 transfer: the token amount (6 decimals for USDT).
+            let amount = UInt256(bigEndian: data.subdata(in: 36..<68)) ?? .zero
+            let units = amount < UInt256(UInt64.max) ? amount.low64 : 0
+            info.inputs = [TxParty(id: 0, address: from, value: units, isOwn: from == owner)]
+            info.outputs = [TxParty(id: 0, address: to, value: units, isOwn: to == owner)]
+        }
+        return info
+    }
+
+    private func tonTransactionInfo(id: String) async throws -> TransactionFeeInfo {
+        guard let record = activeRecord, let owner = address(on: .ton), let me = TonAddress.parse(owner) else {
+            throw TonError.invalidAddress
+        }
+        let event = try await TonAPI(isTestnet: record.isTestnet).event(id)
+        let extra = (event["extra"] as? NSNumber)?.int64Value ?? 0
+        var info = TransactionFeeInfo(fee: UInt64(max(0, -extra)), vsize: 0)
+        func party(_ object: Any?) -> String {
+            guard let raw = (object as? [String: Any])?["address"] as? String, let parsed = TonAddress.parse(raw) else { return "" }
+            return parsed.friendly(bounceable: false, testnet: record.isTestnet)
+        }
+        for (index, action) in ((event["actions"] as? [[String: Any]]) ?? []).enumerated() {
+            guard let transfer = (action["TonTransfer"] as? [String: Any]) ?? (action["JettonTransfer"] as? [String: Any]) else {
+                continue
+            }
+            let amount = (transfer["amount"] as? NSNumber)?.uint64Value ?? UInt64((transfer["amount"] as? String) ?? "") ?? 0
+            let from = party(transfer["sender"])
+            let to = party(transfer["recipient"])
+            info.inputs.append(TxParty(id: index, address: from, value: amount, isOwn: TonAddress.parse(from) == me))
+            info.outputs.append(TxParty(id: index, address: to, value: amount, isOwn: TonAddress.parse(to) == me))
+        }
+        return info
+    }
+
+    // MARK: - Prices
+
+    /// Price of one coin in US dollars (ETH from Coinbase; POL, TRX and TON from Kraken).
+    public func nativeUsdPrice(_ symbol: String) -> Double? {
+        symbol == "ETH" ? ethUsdPrice : coinUsdPrices[symbol]
+    }
+
+    /// Price of one coin in the chosen currency.
+    public func nativeFiatPrice(_ symbol: String) -> Double? {
+        if symbol == "ETH", let price = ethFiatPrice { return price }
+        guard let usd = nativeUsdPrice(symbol), let factor = usdToFiat else { return nil }
+        return usd * factor
+    }
+
+    /// Live prices of the coins of the wallet on screen.
     func refreshEthereumPrice() async {
         if let prices = try? await BlockchainService.shared.fetchSpotPrices(base: "ETH") {
             ethUsdPrice = prices["USD"]
@@ -487,13 +903,25 @@ extension WalletManager {
         } else if let price = await EthereumRPC(isTestnet: false).price(currency: fiatCurrency) {
             ethFiatPrice = price
         }
+        let symbols = Set(activeCoin.networks.map { $0.nativeSymbol }).subtracting(["ETH"])
+        guard !symbols.isEmpty else { return }
+        let pairs = symbols.sorted().map { "\($0)USD" }.joined(separator: ",")
+        guard let url = URL(string: "https://api.kraken.com/0/public/Ticker?pair=\(pairs)"),
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = object["result"] as? [String: Any] else { return }
+        for symbol in symbols {
+            guard let ticker = result.first(where: { $0.key.hasPrefix(symbol) })?.value as? [String: Any],
+                  let text = (ticker["c"] as? [Any])?.first as? String, let price = Double(text), price > 0 else { continue }
+            coinUsdPrices[symbol] = price
+        }
     }
 
     /// An asset's value in the chosen currency.
     public func fiatValue(of asset: EVMAsset) -> String? {
         let value: Double
         if asset.isNative {
-            guard let price = ethFiatPrice else { return nil }
+            guard let price = nativeFiatPrice(asset.symbol) else { return nil }
             value = asset.amount * price
         } else {
             guard let usd = asset.usdValue, let factor = usdToFiat else { return nil }
@@ -504,25 +932,26 @@ extension WalletManager {
 
     // MARK: - Send
 
-    /// The account's private key (Face ID / passcode).
-    private func ethereumPrivateKey(reason: String) async throws -> Data {
-        let secret = try await loadSecret(reason: reason)
-        let account = activeRecord?.accountNumber ?? 0
-        return try WalletManager.ethereumKey(secret: secret, account: account)
+    /// Builds (does not sign) a payment of a native coin or a token on one network;
+    /// `amount == nil` sends everything (native coin: minus the fee). The fee is paid in
+    /// that network's coin. `fast` (EVM) pays a higher tip to be included sooner.
+    public func prepareEVMSend(asset: EVMAsset, to recipient: String, amount: UInt256?, fast: Bool = false) async throws -> EthereumSendPlan {
+        switch asset.chain {
+        case .tron: return try await prepareTronSend(asset: asset, to: recipient, amount: amount)
+        case .ton: return try await prepareTonSend(asset: asset, to: recipient, amount: amount)
+        default: return try await prepareEVMChainSend(asset: asset, to: recipient, amount: amount, fast: fast)
+        }
     }
 
-    /// Builds (does not sign) a payment of ETH or a token on one chain; `amount == nil`
-    /// sends everything (ETH: minus the fee). The fee is always paid in that chain's ETH.
-    /// `fast` pays a higher tip to be included sooner.
-    public func prepareEVMSend(asset: EVMAsset, to recipient: String, amount: UInt256?, fast: Bool = false) async throws -> EthereumSendPlan {
-        guard let from = activeRecord?.primaryAddress, isEthereum else { throw WalletError.derivationFailed }
-        guard let to = EthereumAddress.parse(recipient) else { throw EthereumError.invalidAddress }
+    private func prepareEVMChainSend(asset: EVMAsset, to recipient: String, amount: UInt256?, fast: Bool) async throws -> EthereumSendPlan {
         let chain = asset.chain
+        guard let from = address(on: chain) else { throw WalletError.derivationFailed }
+        guard let to = EthereumAddress.parse(recipient) else { throw EthereumError.invalidAddress }
         let rpc = EthereumRPC(isTestnet: isTestnet, chain: chain)
         async let balanceCall = rpc.balance(from)
         async let nonceCall = rpc.nonce(from)
         async let feesCall = rpc.fees()
-        let (ethBalance, nonce, fees) = try await (balanceCall, nonceCall, feesCall)
+        let (nativeBalance, nonce, fees) = try await (balanceCall, nonceCall, feesCall)
 
         let tip = fast ? (fees.tip.multiplied(by: 2) ?? fees.tip) : fees.tip
         // Max fee: twice the current base fee plus the tip (room for a few full blocks).
@@ -563,36 +992,158 @@ extension WalletManager {
             if let amount = amount {
                 value = amount
             } else {
-                guard let rest = ethBalance.subtracting(maxFee), !rest.isZero else { throw EthereumError.insufficientFunds }
+                guard let rest = nativeBalance.subtracting(maxFee), !rest.isZero else { throw EthereumError.insufficientFunds }
                 value = rest
             }
-            guard let sum = value.adding(maxFee), !(ethBalance < sum) else { throw EthereumError.insufficientFunds }
+            guard let sum = value.adding(maxFee), !(nativeBalance < sum) else { throw EthereumError.insufficientFunds }
             total = sum
             tokenAmount = value
         } else {
             value = .zero
-            // The token moves; the fee is ETH on this chain.
-            guard !(ethBalance < maxFee) else { throw EthereumError.noGas(chain.name(testnet: isTestnet)) }
+            // The token moves; the fee is the native coin of this chain.
+            guard !(nativeBalance < maxFee) else {
+                throw EthereumError.noGas(chain.name(testnet: isTestnet), chain.nativeSymbol)
+            }
             total = maxFee
         }
         let tx = EthereumTransaction(chainId: rpc.chainId, nonce: nonce, maxPriorityFeePerGas: tip,
                                      maxFeePerGas: maxFeePerGas, gasLimit: gasLimit, to: txTo, value: value, data: callData)
-        return EthereumSendPlan(transaction: tx, recipient: EthereumAddress.checksummed(to), maxFee: maxFee, total: total,
+        return EthereumSendPlan(payload: .evm(tx), recipient: EthereumAddress.checksummed(to), maxFee: maxFee, total: total,
                                 asset: asset, amount: tokenAmount)
     }
 
-    /// Signs (Face ID) and broadcasts; returns the transaction hash.
+    /// TRX or a TRC-20 token. The fee is bandwidth (free up to ~600 bytes a day) plus,
+    /// for tokens, energy burnt as TRX; sending TRX to a new address costs 1 TRX more.
+    private func prepareTronSend(asset: EVMAsset, to recipient: String, amount: UInt256?) async throws -> EthereumSendPlan {
+        guard let owner = address(on: .tron), let ownerBytes = TronAddress.parse(owner) else { throw WalletError.derivationFailed }
+        let target = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let to = TronAddress.parse(target) else { throw TronError.invalidAddress }
+        let api = TronAPI(isTestnet: isTestnet)
+        async let accountCall = api.account(owner)
+        async let blockCall = api.latestBlock()
+        async let resourcesCall = api.resources(owner)
+        let prices = await api.prices()
+        let (account, block, resources) = try await (accountCall, blockCall, resourcesCall)
+        let trx = UInt256(UInt64(max(0, account.sun)))
+
+        if asset.isNative {
+            let bytes: Int64 = 270
+            var fee = resources.bandwidth >= bytes ? 0 : bytes * prices.bandwidth
+            if !((try? await api.accountExists(target)) ?? true) { fee += 1_100_000 }   // activates the address
+            let feeUnits = UInt256(UInt64(fee))
+            let value: UInt256
+            if let amount {
+                value = amount
+            } else {
+                guard let rest = trx.subtracting(feeUnits), !rest.isZero else { throw EthereumError.insufficientFunds }
+                value = rest
+            }
+            guard let total = value.adding(feeUnits), !(trx < total), value < UInt256(UInt64(Int64.max)) else {
+                throw EthereumError.insufficientFunds
+            }
+            let tx = TronTransaction(owner: ownerBytes, kind: .transfer(to: to, amount: Int64(value.low64)),
+                                     blockNumber: block.number, blockID: block.id, blockTimestamp: block.timestamp)
+            return EthereumSendPlan(payload: .tron(tx), recipient: target, maxFee: feeUnits, total: total, asset: asset, amount: value)
+        }
+
+        guard let contract = asset.contract, let contractBytes = TronAddress.parse(contract) else { throw TronError.invalidAddress }
+        let held = account.tokens[contract] ?? .zero
+        let tokenAmount = amount ?? held
+        guard !tokenAmount.isZero, !(held < tokenAmount) else { throw EthereumError.insufficientToken(asset.symbol) }
+        let energy = (try? await api.estimateEnergy(owner: owner, contract: contract, to: to, amount: tokenAmount)) ?? 65_000
+        let bytes: Int64 = 350
+        let bandwidthFee = resources.bandwidth >= bytes ? 0 : bytes * prices.bandwidth
+        let fee = max(0, energy - resources.energy) * prices.energy + bandwidthFee
+        guard !(trx < UInt256(UInt64(fee))) else { throw EthereumError.noGas(EVMChain.tron.name(testnet: isTestnet), "TRX") }
+        // The most the call may burn: well above the estimate, never more than 150 TRX.
+        let feeLimit = min(max(fee * 2, 20_000_000), 150_000_000)
+        let tx = TronTransaction(owner: ownerBytes, kind: .trc20(contract: contractBytes, to: to, amount: tokenAmount),
+                                 blockNumber: block.number, blockID: block.id, blockTimestamp: block.timestamp, feeLimit: feeLimit)
+        return EthereumSendPlan(payload: .tron(tx), recipient: target, maxFee: UInt256(UInt64(fee)), total: UInt256(UInt64(fee)),
+                                asset: asset, amount: tokenAmount)
+    }
+
+    /// TON or a jetton (sent to the owner's jetton wallet with 0.05 TON for its gas;
+    /// what is not used comes back). A wallet that never sent is deployed by its first payment.
+    private func prepareTonSend(asset: EVMAsset, to recipient: String, amount: UInt256?) async throws -> EthereumSendPlan {
+        guard let owner = address(on: .ton), let me = TonAddress.parse(owner) else { throw WalletError.derivationFailed }
+        let target = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let destination = TonAddress.parse(target) else { throw TonError.invalidAddress }
+        let info = try await TonAPI(isTestnet: isTestnet).wallet(owner)
+        let fee = UInt256(UInt64(info.active ? 6_000_000 : 12_000_000))          // ~0.006 TON, more to deploy
+        let validUntil = UInt32(Date().timeIntervalSince1970) + 300
+
+        if asset.isNative {
+            let mode: UInt8
+            let value: UInt256
+            let messageValue: UInt256
+            let total: UInt256
+            if let amount {
+                guard let sum = amount.adding(fee), !(info.balance < sum) else { throw EthereumError.insufficientFunds }
+                value = amount
+                messageValue = amount
+                mode = 3                                                           // fees paid apart
+                total = sum
+            } else {
+                guard let rest = info.balance.subtracting(fee), !rest.isZero else { throw EthereumError.insufficientFunds }
+                value = rest
+                messageValue = .zero
+                mode = 130                                                         // carry the whole balance
+                total = info.balance
+            }
+            let message = TonWallet.internalMessage(to: destination, amount: messageValue, bounce: destination.bounceable)
+            let signing = TonWallet.signingMessage(seqno: info.seqno, validUntil: validUntil, messages: [(mode: mode, message: message)])
+            return EthereumSendPlan(payload: .ton(wallet: me, signing: signing, deploy: !info.active), recipient: target,
+                                    maxFee: fee, total: total, asset: asset, amount: value)
+        }
+
+        guard let jettonWallet = asset.tokenWallet.flatMap({ TonAddress.parse($0) }) else {
+            throw EthereumError.insufficientToken(asset.symbol)
+        }
+        let tokenAmount = amount ?? asset.balance
+        guard !tokenAmount.isZero, !(asset.balance < tokenAmount) else { throw EthereumError.insufficientToken(asset.symbol) }
+        let attached = UInt256(50_000_000)
+        guard let needed = attached.adding(fee), !(info.balance < needed) else {
+            throw EthereumError.noGas(EVMChain.ton.name(testnet: isTestnet), "TON")
+        }
+        let body = TonWallet.jettonTransferBody(amount: tokenAmount, to: destination, responseTo: me)
+        let message = TonWallet.internalMessage(to: jettonWallet, amount: attached, bounce: true, body: body)
+        let signing = TonWallet.signingMessage(seqno: info.seqno, validUntil: validUntil, messages: [(mode: 3, message: message)])
+        return EthereumSendPlan(payload: .ton(wallet: me, signing: signing, deploy: !info.active), recipient: target,
+                                maxFee: needed, total: needed, asset: asset, amount: tokenAmount)
+    }
+
+    /// Signs (Face ID) and broadcasts; returns the transaction hash / id.
     public func sendEthereum(_ plan: EthereumSendPlan) async throws -> String {
         let amount = plan.amount.formatted(decimals: plan.asset.decimals, maxFraction: 8)
         let network = plan.asset.chain.name(testnet: isTestnet)
-        let key = try await ethereumPrivateKey(reason: appLanguage == .english
-                                               ? "Authorize sending \(amount) \(plan.asset.symbol) on \(network) to \(plan.recipient)"
-                                               : "Autoriza el envío de \(amount) \(plan.asset.symbol) en \(network) a \(plan.recipient)")
-        // The key must be the one of the address on screen.
-        guard let address = EthereumKeys.address(privateKey: key),
-              EthereumAddress.checksummed(address) == activeRecord?.primaryAddress,
-              let raw = plan.transaction.signed(privateKey: key) else { throw WalletError.secretMismatch }
-        let hash = try await EthereumRPC(isTestnet: isTestnet, chain: plan.asset.chain).send(raw)
+        let secret = try await loadSecret(reason: appLanguage == .english
+                                          ? "Authorize sending \(amount) \(plan.asset.symbol) on \(network) to \(plan.recipient)"
+                                          : "Autoriza el envío de \(amount) \(plan.asset.symbol) en \(network) a \(plan.recipient)")
+        let account = activeRecord?.accountNumber ?? 0
+        let hash: String
+        switch plan.payload {
+        case .evm(let transaction):
+            let key = try WalletManager.ethereumKey(secret: secret, account: account)
+            // The key must be the one of the address on screen.
+            guard let derived = EthereumKeys.address(privateKey: key),
+                  EthereumAddress.checksummed(derived) == address(on: plan.asset.chain),
+                  let raw = transaction.signed(privateKey: key) else { throw WalletError.secretMismatch }
+            hash = try await EthereumRPC(isTestnet: isTestnet, chain: plan.asset.chain).send(raw)
+        case .tron(let transaction):
+            let key = try WalletManager.tronKey(secret: secret, account: account)
+            guard let derived = TronKeys.address(privateKey: key), derived == address(on: .tron),
+                  let signed = transaction.signed(privateKey: key) else { throw WalletError.secretMismatch }
+            hash = try await TronAPI(isTestnet: isTestnet).broadcast(signed, txID: transaction.txID)
+        case .ton(let wallet, let signing, let deploy):
+            let key = try WalletManager.tonKey(secret: secret, account: account)
+            guard let publicKey = TonKeys.publicKey(privateKey: key), TonWallet.address(publicKey: publicKey) == wallet,
+                  let signature = TonKeys.sign(signing.hash, privateKey: key) else { throw WalletError.secretMismatch }
+            let state = deploy ? TonWallet.stateInit(publicKey: publicKey) : nil
+            let message = TonWallet.externalMessage(wallet: wallet, stateInit: state, signature: signature, signing: signing)
+            try await TonAPI(isTestnet: isTestnet).send(boc: TonBOC.serialize(message))
+            hash = message.hash.hexEncodedString
+        }
         Task { await refreshAll() }
         return hash
     }
