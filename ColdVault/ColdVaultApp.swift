@@ -13,6 +13,11 @@ struct ColdVaultApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var walletManager = WalletManager()
 
+    init() {
+        // The duress PIN is switched off (PinLock.duressEnabled): remove its stored hashes.
+        PinLock.discardStoredConfigIfDisabled()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

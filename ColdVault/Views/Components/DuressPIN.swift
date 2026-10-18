@@ -14,15 +14,25 @@ import Security
 import CommonCrypto
 
 enum PinLock {
+    /// Switched off by decision of the user. While false, nothing reads the duress PIN (load() returns
+    /// nil), the screens hide it, and the stored config is deleted at launch. Set to true to bring back
+    /// the duress PIN and the decoy wallet: that is the only change needed.
+    static let duressEnabled = false
+
     struct Config: Codable {
         var salt: Data
         var realHash: Data
         var duressHash: Data
         var decoySlot: String
-        /// Wrong PINs in a row, and until when no PIN is tried. Kept here so reopening the app
+        /// Wrong PINs in a row, and the wait that follows them. Kept here so reopening the app
         /// does not reset them.
         var failedAttempts: Int? = nil
-        var blockedUntil: Date? = nil
+        /// Length of the current wait, in seconds, and when it started on the iPhone's uptime
+        /// (monotonic, so changing the date or time does not shorten it).
+        var blockedWait: TimeInterval? = nil
+        var blockedAtUptime: TimeInterval? = nil
+        /// Boot time seen when the wait started. A different boot (restart) counts the whole wait again.
+        var bootStamp: TimeInterval? = nil
     }
 
     enum Outcome { case real, duress, wrong }
@@ -30,7 +40,15 @@ enum PinLock {
     private static let service = "ColdVault.pinlock"
     private static let account = "config"
 
+    /// Deletes the stored duress config (hashes, salt and counters) while the feature is off.
+    /// It holds no wallet secrets: those live under their own Keychain items.
+    static func discardStoredConfigIfDisabled() {
+        guard !duressEnabled else { return }
+        save(nil)
+    }
+
     static func load() -> Config? {
+        guard duressEnabled else { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -67,27 +85,43 @@ enum PinLock {
         return TimeInterval(min(30 << shift, 3600))
     }
 
-    /// Seconds left before a PIN may be tried again (0 when none).
-    static func blockedRemaining(now: Date = Date()) -> TimeInterval {
-        guard let blockedUntil = load()?.blockedUntil else { return 0 }
-        return max(0, blockedUntil.timeIntervalSince(now))
+    /// Seconds left before a PIN may be tried again (0 when none). Measured with the uptime, not the
+    /// clock: changing the iPhone's date or time does not shorten it. After a restart (or a clock
+    /// change, which makes the boot stamp differ) the whole wait counts again, never less.
+    static func blockedRemaining() -> TimeInterval {
+        guard let config = load(), let wait = config.blockedWait,
+              let start = config.blockedAtUptime, let boot = config.bootStamp else { return 0 }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let sameBoot = abs(bootStamp() - boot) < 5 && uptime >= start
+        let elapsed = sameBoot ? uptime - start : 0
+        return max(0, wait - elapsed)
+    }
+
+    /// Seconds since the iPhone booted, taken from the wall clock. Used only to notice a restart:
+    /// a clock change makes it differ, which again means "count the whole wait".
+    private static func bootStamp() -> TimeInterval {
+        Date().timeIntervalSince1970 - ProcessInfo.processInfo.systemUptime
     }
 
     /// A wrong PIN: counts it and, from the fifth on, sets the wait. Stored in the Keychain.
-    static func registerFailure(now: Date = Date()) {
+    static func registerFailure() {
         guard var config = load() else { return }
         let failures = (config.failedAttempts ?? 0) + 1
         config.failedAttempts = failures
         let wait = delay(afterFailures: failures)
-        config.blockedUntil = wait > 0 ? now.addingTimeInterval(wait) : nil
+        config.blockedWait = wait > 0 ? TimeInterval(wait) : nil
+        config.blockedAtUptime = wait > 0 ? ProcessInfo.processInfo.systemUptime : nil
+        config.bootStamp = wait > 0 ? bootStamp() : nil
         update(config)
     }
 
     /// The right PIN: the counter starts again.
     static func registerSuccess() {
-        guard var config = load(), config.failedAttempts != nil || config.blockedUntil != nil else { return }
+        guard var config = load(), config.failedAttempts != nil || config.blockedWait != nil else { return }
         config.failedAttempts = nil
-        config.blockedUntil = nil
+        config.blockedWait = nil
+        config.blockedAtUptime = nil
+        config.bootStamp = nil
         update(config)
     }
 

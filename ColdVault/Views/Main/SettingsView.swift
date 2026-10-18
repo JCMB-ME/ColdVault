@@ -600,8 +600,8 @@ public struct SettingsView: View {
                 Toggle("", isOn: Binding(get: { appLockEnabled }, set: { setAppLock($0) }))
                     .labelsHidden()
             }
-            // Never shown while the decoy wallet is open.
-            if walletManager.decoySlot == nil {
+            // Hidden while PinLock.duressEnabled is false, and never shown while the decoy wallet is open.
+            if PinLock.duressEnabled && walletManager.decoySlot == nil {
                 SettingsDivider(inset: 60)
                 Button { showDuress = true } label: {
                     SettingsRow(title: t("Duress PIN", "PIN de coacción"),
