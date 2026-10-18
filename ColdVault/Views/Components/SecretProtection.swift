@@ -78,6 +78,8 @@ struct AppLockModifier: ViewModifier {
             content
                 .blur(radius: locked ? 30 : 0)
                 .allowsHitTesting(!locked)
+                // A blur does not hide the text from VoiceOver: hide it while locked.
+                .accessibilityHidden(locked)
             if locked && PinLock.isEnabled {
                 Color(uiColor: .systemBackground).opacity(0.9)
                     .ignoresSafeArea()

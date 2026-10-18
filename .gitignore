@@ -22,3 +22,8 @@ fastlane/screenshots
 fastlane/test_output
 
 Vendor/TorLocal/tor.xcframework/
+
+# Local-only folders: research notes and coin logo sources (never committed)
+research/
+coins logo/
+audit/

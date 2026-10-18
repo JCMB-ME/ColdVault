@@ -36,7 +36,9 @@ enum PrivacyBlur {
 
     static func show() {
         guard let window = keyWindow, window.viewWithTag(tag) == nil else { return }
-        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .regular))
+        // Opaque, not a blur: a blur keeps shapes and colours of the screen visible.
+        let blur = UIView()
+        blur.backgroundColor = .systemBackground
         blur.tag = tag
         blur.frame = window.bounds
         blur.autoresizingMask = [.flexibleWidth, .flexibleHeight]

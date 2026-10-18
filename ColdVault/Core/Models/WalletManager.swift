@@ -864,7 +864,9 @@ public final class WalletManager: ObservableObject {
     public func signAndBroadcast(_ plan: TransactionPlan, recipient: String) async throws -> String {
         guard let record = activeRecord, record.type != .watchOnly else { throw WalletError.unsupportedForWatchOnly }
 
-        let keyring = try await loadKeyring(reason: "Autoriza el envío de \(plan.amount) sats a \(recipient)")
+        let keyring = try await loadKeyring(reason: appLanguage == .english
+                                            ? "Authorize sending \(plan.amount) sats to \(recipient), fee \(plan.fee) sats"
+                                            : "Autoriza el envío de \(plan.amount) sats a \(recipient), comisión \(plan.fee) sats")
         let tracked = trackedByScript
         let signed = try await Task.detached(priority: .userInitiated) { () throws -> Transaction in
             var tx = plan.transaction

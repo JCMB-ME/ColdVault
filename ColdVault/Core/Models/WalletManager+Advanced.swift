@@ -454,7 +454,8 @@ enum LocalOnlyFiles {
         try? target.setResourceValues(values)
     }
 
-    /// Files written by older versions are excluded too, at launch.
+    /// Files written by older versions are excluded too, at launch. Main actor: it reads WalletManager's URLs.
+    @MainActor
     static func excludeExisting() {
         let urls = [WalletManager.contactsURL, WalletManager.labelsURL, WalletManager.cacheFolder]
         for case let url? in urls where FileManager.default.fileExists(atPath: url.path) {

@@ -669,7 +669,8 @@ extension WalletManager {
             }
         }
         // Nothing answered: keep the list on screen.
-        guard answered, activeRecord?.primaryAddress == record.primaryAddress else { return }
+        guard answered, activeRecord?.primaryAddress == record.primaryAddress,
+              activeRecord?.coinKind == record.coinKind else { return }
         transactions = WalletManager.sorted(list)
     }
 

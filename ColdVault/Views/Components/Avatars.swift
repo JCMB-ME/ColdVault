@@ -195,11 +195,15 @@ struct SeedWordCell: View {
     /// Placeholder cell (phrase not revealed yet).
     var hidden: Bool = false
     var fill: Color = SettingsStyle.groupFill
+    // The recovery words follow Dynamic Type. A long word shrinks inside its cell instead of
+    // pushing the grid wider, so the two columns keep fitting on a small iPhone.
+    @ScaledMetric(relativeTo: .caption) var numberSize: CGFloat = 13
+    @ScaledMetric(relativeTo: .body) var wordSize: CGFloat = 17
 
     var body: some View {
         HStack(spacing: 6) {
             Text("\(number)")
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .font(.system(size: numberSize, weight: .medium, design: .monospaced))
                 .foregroundColor(Palette.tertiary)
                 .frame(width: 22, alignment: .trailing)
             if hidden {
@@ -208,15 +212,15 @@ struct SeedWordCell: View {
                     .frame(width: 64, height: 9)
             } else {
                 Text(word)
-                    .font(.system(size: 17, weight: .semibold, design: .monospaced))
+                    .font(.system(size: wordSize, weight: .semibold, design: .monospaced))
                     .foregroundColor(Color(uiColor: .label))
                     .lineLimit(1)
-                    .fixedSize()
+                    .minimumScaleFactor(0.6)
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
-        .frame(height: 46)
+        .frame(minHeight: 46)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(fill))
     }
 }
