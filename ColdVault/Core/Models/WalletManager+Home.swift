@@ -543,7 +543,7 @@ extension WalletManager {
     private func saveContacts() throws {
         guard let url = WalletManager.contactsURL else { throw CocoaError(.fileWriteUnknown) }
         let data = try JSONEncoder().encode(contacts)
-        try data.write(to: url, options: [.atomic, .completeFileProtection])
+        try LocalOnlyFiles.write(data, to: url)
     }
 
     /// Deleting a wallet takes its own addresses out of the address book; other contacts stay.
@@ -643,10 +643,11 @@ private struct PriceHistoryFile: Codable {
 
 extension WalletManager {
 
-    private static var cacheFolder: URL? {
+    static var cacheFolder: URL? {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         let folder = base.appendingPathComponent("cache", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        LocalOnlyFiles.exclude(folder)
         return folder
     }
 
@@ -691,7 +692,7 @@ extension WalletManager {
                                     fiatPrice: fiatPrice, usdPrice: usdPrice, fiatCurrency: fiatCurrency)
         WalletManager.balanceMemo[url.lastPathComponent] = balanceSats
         if let data = try? JSONEncoder().encode(cache) {
-            try? data.write(to: url, options: [.atomic, .completeFileProtection])
+            try? LocalOnlyFiles.write(data, to: url)
         }
     }
 

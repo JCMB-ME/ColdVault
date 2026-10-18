@@ -93,15 +93,25 @@ public struct CreateWalletView: View {
             clearSensitiveState()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.userDidTakeScreenshotNotification)) { _ in
-            // The phrase may now sit in the photo library / iCloud Photos: never use it.
-            guard !words.isEmpty, !isCreating else { return }
-            withAnimation(CreateWalletView.stepAnimation) {
-                wordsRevealed = false
-                generateWords(count: wordCountSelection)
-            }
-            noticeMessage = t("Screenshot detected. That phrase was discarded and a new one was generated.",
-                              "Se detectó una captura. Esa frase se descartó y se generó una nueva.")
+            discardPhraseAfterCapture(t("Screenshot detected. That phrase was discarded and a new one was generated. Delete the screenshot from Photos and from Recently Deleted: with iCloud Photos on, it syncs to your other devices.",
+                                        "Se detectó una captura. Esa frase se descartó y se generó una nueva. Borra la captura de Fotos y de «Eliminados recientemente»: con iCloud Fotos activado se sincroniza con tus otros dispositivos."))
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIScreen.capturedDidChangeNotification)) { _ in
+            // Screen recording or AirPlay started: a video may already hold the phrase on screen.
+            guard UIScreen.main.isCaptured else { return }
+            discardPhraseAfterCapture(t("The screen is being recorded or shared. That phrase was discarded and a new one was generated. Stop the recording and delete any video that shows the phrase.",
+                                        "La pantalla se está grabando o compartiendo. Esa frase se descartó y se generó una nueva. Detén la grabación y borra cualquier vídeo que muestre la frase."))
+        }
+    }
+
+    /// The phrase may already be in a screenshot, a video or iCloud Photos: never use it.
+    private func discardPhraseAfterCapture(_ message: String) {
+        guard !words.isEmpty, !isCreating else { return }
+        withAnimation(CreateWalletView.stepAnimation) {
+            wordsRevealed = false
+            generateWords(count: wordCountSelection)
+        }
+        noticeMessage = message
     }
 
     // MARK: - Step 0: the coin
@@ -184,6 +194,7 @@ public struct CreateWalletView: View {
                 if wordsRevealed && !words.isEmpty {
                     SeedWordsGrid(words: words)
                         .id(words)
+                        .concealWhenCaptured()
                 } else {
                     hiddenGrid
                 }
@@ -380,6 +391,7 @@ public struct CreateWalletView: View {
                         verificationRow(i)
                     }
                 }
+                .concealWhenCaptured()
 
                 SettingsSection(header: t("Name", "Nombre"),
                                 footer: t("Optional. An emoji works too.", "Opcional. También puedes usar un emoji.")) {
@@ -400,18 +412,21 @@ public struct CreateWalletView: View {
                             .labelsHidden()
                     }
                     if usePassphrase {
-                        SettingsDivider()
-                        SecureField(t("Passphrase", "Passphrase"), text: $passphrase)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                            .padding(.horizontal, 16)
-                            .frame(minHeight: 52)
-                        SettingsDivider()
-                        SecureField(t("Repeat passphrase", "Repite la passphrase"), text: $passphraseConfirm)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                            .padding(.horizontal, 16)
-                            .frame(minHeight: 52)
+                        VStack(spacing: 0) {
+                            SettingsDivider()
+                            SecureField(t("Passphrase", "Passphrase"), text: $passphrase)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled(true)
+                                .padding(.horizontal, 16)
+                                .frame(minHeight: 52)
+                            SettingsDivider()
+                            SecureField(t("Repeat passphrase", "Repite la passphrase"), text: $passphraseConfirm)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled(true)
+                                .padding(.horizontal, 16)
+                                .frame(minHeight: 52)
+                        }
+                        .concealWhenCaptured()
                     }
                 }
             }

@@ -180,7 +180,7 @@ public enum TronError: LocalizedError {
     case invalidAddress
 
     public var errorDescription: String? {
-        let english = !(Locale.preferredLanguages.first ?? "").lowercased().hasPrefix("es")
+        let english = AppLanguage.current == .english
         switch self {
         case .unavailable: return english ? "The Tron network didn't answer. Try again." : "La red Tron no respondió. Inténtalo de nuevo."
         case .server(let message): return "Tron: " + message

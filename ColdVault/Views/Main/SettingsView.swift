@@ -41,6 +41,7 @@ public struct SettingsView: View {
     @State private var showSignPSBT = false
     @State private var showInheritance = false
     @State private var showDuress = false
+    @State private var confirmTestnet = false
     @State private var showOrdinals = false
     @State private var showNFTs = false
     @State private var showManageTokens = false
@@ -346,6 +347,7 @@ public struct SettingsView: View {
                 }
                 .sheet(item: $exportItem) { item in
                     ActivityView(items: [item.url])
+                        .onDisappear { ExportFiles.remove(item.url) }
                 }
 
                 SettingsSection(header: t("Appearance", "Apariencia"),
@@ -389,9 +391,20 @@ public struct SettingsView: View {
                             ProgressView()
                         } else {
                             Toggle("", isOn: Binding(get: { walletManager.isTestnet },
-                                                     set: { switchNetwork(toTestnet: $0) }))
+                                                     set: { on in
+                                                         // Going to testnet changes every address: ask first.
+                                                         if on { confirmTestnet = true } else { switchNetwork(toTestnet: false) }
+                                                     }))
                                 .labelsHidden()
                                 .disabled(walletManager.isWatchOnly)
+                                .confirmationDialog(t("Switch to testnet?", "¿Cambiar a testnet?"),
+                                                    isPresented: $confirmTestnet, titleVisibility: .visible) {
+                                    Button(t("Switch to testnet", "Cambiar a testnet")) { switchNetwork(toTestnet: true) }
+                                    Button(t("Cancel", "Cancelar"), role: .cancel) { }
+                                } message: {
+                                    Text(t("This changes this wallet's addresses to testnet. Your mainnet funds will not show until you switch back. Do not send real money to testnet addresses.",
+                                           "Esto cambia las direcciones de esta billetera a testnet. Tus fondos de mainnet no se verán hasta volver a mainnet. No envíes dinero real a direcciones de testnet."))
+                                }
                         }
                     }
                 }
@@ -1013,6 +1026,9 @@ struct BackupDetailView: View {
     @State private var keys: [ExportedKey] = []
     @State private var isLoadingKeys = false
     @State private var copiedKey: String?
+    /// A secret waiting for the user's OK before it goes to the clipboard, and the key row it came from.
+    @State private var secretToCopy: String?
+    @State private var secretKeyID: String?
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -1109,7 +1125,34 @@ struct BackupDetailView: View {
             errorMessage = t("A screenshot was taken while your phrase was visible. Delete it from Photos (and from Recently Deleted), and from iCloud if it synced.",
                              "Se tomó una captura con tu frase visible. Bórrala de Fotos (y de \"Eliminados\"), y de iCloud si se sincronizó.")
         }
-        .onDisappear { secret = nil; keys = [] }
+        .onDisappear { secret = nil; keys = []; secretToCopy = nil; secretKeyID = nil }
+        // Warns before a secret reaches the clipboard, where any app that can read it may see it.
+        .confirmationDialog(t("Copy this secret?", "¿Copiar este secreto?"),
+                            isPresented: Binding(get: { secretToCopy != nil },
+                                                 set: { if !$0 { secretToCopy = nil; secretKeyID = nil } }),
+                            titleVisibility: .visible) {
+            Button(t("Copy for 30 seconds", "Copiar durante 30 s")) { confirmCopy() }
+            Button(t("Cancel", "Cancelar"), role: .cancel) { secretToCopy = nil; secretKeyID = nil }
+        } message: {
+            Text(t("Any app that can read the clipboard can see it for 30 seconds. Then iOS clears it, and it does not go to your other devices.",
+                   "Cualquier app que pueda leer el portapapeles puede verlo durante 30 segundos. Después iOS lo borra, y no pasa a tus otros dispositivos."))
+        }
+    }
+
+    /// The user agreed: the secret goes to this iPhone's clipboard for 30 seconds only.
+    private func confirmCopy() {
+        guard let text = secretToCopy else { return }
+        SecurePasteboard.copy(text, expiresIn: SecurePasteboard.secretLifetime)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        if let id = secretKeyID {
+            copiedKey = id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { if copiedKey == id { copiedKey = nil } }
+        } else {
+            copied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
+        }
+        secretToCopy = nil
+        secretKeyID = nil
     }
 
     private func subtitle(_ wallet: LibraryWallet) -> String {
@@ -1189,13 +1232,10 @@ struct BackupDetailView: View {
         }
     }
 
-    /// Copies a secret; the clipboard is cleared after two minutes and stays on this iPhone.
+    /// Copies a secret after the user confirms (see confirmCopy); the clipboard is cleared after 30 seconds.
     private func copyButton(_ text: String) -> some View {
         Button {
-            SecurePasteboard.copy(text, expiresIn: 120)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-            copied = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
+            secretToCopy = text
         } label: {
             Label(copied ? L10n.copied(lang) : L10n.copy(lang), systemImage: copied ? "checkmark" : "doc.on.doc")
                 .font(.system(size: 15, weight: .semibold))
@@ -1248,10 +1288,8 @@ struct BackupDetailView: View {
                             }
                             Spacer()
                             Button {
-                                SecurePasteboard.copy(item.key, expiresIn: 120)
-                                UINotificationFeedbackGenerator().notificationOccurred(.success)
-                                copiedKey = item.id
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { if copiedKey == item.id { copiedKey = nil } }
+                                secretToCopy = item.key
+                                secretKeyID = item.id
                             } label: {
                                 Image(systemName: copiedKey == item.id ? "checkmark" : "doc.on.doc")
                                     .font(.system(size: 14, weight: .semibold))
@@ -1324,10 +1362,7 @@ struct BackupDetailView: View {
                         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(SettingsStyle.groupFill))
                     HStack(spacing: 10) {
                         Button {
-                            SecurePasteboard.copy(parts.text, expiresIn: 120)
-                            UINotificationFeedbackGenerator().notificationOccurred(.success)
-                            copied = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
+                            secretToCopy = parts.text
                         } label: {
                             Label(copied ? L10n.copied(lang) : L10n.copy(lang), systemImage: copied ? "checkmark" : "doc.on.doc")
                                 .font(.system(size: 15, weight: .semibold))

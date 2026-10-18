@@ -47,6 +47,9 @@ extension View {
 // MARK: - Clipboard
 
 enum SecurePasteboard {
+    /// How long a secret (phrase, passphrase, private key) stays on the clipboard before iOS clears it.
+    static let secretLifetime: TimeInterval = 30
+
     /// Copies text to this iPhone's clipboard only (not to your Mac or iPad through
     /// Universal Clipboard); with `expiresIn`, iOS clears it after that many seconds.
     static func copy(_ text: String, expiresIn seconds: TimeInterval? = nil) {

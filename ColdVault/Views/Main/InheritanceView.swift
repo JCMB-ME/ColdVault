@@ -56,7 +56,10 @@ struct InheritanceView: View {
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
-        .sheet(item: $exportItem) { item in ActivityView(items: [item.url]) }
+        .sheet(item: $exportItem) { item in
+            ActivityView(items: [item.url])
+                .onDisappear { ExportFiles.remove(item.url) }
+        }
     }
 
     private var guide: some View {
@@ -193,12 +196,6 @@ struct InheritanceView: View {
                 start += visible.length
             } while start < text.length
         }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(t("Inheritance-letter.pdf", "Carta-de-herencia.pdf"))
-        do {
-            try data.write(to: url, options: [.atomic, .completeFileProtection])
-            return url
-        } catch {
-            return nil
-        }
+        return ExportFiles.write(data, extension: "pdf")
     }
 }

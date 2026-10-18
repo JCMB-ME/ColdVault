@@ -24,27 +24,34 @@ public enum TransactionError: LocalizedError {
     case sizeMismatch
 
     public var errorDescription: String? {
+        let english = AppLanguage.current == .english
         switch self {
         case .truncated:
-            return "Transacción incompleta o truncada."
+            return english ? "Incomplete or truncated transaction." : "Transacción incompleta o truncada."
         case .malformed(let detail):
-            return "Transacción mal formada: \(detail)"
+            return (english ? "Malformed transaction: " : "Transacción mal formada: ") + detail
         case .insufficientFunds(let available, let required):
-            return "Fondos insuficientes: disponible \(available) sats, se necesitan \(required) sats (incluida la comisión)."
+            return english
+                ? "Insufficient funds: \(available) sats available, \(required) sats needed (fee included)."
+                : "Fondos insuficientes: disponible \(available) sats, se necesitan \(required) sats (incluida la comisión)."
         case .amountBelowDust:
-            return "El monto es demasiado pequeño (mínimo 546 sats)."
+            return english ? "The amount is too small (minimum 546 sats)." : "El monto es demasiado pequeño (mínimo 546 sats)."
         case .invalidFeeRate:
-            return "La tasa de comisión no es válida."
+            return english ? "The fee rate is not valid." : "La tasa de comisión no es válida."
         case .noSpendableCoins:
-            return "No hay fondos disponibles para gastar."
+            return english ? "No funds are available to spend." : "No hay fondos disponibles para gastar."
         case .unsupportedInput(let detail):
-            return "Entrada no soportada: \(detail)"
+            return (english ? "Unsupported input: " : "Entrada no soportada: ") + detail
         case .missingPrevout(let index):
-            return "Falta la información de la salida gastada por la entrada #\(index)."
+            return english
+                ? "The information for the output spent by input #\(index) is missing."
+                : "Falta la información de la salida gastada por la entrada #\(index)."
         case .signingFailed(let index):
-            return "No se pudo firmar la entrada #\(index)."
+            return english ? "Could not sign input #\(index)." : "No se pudo firmar la entrada #\(index)."
         case .sizeMismatch:
-            return "El tamaño de la transacción firmada no coincide con la estimación."
+            return english
+                ? "The signed transaction size does not match the estimate."
+                : "El tamaño de la transacción firmada no coincide con la estimación."
         }
     }
 }
@@ -606,6 +613,9 @@ public struct TransactionPlan {
     public let change: UInt64
     public let feeRate: UInt64
     public let estimatedVSize: Int
+    /// True when a speed-up (RBF) takes the extra fee out of the payment itself, because there is no
+    /// change output to pay it. The recipient then gets less than before.
+    public var feeFromPayment: Bool = false
 
     public var totalSpent: UInt64 { amount + fee }
 }

@@ -111,6 +111,7 @@ public final class WalletManager: ObservableObject {
         didSet {
             UserDefaults.standard.set(languageChoice, forKey: "languageChoice")
             appLanguage = WalletManager.language(for: languageChoice)
+            AppLanguage.current = appLanguage
         }
     }
     @Published public var alwaysShowAccountDots: Bool {
@@ -170,6 +171,8 @@ public final class WalletManager: ObservableObject {
     @Published public internal(set) var priceHistory: [PricePoint] = []
     var usdPrice: Double?
     var pushRefreshPending = false
+    /// Coins from the last spendableCoins() that ordinals.com could not confirm (no answer).
+    var unverifiedOrdinalCount = 0
     @Published public internal(set) var transactions: [WalletTransaction] = []
     @Published public internal(set) var isLoadingTransactions: Bool = false
     @Published public internal(set) var contacts: [Contact] = []
@@ -212,6 +215,7 @@ public final class WalletManager: ObservableObject {
         let savedLanguage = defaults.string(forKey: "languageChoice") ?? "system"
         self.languageChoice = savedLanguage
         self.appLanguage = WalletManager.language(for: savedLanguage)
+        AppLanguage.current = WalletManager.language(for: savedLanguage)
         self.progressiveDecimals = defaults.object(forKey: "progressiveDecimals") as? Bool ?? true
         self.fixedAddress = defaults.object(forKey: "fixedAddress") as? Bool ?? true
         let savedDecimals = defaults.object(forKey: "displayDecimals") as? Int ?? -1
@@ -768,7 +772,7 @@ public final class WalletManager: ObservableObject {
         return try await BlockchainService.shared.fetchRecommendedFees(isTestnet: isTestnet)
     }
 
-    public func spendableCoins() async throws -> [SpendableCoin] {
+    public func spendableCoins(keepUnverified: Bool = false) async throws -> [SpendableCoin] {
         guard let record = activeRecord else { return [] }
         var coins = [SpendableCoin]()
         if usesAddressRotation {
@@ -783,7 +787,7 @@ public final class WalletManager: ObservableObject {
             }
             // Small coins carrying an ordinal or a rune are never spent.
             let verified = try await verifiedCoins(coins, isTestnet: record.isTestnet)
-            return await withoutInscriptions(verified, isTestnet: record.isTestnet)
+            return await withoutInscriptions(verified, isTestnet: record.isTestnet, keepUnverified: keepUnverified)
         }
         for address in staticAddresses {
             guard let decoded = BitcoinAddress.decode(address), decoded.isTestnet == record.isTestnet else {
@@ -797,7 +801,7 @@ public final class WalletManager: ObservableObject {
             }
         }
         let verified = try await verifiedCoins(coins, isTestnet: record.isTestnet)
-        return await withoutInscriptions(verified, isTestnet: record.isTestnet)
+        return await withoutInscriptions(verified, isTestnet: record.isTestnet, keepUnverified: keepUnverified)
     }
 
     /// The server only reports coins; it is not trusted with their amounts. Each
@@ -831,13 +835,16 @@ public final class WalletManager: ObservableObject {
 
     /// Validates the recipient (checksum, network, type), fetches UTXOs and selects coins.
     /// `amount == nil` sends the whole balance.
-    public func prepareSend(to recipient: String, amount: UInt64?, feeRate: UInt64) async throws -> TransactionPlan {
+    public func prepareSend(to recipient: String, amount: UInt64?, feeRate: UInt64,
+                            allowUnverifiedOrdinals: Bool = false) async throws -> TransactionPlan {
         guard let record = activeRecord else { throw WalletError.derivationFailed }
         guard let destination = BitcoinAddress.decode(recipient) else { throw WalletError.invalidRecipient }
         guard destination.isTestnet == record.isTestnet else { throw WalletError.networkMismatch }
         guard destination.type != .unknown else { throw WalletError.invalidRecipient }
 
-        let coins = try await spendableCoins()
+        let coins = try await spendableCoins(keepUnverified: allowUnverifiedOrdinals)
+        // Some coins could not be checked for ordinals: ask the user before using them.
+        if !allowUnverifiedOrdinals && unverifiedOrdinalCount > 0 { throw WalletError.ordinalsUnverified }
         let changeScript: Data
         if usesAddressRotation {
             changeScript = try nextChangeAddress(recipientType: destination.type).scriptPubKey

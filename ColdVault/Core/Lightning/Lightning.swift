@@ -53,7 +53,7 @@ public enum LightningError: LocalizedError {
     case engine(String)
 
     public var errorDescription: String? {
-        let english = !(Locale.preferredLanguages.first ?? "").lowercased().hasPrefix("es")
+        let english = AppLanguage.current == .english
         switch self {
         case .missingAPIKey:
             return english ? "Add your Breez API key in Settings › Lightning." : "Añade tu API key de Breez en Ajustes › Lightning."

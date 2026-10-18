@@ -463,7 +463,7 @@ public enum TonError: LocalizedError {
     case invalidAddress
 
     public var errorDescription: String? {
-        let english = !(Locale.preferredLanguages.first ?? "").lowercased().hasPrefix("es")
+        let english = AppLanguage.current == .english
         switch self {
         case .unavailable: return english ? "The TON network didn't answer. Try again." : "La red TON no respondió. Inténtalo de nuevo."
         case .server(let message): return "TON: " + message

@@ -16,6 +16,10 @@ struct ColdVaultApp: App {
     init() {
         // The duress PIN is switched off (PinLock.duressEnabled): remove its stored hashes.
         PinLock.discardStoredConfigIfDisabled()
+        // Exports left over from a share sheet that was never closed (the app was killed).
+        ExportFiles.removeAll()
+        // History cache, contacts and notes stay out of iCloud and Finder backups.
+        LocalOnlyFiles.excludeExisting()
     }
 
     var body: some Scene {

@@ -19,7 +19,7 @@ public enum BumpError: LocalizedError {
     case nothingToSpend
 
     public var errorDescription: String? {
-        let english = !(Locale.preferredLanguages.first ?? "").lowercased().hasPrefix("es")
+        let english = AppLanguage.current == .english
         switch self {
         case .alreadyConfirmed:
             return english ? "This transaction is already confirmed." : "Esta transacción ya está confirmada."
@@ -177,8 +177,11 @@ extension WalletManager {
         // BIP-125: more total fee than the original, plus the relay fee for the new size.
         var fee = max(UInt64(vsize) * feeRate, oldFee + UInt64(vsize))
         let extra = fee - oldFee
+        var feeFromPayment = false
         if outputs[payer].value >= extra + TransactionBuilder.dustLimit {
             outputs[payer].value -= extra
+            // Without change, the payer is the recipient's output: the recipient gets less.
+            feeFromPayment = !ownIndexes.contains(payer)
         } else if ownIndexes.contains(payer) && outputs.count > 1 {
             // Change too small to keep: drop it, it all goes to the fee.
             let dropped = outputs.remove(at: payer)
@@ -199,7 +202,7 @@ extension WalletManager {
                                recipientScript: external.first?.scriptPubKey ?? outputs[0].scriptPubKey,
                                amount: external.reduce(UInt64(0)) { $0 + $1.value },
                                fee: fee, change: external.isEmpty ? 0 : change,
-                               feeRate: feeRate, estimatedVSize: vsize)
+                               feeRate: feeRate, estimatedVSize: vsize, feeFromPayment: feeFromPayment)
     }
 
     // MARK: - CPFP
@@ -245,13 +248,14 @@ extension WalletManager {
 
     /// Like `prepareSend`, but only from the coins chosen (ids "txid:vout").
     public func prepareSend(to recipient: String, amount: UInt64?, feeRate: UInt64,
-                            onlyCoins: Set<String>) async throws -> TransactionPlan {
+                            onlyCoins: Set<String>, allowUnverifiedOrdinals: Bool = false) async throws -> TransactionPlan {
         guard let record = activeRecord else { throw WalletError.derivationFailed }
         guard let destination = BitcoinAddress.decode(recipient) else { throw WalletError.invalidRecipient }
         guard destination.isTestnet == record.isTestnet else { throw WalletError.networkMismatch }
         guard destination.type != .unknown else { throw WalletError.invalidRecipient }
 
-        let coins = try await spendableCoins().filter { onlyCoins.contains($0.id) }
+        let coins = try await spendableCoins(keepUnverified: allowUnverifiedOrdinals).filter { onlyCoins.contains($0.id) }
+        if !allowUnverifiedOrdinals && unverifiedOrdinalCount > 0 { throw WalletError.ordinalsUnverified }
         guard !coins.isEmpty else { throw TransactionError.noSpendableCoins }
         let changeScript: Data
         if usesAddressRotation {
@@ -387,7 +391,7 @@ extension WalletManager {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { transactionLabels.removeValue(forKey: txid) } else { transactionLabels[txid] = String(trimmed.prefix(120)) }
         guard let url = WalletManager.labelsURL, let data = try? JSONEncoder().encode(transactionLabels) else { return }
-        try? data.write(to: url, options: [.atomic, .completeFileProtection])
+        try? LocalOnlyFiles.write(data, to: url)
     }
 
     /// Deleting a wallet also drops the notes of its transactions.
@@ -395,7 +399,7 @@ extension WalletManager {
         guard !txids.isEmpty else { return }
         for txid in txids { transactionLabels.removeValue(forKey: txid) }
         guard let url = WalletManager.labelsURL, let data = try? JSONEncoder().encode(transactionLabels) else { return }
-        try? data.write(to: url, options: [.atomic, .completeFileProtection])
+        try? LocalOnlyFiles.write(data, to: url)
     }
 
     /// BIP-329 (JSON Lines): one {"type":"tx","ref":txid,"label":…} per labelled transaction.
@@ -428,14 +432,64 @@ extension WalletManager {
         return lines.joined(separator: "\n")
     }
 
-    /// Writes an export to a temporary file to share it.
+    /// Writes an export to a file for the share sheet (random name, see ExportFiles).
     public func exportFile(name: String, contents: String) -> URL? {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        ExportFiles.write(Data(contents.utf8), extension: (name as NSString).pathExtension)
+    }
+}
+
+/// Private data that stays on this iPhone: the history cache, contacts and transaction notes. They are
+/// kept out of iCloud and Finder backups (a backup would copy the history and the address book).
+/// iOS still encrypts them at rest (complete file protection).
+enum LocalOnlyFiles {
+    static func write(_ data: Data, to url: URL) throws {
+        try data.write(to: url, options: [.atomic, .completeFileProtection])
+        exclude(url)
+    }
+
+    static func exclude(_ url: URL) {
+        var target = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? target.setResourceValues(values)
+    }
+
+    /// Files written by older versions are excluded too, at launch.
+    static func excludeExisting() {
+        let urls = [WalletManager.contactsURL, WalletManager.labelsURL, WalletManager.cacheFolder]
+        for case let url? in urls where FileManager.default.fileExists(atPath: url.path) {
+            exclude(url)
+        }
+    }
+}
+
+/// Files handed to the share sheet (history CSV, BIP-329 labels, inheritance letter). Each one gets a
+/// random name and complete file protection (readable only while the iPhone is unlocked). It is deleted
+/// when its share sheet closes, and every export is cleared at launch and before the next one.
+enum ExportFiles {
+    private static var folder: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("exports", isDirectory: true)
+    }
+
+    static func write(_ data: Data, extension ext: String) -> URL? {
+        removeAll()
         do {
-            try contents.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            var name = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+            if !ext.isEmpty { name += "." + ext }
+            let url = folder.appendingPathComponent(name)
+            try data.write(to: url, options: [.atomic, .completeFileProtection])
             return url
         } catch {
             return nil
         }
+    }
+
+    static func remove(_ url: URL) {
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    static func removeAll() {
+        try? FileManager.default.removeItem(at: folder)
     }
 }

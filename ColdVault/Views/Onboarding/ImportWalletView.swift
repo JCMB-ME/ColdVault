@@ -20,6 +20,8 @@ public struct ImportWalletView: View {
     @State private var usePassphrase: Bool = false
     @State private var walletName: String = ""
     @State private var pastedFromClipboard: Bool = false
+    /// The user confirmed that a phrase or private key on screen is their own (see secretOriginCheck).
+    @State private var ownSecretConfirmed: Bool = false
     @State private var showScanner: Bool = false
     @State private var isImporting: Bool = false
     @State private var errorMessage: String?
@@ -162,6 +164,11 @@ public struct ImportWalletView: View {
                         .padding(.horizontal, 20)
                         .animation(.spring(response: 0.45, dampingFraction: 0.82), value: detectionKey)
 
+                    if isSecretInput {
+                        secretOriginCheck
+                            .padding(.horizontal, 20)
+                    }
+
                     VStack(alignment: .leading, spacing: 22) {
                         if canImport {
                             SettingsSection(header: t("Name", "Nombre"),
@@ -191,6 +198,7 @@ public struct ImportWalletView: View {
                                         .autocorrectionDisabled(true)
                                         .padding(.horizontal, 16)
                                         .frame(minHeight: 52)
+                                        .concealWhenCaptured()
                                 }
                             }
                             .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -243,6 +251,7 @@ public struct ImportWalletView: View {
         .onChange(of: inputText) { text in
             errorMessage = nil
             detection = Detection.of(text)
+            ownSecretConfirmed = false
         }
         .sheet(isPresented: $showScanner) {
             // Animated wallet exports (ur:crypto-account / crypto-output / crypto-hdkey)
@@ -272,6 +281,8 @@ public struct ImportWalletView: View {
                 .scrollContentBackground(.hidden)
                 .padding(.horizontal, 12)
                 .padding(.top, 10)
+                // The phrase is typed here: hide it while the screen is recorded or mirrored.
+                .concealWhenCaptured()
                 .overlay(alignment: .topLeading) {
                     if inputText.isEmpty {
                         Text(t("word1 word2 word3 …  or  bc1… / zpub… / wpkh(…)",
@@ -348,6 +359,36 @@ public struct ImportWalletView: View {
     }
 
     @ViewBuilder
+    /// A seed phrase or a private key (not an address or a descriptor).
+    private var isSecretInput: Bool {
+        guard detection.descriptors == nil else { return false }
+        switch detection.payload {
+        case .mnemonic, .privateKey: return true
+        default: return false
+        }
+    }
+
+    /// A phrase or key may come from a QR code or from someone else: say so, and ask the user to confirm
+    /// that it is their own before the import button is enabled.
+    private var secretOriginCheck: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(t("This secret was not created on this iPhone. If someone else knows it (you were given it, or you scanned it from a code you did not make), they can empty any wallet you deposit into.",
+                    "Este secreto no se creó en este iPhone. Si alguien más lo conoce (te lo dieron, o lo escaneaste de un código que no hiciste tú), puede vaciar cualquier billetera en la que deposites."),
+                  systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle(isOn: $ownSecretConfirmed) {
+                Text(t("It is my own phrase or key, and I wrote it down myself.",
+                       "Es mi propia frase o clave, y la anoté yo mismo."))
+                    .font(.system(size: 14))
+                    .foregroundColor(Color(uiColor: .label))
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+    }
+
     private var detectionCard: some View {
         Group {
             if let descriptors = detection.descriptors {
@@ -413,13 +454,14 @@ public struct ImportWalletView: View {
     // MARK: - Import
 
     private var canImport: Bool {
-        if coin.isAccountBased { return ethKind != nil }
+        if coin.isAccountBased { return ethKind != nil && (!isSecretInput || ownSecretConfirmed) }
         if let descriptors = detection.descriptors {
             if case .success = descriptors { return true }
             return false
         }
         switch detection.payload {
-        case .mnemonic, .privateKey, .watchOnly: return true
+        case .mnemonic, .privateKey: return ownSecretConfirmed
+        case .watchOnly: return true
         case .invalid, nil: return false
         }
     }

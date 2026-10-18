@@ -312,8 +312,8 @@ struct TransactionDetailView: View {
                     Text(received
                          ? t("Spends this payment to yourself with a higher fee (CPFP).",
                              "Gasta este pago hacia ti con una comisión mayor (CPFP).")
-                         : t("Replaces it with the same payment and a higher fee (RBF).",
-                             "La reemplaza por el mismo pago con una comisión mayor (RBF)."))
+                         : t("Replaces it with a higher fee (RBF). The difference comes from your change, or from the payment if there is no change.",
+                             "La reemplaza con una comisión mayor (RBF). La diferencia sale de tu cambio, o del pago si no hay cambio."))
                         .font(.system(size: 12))
                         .foregroundColor(Palette.secondary)
                 }
@@ -343,10 +343,19 @@ struct TransactionDetailView: View {
                             Text(t("New fee: ", "Nueva comisión: ") + "\(SendView.satsText(plan.fee)) sats")
                                 .font(.system(size: 14, weight: .semibold))
                             if let old = feeInfo, plan.fee > old.fee, !received {
-                                Text(t("+\(SendView.satsText(plan.fee - old.fee)) sats from your change",
-                                       "+\(SendView.satsText(plan.fee - old.fee)) sats de tu cambio"))
-                                    .font(.system(size: 12))
-                                    .foregroundColor(Palette.secondary)
+                                if plan.feeFromPayment {
+                                    // No change to pay the fee: the recipient's amount goes down.
+                                    Text(t("The fee comes out of the payment: the recipient gets \(SendView.satsText(plan.amount)) sats, \(SendView.satsText(plan.fee - old.fee)) less than before.",
+                                           "La comisión sale del pago: el destinatario recibirá \(SendView.satsText(plan.amount)) sats, \(SendView.satsText(plan.fee - old.fee)) menos que antes."))
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(.orange)
+                                        .multilineTextAlignment(.center)
+                                } else {
+                                    Text(t("+\(SendView.satsText(plan.fee - old.fee)) sats from your change",
+                                           "+\(SendView.satsText(plan.fee - old.fee)) sats de tu cambio"))
+                                        .font(.system(size: 12))
+                                        .foregroundColor(Palette.secondary)
+                                }
                             }
                         }
                         SlideToConfirm(title: t("Slide to speed up", "Desliza para acelerar"), icon: "hare.fill",

@@ -258,17 +258,22 @@ public enum DescriptorImportError: LocalizedError {
     case ambiguousXpub
 
     public var errorDescription: String? {
+        let english = AppLanguage.current == .english
         switch self {
         case .unsupported(let what):
-            return "Descriptor no soportado: \(what). Usa wpkh(...), tr(...) o pkh(...) con una sola clave."
+            return english
+                ? "Unsupported descriptor: \(what). Use wpkh(...), tr(...) or pkh(...) with a single key."
+                : "Descriptor no soportado: \(what). Usa wpkh(...), tr(...) o pkh(...) con una sola clave."
         case .invalidKey:
-            return "La clave pública extendida (xpub) no es válida."
+            return english ? "The extended public key (xpub) is not valid." : "La clave pública extendida (xpub) no es válida."
         case .badChecksum:
-            return "El checksum del descriptor no coincide."
+            return english ? "The descriptor checksum does not match." : "El checksum del descriptor no coincide."
         case .mixedNetworks:
-            return "Los descriptores mezclan mainnet y testnet."
+            return english ? "The descriptors mix mainnet and testnet." : "Los descriptores mezclan mainnet y testnet."
         case .ambiguousXpub:
-            return "Una xpub sola no indica el tipo de dirección. Pega el descriptor completo (p. ej. wpkh([…]xpub…/0/*)) o una zpub/vpub."
+            return english
+                ? "An xpub alone does not say the address type. Paste the full descriptor (e.g. wpkh([…]xpub…/0/*)) or a zpub/vpub."
+                : "Una xpub sola no indica el tipo de dirección. Pega el descriptor completo (p. ej. wpkh([…]xpub…/0/*)) o una zpub/vpub."
         }
     }
 }

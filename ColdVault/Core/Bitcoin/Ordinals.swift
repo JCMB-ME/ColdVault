@@ -85,8 +85,14 @@ public enum OrdinalsService {
 /// Keeps the coins confirmed to carry no inscription or rune. `answer` gives, per "txid:vout",
 /// whether the output holds assets, or nil when nobody could tell: such a coin is not kept.
 enum InscriptionFilter {
-    static func spendable(_ coins: [SpendableCoin], answer: (String) -> Bool?) -> [SpendableCoin] {
-        coins.filter { answer($0.id) == false }
+    /// Coins known to carry no inscription. A coin nobody could confirm (answer nil) is left out,
+    /// unless the user agreed to send it anyway (`keepUnverified`).
+    static func spendable(_ coins: [SpendableCoin], keepUnverified: Bool = false,
+                          answer: (String) -> Bool?) -> [SpendableCoin] {
+        coins.filter { coin in
+            let holds = answer(coin.id)
+            return holds == false || (keepUnverified && holds == nil)
+        }
     }
 }
 
@@ -131,8 +137,11 @@ extension WalletManager {
 
     /// Keeps only the coins ordinals.com confirms carry no inscription or rune. Every coin is
     /// asked about, whatever its size; a coin it cannot confirm stays aside.
-    func withoutInscriptions(_ coins: [SpendableCoin], isTestnet: Bool) async -> [SpendableCoin] {
-        guard !isTestnet else { return coins }
+    func withoutInscriptions(_ coins: [SpendableCoin], isTestnet: Bool, keepUnverified: Bool = false) async -> [SpendableCoin] {
+        guard !isTestnet else {
+            unverifiedOrdinalCount = 0
+            return coins
+        }
         var answers = [String: Bool]()
         // A few at a time: the public indexer rate-limits bursts.
         for start in stride(from: 0, to: coins.count, by: 4) {
@@ -150,6 +159,7 @@ extension WalletManager {
                 }
             }
         }
-        return InscriptionFilter.spendable(coins) { answers[$0] }
+        unverifiedOrdinalCount = coins.filter { answers[$0.id] == nil }.count
+        return InscriptionFilter.spendable(coins, keepUnverified: keepUnverified) { answers[$0] }
     }
 }

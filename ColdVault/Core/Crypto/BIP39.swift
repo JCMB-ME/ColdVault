@@ -18,17 +18,20 @@ public enum BIP39Error: LocalizedError {
     case seedDerivationFailed
 
     public var errorDescription: String? {
+        let english = AppLanguage.current == .english
         switch self {
         case .invalidWordCount:
-            return "La cantidad de palabras debe ser 12 o 24."
+            return english ? "The number of words must be 12 or 24." : "La cantidad de palabras debe ser 12 o 24."
         case .invalidWord(let word):
-            return "La palabra '\(word)' no pertenece al diccionario BIP-39."
+            return english ? "The word '\(word)' is not in the BIP-39 list." : "La palabra '\(word)' no pertenece al diccionario BIP-39."
         case .checksumFailed:
-            return "El checksum de la frase semilla es inválido. Revisa si hay errores tipográficos."
+            return english
+                ? "The recovery phrase checksum is invalid. Check for typos."
+                : "El checksum de la frase semilla es inválido. Revisa si hay errores tipográficos."
         case .entropyGenerationFailed:
-            return "Error al generar entropía criptográfica mediante el hardware TRNG."
+            return english ? "Could not generate cryptographic entropy with the hardware RNG." : "Error al generar entropía criptográfica mediante el hardware TRNG."
         case .seedDerivationFailed:
-            return "Error al derivar la semilla (PBKDF2)."
+            return english ? "Could not derive the seed (PBKDF2)." : "Error al derivar la semilla (PBKDF2)."
         }
     }
 }

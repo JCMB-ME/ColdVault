@@ -20,25 +20,38 @@ public enum WalletError: LocalizedError {
     case unsupportedForWatchOnly
     case networkMismatch
     case invalidRecipient
+    /// Some coins could not be checked for ordinals. The app asks whether to send anyway.
+    case ordinalsUnverified
 
     public var errorDescription: String? {
+        let english = AppLanguage.current == .english
         switch self {
         case .derivationFailed:
-            return "No se pudieron derivar las claves de la billetera."
+            return english ? "The wallet keys could not be derived." : "No se pudieron derivar las claves de la billetera."
         case .invalidMnemonic:
-            return "La frase semilla no es válida."
+            return english ? "The recovery phrase is not valid." : "La frase semilla no es válida."
         case .invalidPrivateKey:
-            return "La clave privada no es válida."
+            return english ? "The private key is not valid." : "La clave privada no es válida."
         case .cryptoSelfTestFailed:
-            return "El autodiagnóstico criptográfico falló. Por seguridad no se creará ni usará ninguna billetera en este dispositivo."
+            return english
+                ? "The cryptography self-test failed. For safety, no wallet will be created or used on this device."
+                : "El autodiagnóstico criptográfico falló. Por seguridad no se creará ni usará ninguna billetera en este dispositivo."
         case .secretMismatch:
-            return "El secreto guardado no corresponde a las direcciones de esta billetera. Operación cancelada."
+            return english
+                ? "The saved secret does not match this wallet's addresses. Operation cancelled."
+                : "El secreto guardado no corresponde a las direcciones de esta billetera. Operación cancelada."
         case .unsupportedForWatchOnly:
-            return "Esta operación no está disponible en una billetera de solo observación."
+            return english ? "This operation is not available for a watch-only wallet." : "Esta operación no está disponible en una billetera de solo observación."
         case .networkMismatch:
-            return "La dirección pertenece a otra red (mainnet/testnet)."
+            return english ? "The address belongs to another network (mainnet/testnet)." : "La dirección pertenece a otra red (mainnet/testnet)."
         case .invalidRecipient:
-            return "La dirección de destino no es válida (revisa el checksum y el tipo de dirección)."
+            return english
+                ? "The destination address is not valid (check the checksum and the address type)."
+                : "La dirección de destino no es válida (revisa el checksum y el tipo de dirección)."
+        case .ordinalsUnverified:
+            return english
+                ? "Could not check whether these coins carry ordinals. Send anyway?"
+                : "No se pudo comprobar si estas monedas tienen ordinals. ¿Enviar igual?"
         }
     }
 }

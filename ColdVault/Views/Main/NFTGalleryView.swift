@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import ImageIO
 
 struct NFTGalleryView: View {
     @EnvironmentObject var walletManager: WalletManager
@@ -208,26 +209,57 @@ final class NFTImageLoader {
         }
     }
 
+    /// Largest picture downloaded, in bytes. The transfer stops at this limit.
+    static let maxImageBytes = 8 * 1024 * 1024
+    /// Largest picture decoded, in pixels (width × height), read from its header before decoding.
+    static let maxImagePixels = 40_000_000
+
     func load(_ url: URL) async -> UIImage? {
         await acquire()
         defer { release() }
         for candidate in NFTImageLoader.candidates(url) {
             var request = URLRequest(url: candidate)
             request.setValue("image/*", forHTTPHeaderField: "Accept")
-            guard let (data, response) = try? await session.data(for: request),
-                  (response as? HTTPURLResponse)?.statusCode == 200,
-                  let full = UIImage(data: data) else { continue }
-            let image = full.preparingThumbnail(of: NFTImageLoader.fitting(full.size, max: 600)) ?? full
+            guard let data = try? await download(request),
+                  let image = NFTImageLoader.thumbnail(data, maxSide: 600) else { continue }
             cache.setObject(image, forKey: url as NSURL)
             return image
         }
         return nil
     }
 
-    private static func fitting(_ size: CGSize, max side: CGFloat) -> CGSize {
-        let scale = min(1, side / Swift.max(size.width, size.height, 1))
-        return CGSize(width: size.width * scale, height: size.height * scale)
+    /// Reads the body, but never more than `maxImageBytes`: a bigger picture is dropped mid-transfer.
+    private func download(_ request: URLRequest) async throws -> Data? {
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+              http.expectedContentLength <= Int64(NFTImageLoader.maxImageBytes) else { return nil }
+        var data = Data()
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count > NFTImageLoader.maxImageBytes { return nil }
+        }
+        return data
     }
+
+    /// Decodes a picture at thumbnail size (never the full picture in memory). Returns nil when the
+    /// header says it is too large or it cannot be read.
+    static func thumbnail(_ data: Data, maxSide: Int) -> UIImage? {
+        let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0, width * height <= maxImagePixels else { return nil }
+        let thumbnailOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxSide
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else { return nil }
+        return UIImage(cgImage: cgImage)
+    }
+
 }
 
 /// One NFT: big picture, name, collection and where it lives.

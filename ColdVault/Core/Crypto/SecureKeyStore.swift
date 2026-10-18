@@ -28,21 +28,26 @@ public enum SecureKeyStoreError: LocalizedError {
     case slotInUse
 
     public var errorDescription: String? {
+        let english = AppLanguage.current == .english
         switch self {
         case .biometricsFailed(let reason):
-            return "Autenticación biométrica no completada: \(reason)"
+            return (english ? "Biometric authentication not completed: " : "Autenticación biométrica no completada: ") + reason
         case .keychainSaveFailed(let status):
-            return "Error al guardar en el Keychain de iOS (código \(status))."
+            return english ? "Could not save to the iOS Keychain (code \(status))." : "Error al guardar en el Keychain de iOS (código \(status))."
         case .keychainReadFailed(let status):
-            return "Error al leer del Keychain de iOS (código \(status))."
+            return english ? "Could not read from the iOS Keychain (code \(status))." : "Error al leer del Keychain de iOS (código \(status))."
         case .itemNotFound:
-            return "No se encontraron claves almacenadas en este dispositivo."
+            return english ? "No keys are stored on this device." : "No se encontraron claves almacenadas en este dispositivo."
         case .dataCorrupted:
-            return "Los datos de la billetera están corruptos o no se pueden descifrar."
+            return english ? "The wallet data is corrupted or cannot be decrypted." : "Los datos de la billetera están corruptos o no se pueden descifrar."
         case .passcodeNotSet:
-            return "Configura un código de desbloqueo en este iPhone. ColdVault no guarda claves en un dispositivo sin código."
+            return english
+                ? "Set a passcode on this iPhone. ColdVault does not store keys on a device without one."
+                : "Configura un código de desbloqueo en este iPhone. ColdVault no guarda claves en un dispositivo sin código."
         case .slotInUse:
-            return "Ya hay una billetera guardada en ese espacio del Keychain; no se sobrescribió."
+            return english
+                ? "A wallet is already saved in that Keychain slot; nothing was overwritten."
+                : "Ya hay una billetera guardada en ese espacio del Keychain; no se sobrescribió."
         }
     }
 }

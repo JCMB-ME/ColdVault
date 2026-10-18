@@ -390,7 +390,7 @@ public enum EthereumError: LocalizedError {
     case hashMismatch(String)
 
     public var errorDescription: String? {
-        let english = !(Locale.preferredLanguages.first ?? "").lowercased().hasPrefix("es")
+        let english = AppLanguage.current == .english
         switch self {
         case .unavailable: return english ? "No Ethereum node answered. Try again." : "Ningún nodo de Ethereum respondió. Inténtalo de nuevo."
         case .server(let message): return (english ? "Ethereum node: " : "Nodo de Ethereum: ") + message

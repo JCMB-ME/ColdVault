@@ -45,6 +45,8 @@ public struct SendView: View {
     @State private var plan: TransactionPlan?
     @State private var isProcessing: Bool = false
     @State private var errorMessage: String?
+    /// ordinals.com did not answer for some coins: ask before sending them (see startReview).
+    @State private var ordinalsQuestion = false
     @State private var broadcastTxId: String?
     @State private var scanTarget: ScanTarget?
 
@@ -229,6 +231,14 @@ public struct SendView: View {
                                  isLoading: isProcessing, enabled: canReview, action: review)
                 .disabled(!canReview)
                 .padding(.top, 4)
+                .confirmationDialog(WalletError.ordinalsUnverified.errorDescription ?? "",
+                                    isPresented: $ordinalsQuestion, titleVisibility: .visible) {
+                    Button(t("Send anyway", "Enviar igual")) { startReview(allowUnverifiedOrdinals: true) }
+                    Button(t("Cancel", "Cancelar"), role: .cancel) { }
+                } message: {
+                    Text(t("Ordinals (inscriptions, runes) on those coins could be sent away with the payment. ordinals.com is a third party.",
+                           "Los ordinales (inscripciones, runas) de esas monedas podrían irse con el pago. ordinals.com es un tercero."))
+                }
         }
     }
 
@@ -811,6 +821,11 @@ public struct SendView: View {
     }
 
     private func review() {
+        startReview(allowUnverifiedOrdinals: false)
+    }
+
+    /// `allowUnverifiedOrdinals`: the user chose "Send anyway" after ordinals.com did not answer.
+    private func startReview(allowUnverifiedOrdinals: Bool) {
         errorMessage = nil
         isProcessing = true
         let recipient = trimmedRecipient
@@ -821,12 +836,17 @@ public struct SendView: View {
             do {
                 let prepared: TransactionPlan
                 if let coins = coins {
-                    prepared = try await walletManager.prepareSend(to: recipient, amount: amount, feeRate: rate, onlyCoins: coins)
+                    prepared = try await walletManager.prepareSend(to: recipient, amount: amount, feeRate: rate, onlyCoins: coins,
+                                                                   allowUnverifiedOrdinals: allowUnverifiedOrdinals)
                 } else {
-                    prepared = try await walletManager.prepareSend(to: recipient, amount: amount, feeRate: rate)
+                    prepared = try await walletManager.prepareSend(to: recipient, amount: amount, feeRate: rate,
+                                                                   allowUnverifiedOrdinals: allowUnverifiedOrdinals)
                 }
                 feeAcknowledged = false
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { plan = prepared }
+            } catch WalletError.ordinalsUnverified {
+                // ordinals.com did not answer for some coins: ask instead of blocking the send.
+                ordinalsQuestion = true
             } catch {
                 errorMessage = error.localizedDescription
             }

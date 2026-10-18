@@ -11,7 +11,13 @@ import SwiftUI
 public enum AppLanguage: String, CaseIterable, Identifiable, Codable {
     case english = "English"
     case spanish = "Español"
-    
+
+    /// The language the app shows right now. Errors raised deep in the core (no view or WalletManager at
+    /// hand) use it, so they match the app and not the iPhone's language. WalletManager keeps it current.
+    static var current: AppLanguage = {
+        (Locale.preferredLanguages.first ?? "").lowercased().hasPrefix("es") ? .spanish : .english
+    }()
+
     public var id: String { rawValue }
     public var flag: String {
         switch self {

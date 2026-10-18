@@ -22,16 +22,25 @@ public enum PSBTError: LocalizedError {
     case notFinalized
 
     public var errorDescription: String? {
+        let english = AppLanguage.current == .english
         switch self {
-        case .invalidEncoding: return "El contenido no es un PSBT válido (Base64 o hexadecimal)."
-        case .invalidMagic: return "No es un PSBT: falta la cabecera 'psbt'."
-        case .malformed(let detail): return "PSBT mal formado: \(detail)"
-        case .unsupportedVersion: return "Versión de PSBT no soportada (solo v0)."
-        case .missingUTXO(let i): return "El PSBT no incluye la salida gastada por la entrada #\(i)."
+        case .invalidEncoding:
+            return english ? "The content is not a valid PSBT (Base64 or hex)." : "El contenido no es un PSBT válido (Base64 o hexadecimal)."
+        case .invalidMagic:
+            return english ? "Not a PSBT: the 'psbt' header is missing." : "No es un PSBT: falta la cabecera 'psbt'."
+        case .malformed(let detail): return (english ? "Malformed PSBT: " : "PSBT mal formado: ") + detail
+        case .unsupportedVersion:
+            return english ? "Unsupported PSBT version (v0 only)." : "Versión de PSBT no soportada (solo v0)."
+        case .missingUTXO(let i):
+            return english ? "The PSBT does not include the output spent by input #\(i)." : "El PSBT no incluye la salida gastada por la entrada #\(i)."
         case .missingPreviousTransaction(let i):
-            return "El PSBT no incluye la transacción anterior completa (non_witness_utxo) de la entrada #\(i). Sin ella no se puede comprobar su monto y una comisión oculta sería posible. Sparrow, Bitcoin Core y ColdVault la incluyen por defecto."
-        case .nothingToSign: return "Ninguna entrada de este PSBT pertenece a esta billetera."
-        case .notFinalized: return "El PSBT todavía no está completamente firmado."
+            return english
+                ? "The PSBT does not include the full previous transaction (non_witness_utxo) for input #\(i). Without it the amount cannot be checked, and a hidden fee would be possible. Sparrow, Bitcoin Core and ColdVault include it by default."
+                : "El PSBT no incluye la transacción anterior completa (non_witness_utxo) de la entrada #\(i). Sin ella no se puede comprobar su monto y una comisión oculta sería posible. Sparrow, Bitcoin Core y ColdVault la incluyen por defecto."
+        case .nothingToSign:
+            return english ? "No input of this PSBT belongs to this wallet." : "Ninguna entrada de este PSBT pertenece a esta billetera."
+        case .notFinalized:
+            return english ? "The PSBT is not fully signed yet." : "El PSBT todavía no está completamente firmado."
         }
     }
 }
