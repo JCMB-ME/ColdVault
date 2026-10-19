@@ -249,7 +249,10 @@ public struct SettingsView: View {
                                     value: walletManager.coinContacts.isEmpty ? nil : "\(walletManager.coinContacts.count)", chevron: true,
                                     icon: "person.crop.circle")
                     }
-                    SettingsDivider(inset: 60)
+                }
+
+                // Backup and Security on their own card, always in view.
+                SettingsSection(header: t("Backup and security", "Respaldo y seguridad"), footer: nil) {
                     Button {
                         backupSlot = walletManager.activeSlot
                         route = .backup
