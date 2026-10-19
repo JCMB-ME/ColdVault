@@ -717,8 +717,12 @@ public final class TonAPI {
             // The wallet's transaction id is also the id of the whole event (its trace).
             if let id = transaction?["hash"] as? String, id.allSatisfy({ $0.isHexDigit }),
                let event = try? await lookup("\(tonapi)/v2/events/\(id)"), (event["in_progress"] as? Bool) == false {
-                let actions = (event["actions"] as? [[String: Any]]) ?? []
-                if actions.contains(where: { ($0["status"] as? String) == "failed" }) {
+                // Only the payment itself (TON or a jetton) counts: a recipient contract whose own
+                // follow-up fails has still been paid.
+                let payments = ((event["actions"] as? [[String: Any]]) ?? []).filter {
+                    ["TonTransfer", "JettonTransfer"].contains(($0["type"] as? String) ?? "")
+                }
+                if payments.contains(where: { ($0["status"] as? String) == "failed" }) {
                     return .failed(english
                         ? "the payment did not go through: the network sent it back (the recipient refused it or the token balance was short). It returns to your wallet minus the fee."
                         : "el pago no se completó: la red lo devolvió (el destino lo rechazó o no alcanzó el saldo del token). Vuelve a tu billetera menos la comisión.")
