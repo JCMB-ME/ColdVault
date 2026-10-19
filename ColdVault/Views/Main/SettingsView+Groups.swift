@@ -120,17 +120,20 @@ extension SettingsView {
                                      "La misma clave tiene otra dirección en cada versión. W5 es la que usa Tonkeeper hoy; v4R2, el estándar anterior. Tus fondos se quedan en la dirección que usaste: vuelve a esa versión para verlos."))
                 SettingsDivider(inset: 60)
             }
-            AppMenuButton(items: {
-                DisplayUnit.allCases.map { unit in
-                    AppMenuItem(title: unit.rawValue, selected: walletManager.displayUnit == unit) {
-                        walletManager.displayUnit = unit
+            // BTC or sats: bitcoin only.
+            if walletManager.activeCoin == .bitcoin {
+                AppMenuButton(items: {
+                    DisplayUnit.allCases.map { unit in
+                        AppMenuItem(title: unit.rawValue, selected: walletManager.displayUnit == unit) {
+                            walletManager.displayUnit = unit
+                        }
                     }
+                }) {
+                    SettingsRow(title: t("Unit", "Unidad"), value: walletManager.displayUnit.rawValue, chevron: true,
+                                icon: "bitcoinsign.circle")
                 }
-            }) {
-                SettingsRow(title: t("Unit", "Unidad"), value: walletManager.displayUnit.rawValue, chevron: true,
-                            icon: "bitcoinsign.circle")
+                SettingsDivider(inset: 60)
             }
-            SettingsDivider(inset: 60)
             AppMenuButton(items: { decimalsMenu }) {
                 SettingsRow(title: t("Decimals", "Decimales"), value: decimalsName, chevron: true, icon: "textformat.123")
             }

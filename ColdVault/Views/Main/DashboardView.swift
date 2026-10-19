@@ -31,7 +31,6 @@ public struct DashboardView: View {
     @State private var networkMenuOpen = false
     /// The network logo shows for a few seconds, then hides until the top is tapped.
     @State private var networkPillVisible = true
-    @State private var networkPillToken = 0
 
     @State private var currentAction: DashboardAction = .receive
     @State private var showReceiveSheet: Bool = false
@@ -204,14 +203,9 @@ public struct DashboardView: View {
             .environmentObject(walletManager)
     }
 
+    /// The network logo always stays on screen.
     private func showNetworkPill() {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { networkPillVisible = true }
-        networkPillToken += 1
-        let token = networkPillToken
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-            guard token == networkPillToken, !networkMenuOpen else { return }
-            withAnimation(.easeInOut(duration: 0.6)) { networkPillVisible = false }
-        }
     }
 
     private var networkMenuCatcher: some View {
@@ -232,7 +226,6 @@ public struct DashboardView: View {
             // Ethereum / Stable / Polygon / Tron / TON: the network on screen (tap for the list).
             if walletManager.isEthereum {
                 ZStack {
-                    // The logo fades away after a few seconds; a tap on this strip brings it back.
                     // Fixed height: a bare Color would stretch and push the balance down.
                     Color.clear
                         .frame(maxWidth: .infinity)
@@ -672,9 +665,9 @@ public struct DashboardView: View {
         hasModeBadges || showsAccountName
     }
 
-    /// With several wallets or accounts, which one is on screen.
+    /// Which wallet and account are on screen (every coin, even with only one).
     private var showsAccountName: Bool {
-        sameCoinWallets.count > 1 || (walletManager.activeWallet?.bundle.accounts.count ?? 0) > 1
+        walletManager.activeWallet?.bundle.current != nil
     }
 
     private func badge(icon: String?, text: String) -> some View {
