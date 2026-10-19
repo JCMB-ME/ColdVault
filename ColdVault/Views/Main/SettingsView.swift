@@ -205,15 +205,7 @@ public struct SettingsView: View {
 
                 SettingsDisclosureSection(title: t("Wallet", "Billetera"), icon: "wallet.pass",
                                           isExpanded: $openWallet,
-                                footer: walletManager.isEthereum ? nil
-                                    : t("Fixed address: each account always receives on the same address and change returns to it. Off: a new address for every payment (more privacy). Your coins are safe either way.",
-                                        "Dirección fija: cada cuenta recibe siempre en la misma dirección y el cambio vuelve a ella. Desactivada: una dirección nueva en cada cobro (más privacidad). Tus fondos están seguros en ambos casos.")) {
-                    if !walletManager.isEthereum {
-                        SettingsRow(title: t("Fixed address", "Dirección fija"), icon: "pin") {
-                            Toggle("", isOn: $walletManager.fixedAddress).labelsHidden()
-                        }
-                        SettingsDivider(inset: 60)
-                    }
+                                footer: nil) {
                     if let tonVersion = walletManager.activeTonVersion {
                         AppMenuButton(items: {
                             TonWalletVersion.allCases.map { version in
@@ -457,6 +449,38 @@ public struct SettingsView: View {
                         }
                         SettingsNote(text: t("History of the account on screen. Labels in BIP-329, readable by Sparrow and other wallets.",
                                           "Historial de la cuenta en pantalla. Etiquetas en BIP-329, que leen Sparrow y otras billeteras."))
+                    }
+                    // Bitcoin: how addresses are used, and the list of every address.
+                    if walletManager.activeCoin == .bitcoin {
+                    Group {
+                        SettingsSubheader(text: t("Bitcoin addresses", "Direcciones de Bitcoin"))
+                        SettingsRow(title: t("Fixed address", "Dirección fija"), icon: "pin") {
+                            Toggle("", isOn: $walletManager.fixedAddress).labelsHidden()
+                        }
+                        SettingsNote(text: t("On: each account always receives on the same address, and the change of your payments comes back to it. Simpler: you share one address and everything stays in one place. Off (more private): every time you receive you get a new address and the change goes to separate change addresses, as Sparrow or BlueWallet do, so it is harder for others to see your total balance or link your payments. Either way every address comes from your same recovery phrase: your coins are safe and the app watches all of them.",
+                                             "Activada: cada cuenta recibe siempre en la misma dirección y el cambio de tus envíos regresa a ella. Es más simple: compartes una sola dirección y todo queda en un lugar. Desactivada (más privado): cada vez que recibes se usa una dirección nueva y el cambio va a direcciones de cambio separadas, como hacen Sparrow o BlueWallet, para que sea más difícil ver tu saldo total o relacionar tus pagos. En ambos casos todas las direcciones salen de tu misma frase de recuperación: tus fondos están seguros y la app las vigila todas."))
+                        SettingsDivider(inset: 60)
+                        Button { showAddressList = true } label: {
+                            SettingsRow(title: t("See addresses", "Ver direcciones"), chevron: true, icon: "list.bullet.rectangle")
+                        }
+                        if walletManager.usesAddressRotation {
+                            SettingsDivider(inset: 60)
+                            Button(action: rescanAddresses) {
+                                SettingsRow(title: t("Rescan addresses", "Volver a escanear"), icon: "arrow.clockwise") {
+                                    if isRescanning { ProgressView() } else { Chevron() }
+                                }
+                            }
+                            .disabled(isRescanning)
+                        }
+                        SettingsNote(text: walletManager.usesAddressRotation
+                                     ? t("See addresses: every receive and change address of this account, with its balance and path. Rescan: a full search for used addresses (done by itself once a day).",
+                                         "Ver direcciones: todas las direcciones de recibir y de cambio de esta cuenta, con su saldo y su ruta. Volver a escanear: busca de nuevo todas las direcciones usadas (se hace sola una vez al día).")
+                                     : t("See addresses: the addresses of this account, with their balance.",
+                                         "Ver direcciones: las direcciones de esta cuenta, con su saldo."))
+                    }
+                    .sheet(isPresented: $showAddressList) {
+                        AddressListView().environmentObject(walletManager)
+                    }
                     }
                     Group {
                         SettingsSubheader(text: t("Data", "Datos"))
@@ -852,30 +876,6 @@ public struct SettingsView: View {
         }
         .sheet(isPresented: $showDuress) {
             DuressSetupView().environmentObject(walletManager)
-        }
-
-        if !walletManager.isEthereum {
-            SettingsSection(header: t("Addresses", "Direcciones"),
-                            footer: walletManager.usesAddressRotation
-                                ? t("See addresses: every receive and change address of this account, with its balance and path. Rescan: full gap-limit search, done automatically once a day.",
-                                    "Ver direcciones: todas las direcciones de recibir y de cambio de esta cuenta, con su saldo y su ruta. Volver a escanear: búsqueda completa; se hace sola una vez al día.")
-                                : nil) {
-                Button { showAddressList = true } label: {
-                    SettingsRow(title: t("See addresses", "Ver direcciones"), chevron: true, icon: "list.bullet.rectangle")
-                }
-                if walletManager.usesAddressRotation {
-                SettingsDivider(inset: 60)
-                Button(action: rescanAddresses) {
-                    SettingsRow(title: t("Rescan addresses", "Volver a escanear"), icon: "arrow.clockwise") {
-                        if isRescanning { ProgressView() } else { Chevron() }
-                    }
-                }
-                .disabled(isRescanning)
-                }
-            }
-            .sheet(isPresented: $showAddressList) {
-                AddressListView().environmentObject(walletManager)
-            }
         }
 
         SettingsSection(header: t("Danger zone", "Zona peligrosa"),
