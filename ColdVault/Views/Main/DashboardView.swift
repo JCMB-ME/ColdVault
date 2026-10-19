@@ -25,6 +25,8 @@ public struct DashboardView: View {
     @Environment(\.scenePhase) private var scenePhase
     /// The app went to the background: show the balance when it comes back.
     @State private var wasInBackground = false
+    @AppStorage(FocusStyle.blurKey) private var focusBlur = FocusStyle.defaultBlur
+    @AppStorage(FocusStyle.scaleKey) private var focusScale = FocusStyle.defaultScale
     /// The network list under the logo (ETH, Stable…).
     @State private var networkMenuOpen = false
 
@@ -136,26 +138,31 @@ public struct DashboardView: View {
             Group {
                 if walletManager.isEthereum { EthReceiveView() } else { ReceiveView() }
             }
+            .focusAppear()
             .environmentObject(walletManager)
         }
         .sheet(isPresented: $showSendSheet) {
             Group {
                 if walletManager.isEthereum { EthSendView() } else { SendView() }
             }
+            .focusAppear()
             .environmentObject(walletManager)
         }
         .sheet(item: $sendRecipient) { recipient in
             Group {
                 if walletManager.isEthereum { EthSendView(recipient: recipient.address) } else { SendView(recipient: recipient.address) }
             }
+            .focusAppear()
             .environmentObject(walletManager)
         }
         .sheet(item: $sendAsset) { asset in
             EthSendView(asset: asset)
+                .focusAppear()
                 .environmentObject(walletManager)
         }
         .sheet(isPresented: $showHistory) {
             TransactionHistoryView()
+                .focusAppear()
                 .environmentObject(walletManager)
         }
     }
@@ -307,8 +314,8 @@ public struct DashboardView: View {
         // Follows the finger while swiping to another account.
         .offset(x: balanceOffset)
         .opacity(balanceFade)
-        .blur(radius: (1 - balanceFade) * 10)
-        .scaleEffect(0.92 + 0.08 * balanceFade)
+        .blur(radius: (1 - balanceFade) * focusBlur)
+        .scaleEffect(1 - (1 - balanceFade) * focusScale / 100 * 1.4)
         .contentShape(Rectangle())
         .onTapGesture {
             if accountTargets.count < 2 { toggleDisplayUnit() }
@@ -991,15 +998,53 @@ struct MinimalPriceChart: View {
 /// slightly, like the screens of a foldable phone. Follows the finger in real time.
 @available(iOS 17.0, *)
 struct PageFocusTransition: ViewModifier {
+    @AppStorage(FocusStyle.blurKey) private var blur = FocusStyle.defaultBlur
+    @AppStorage(FocusStyle.scaleKey) private var scale = FocusStyle.defaultScale
+    @AppStorage(FocusStyle.fadeKey) private var fade = FocusStyle.defaultFade
+
     func body(content: Content) -> some View {
-        content.scrollTransition(.interactive, axis: .horizontal) { view, phase in
+        let maxBlur = blur, maxShrink = scale / 100, maxFade = fade / 100
+        return content.scrollTransition(.interactive, axis: .horizontal) { view, phase in
             let distance = abs(phase.value)
             return view
-                .blur(radius: distance * 22)
-                .opacity(1 - distance * 0.45)
-                .scaleEffect(1 - distance * 0.07)
+                .blur(radius: distance * maxBlur)
+                .opacity(1 - distance * maxFade)
+                .scaleEffect(1 - distance * maxShrink)
         }
     }
+}
+
+/// The focus effect's strength (Settings › Appearance): blur in points, shrink and
+/// transparency in percent at the farthest point.
+enum FocusStyle {
+    static let blurKey = "focusBlur"
+    static let scaleKey = "focusScale"
+    static let fadeKey = "focusFade"
+    static let defaultBlur: Double = 22
+    static let defaultScale: Double = 7
+    static let defaultFade: Double = 45
+}
+
+/// A sheet's content comes into focus from a blur when it opens (same settings).
+struct FocusAppear: ViewModifier {
+    @AppStorage(FocusStyle.blurKey) private var blur = FocusStyle.defaultBlur
+    @AppStorage(FocusStyle.scaleKey) private var scale = FocusStyle.defaultScale
+    @AppStorage(FocusStyle.fadeKey) private var fade = FocusStyle.defaultFade
+    @State private var shown = false
+
+    func body(content: Content) -> some View {
+        content
+            .blur(radius: shown ? 0 : blur)
+            .opacity(shown ? 1 : 1 - fade / 100)
+            .scaleEffect(shown ? 1 : 1 - scale / 100)
+            .onAppear {
+                withAnimation(.easeOut(duration: 0.5)) { shown = true }
+            }
+    }
+}
+
+extension View {
+    func focusAppear() -> some View { modifier(FocusAppear()) }
 }
 
 /// Compact black capsule (white in dark mode) with a small icon and label, as in the

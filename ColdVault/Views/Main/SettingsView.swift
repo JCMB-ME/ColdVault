@@ -65,6 +65,9 @@ public struct SettingsView: View {
     @AppStorage("settingsOpenAppearance") private var openAppearance = false
     /// nil: the main icon; "AppIconInverted": the one with inverted colours.
     @State private var appIconName: String? = UIApplication.shared.alternateIconName
+    @AppStorage(FocusStyle.blurKey) private var focusBlur = FocusStyle.defaultBlur
+    @AppStorage(FocusStyle.scaleKey) private var focusScale = FocusStyle.defaultScale
+    @AppStorage(FocusStyle.fadeKey) private var focusFade = FocusStyle.defaultFade
     @AppStorage("settingsOpenAdvanced") private var openAdvanced = false
     /// Optional API keys of the Tron and TON services (Advanced).
     @AppStorage(ServiceKeys.Service.tronGrid.rawValue) private var tronGridKey = ""
@@ -341,6 +344,38 @@ public struct SettingsView: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
+                    SettingsDivider(inset: 60)
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 12) {
+                            RowIcon(systemName: "camera.aperture")
+                            Text(t("Focus effect", "Efecto de enfoque"))
+                                .font(.system(size: 16))
+                                .foregroundColor(Color(uiColor: .label))
+                            Spacer()
+                            if focusBlur != FocusStyle.defaultBlur || focusScale != FocusStyle.defaultScale
+                                || focusFade != FocusStyle.defaultFade {
+                                Button(t("Reset", "Restablecer")) {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    withAnimation {
+                                        focusBlur = FocusStyle.defaultBlur
+                                        focusScale = FocusStyle.defaultScale
+                                        focusFade = FocusStyle.defaultFade
+                                    }
+                                }
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(Palette.secondary)
+                            }
+                        }
+                        focusSlider(t("Blur", "Desenfoque"), value: $focusBlur, range: 0...40, unit: "")
+                        focusSlider(t("Shrink", "Encogimiento"), value: $focusScale, range: 0...20, unit: "%")
+                        focusSlider(t("Transparency", "Transparencia"), value: $focusFade, range: 0...90, unit: "%")
+                        Text(t("Between pages, when a sheet opens and when swiping to another account.",
+                               "Entre pantallas, al abrir una hoja y al deslizar a otra cuenta."))
+                            .font(.system(size: 12))
+                            .foregroundColor(Palette.secondary)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
                 }
 
                 SettingsDisclosureSection(title: t("Advanced", "Avanzado"), icon: "gearshape.2",
@@ -516,6 +551,23 @@ public struct SettingsView: View {
             Text(t("How many recent transactions to show on the home screen.",
                    "Cuántas transacciones recientes mostrar en la pantalla principal."))
         }
+    }
+
+    private func focusSlider(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, unit: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 14))
+                    .foregroundColor(Color(uiColor: .label))
+                Spacer()
+                Text("\(Int(value.wrappedValue.rounded()))\(unit)")
+                    .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                    .foregroundColor(Palette.secondary)
+            }
+            Slider(value: value, in: range, step: 1)
+                .tint(Color(uiColor: .label))
+        }
+        .padding(.leading, 44)
     }
 
     /// One app icon to choose (iOS confirms the change with its own short alert).
