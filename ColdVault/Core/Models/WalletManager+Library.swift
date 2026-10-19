@@ -194,6 +194,16 @@ extension WalletManager {
     func persist(_ record: StoredWalletRecord, secret: WalletSecret?) throws -> StoredWalletRecord {
         var redacted = record
         if record.type != .watchOnly { redacted.secretPayload = "" }
+        // The same wallet twice (same coin, address and network) would share its caches,
+        // contacts and notes, and deleting one would clear the other's.
+        if let existing = library.first(where: { wallet in
+            wallet.bundle.accounts.contains {
+                $0.record.primaryAddress == record.primaryAddress && $0.record.isTestnet == record.isTestnet
+                    && $0.record.coinKind == record.coinKind
+            }
+        }) {
+            throw WalletError.alreadyStored(existing.bundle.name)
+        }
         // "primary" only if nothing at all is stored there; otherwise a fresh slot. (The
         // Keychain call also refuses to overwrite, as a second guard.)
         let primaryFree = !library.contains { $0.slot == "primary" } && !SecureKeyStore.shared.slotExists("primary")
@@ -294,10 +304,12 @@ extension WalletManager {
 
     /// Last known balance of any account (from its on-device cache), for the wallet list.
     public func cachedBalance(of record: StoredWalletRecord) -> UInt64? {
-        if record.primaryAddress == activeRecord?.primaryAddress && record.isTestnet == activeRecord?.isTestnet {
+        // The coin too: an ETH and a Stable wallet from one phrase share the address.
+        if record.primaryAddress == activeRecord?.primaryAddress && record.isTestnet == activeRecord?.isTestnet
+            && record.coinKind == activeRecord?.coinKind {
             return balanceSats
         }
-        return WalletManager.cachedBalance(primaryAddress: record.primaryAddress, isTestnet: record.isTestnet)
+        return WalletManager.cachedBalance(primaryAddress: record.primaryAddress, isTestnet: record.isTestnet, coin: record.coinKind)
     }
 
     // MARK: - Delete

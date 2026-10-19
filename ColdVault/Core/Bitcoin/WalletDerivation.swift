@@ -22,6 +22,8 @@ public enum WalletError: LocalizedError {
     case invalidRecipient
     /// Some coins could not be checked for ordinals. The app asks whether to send anyway.
     case ordinalsUnverified
+    /// This wallet (same coin, address and network) is already in the app, under that name.
+    case alreadyStored(String)
 
     public var errorDescription: String? {
         let english = AppLanguage.current == .english
@@ -52,6 +54,10 @@ public enum WalletError: LocalizedError {
             return english
                 ? "Could not check whether these coins carry ordinals. Send anyway?"
                 : "No se pudo comprobar si estas monedas tienen ordinals. ¿Enviar igual?"
+        case .alreadyStored(let name):
+            return english
+                ? "This wallet is already in ColdVault (\"\(name)\")."
+                : "Esta billetera ya está en ColdVault (\"\(name)\")."
         }
     }
 }

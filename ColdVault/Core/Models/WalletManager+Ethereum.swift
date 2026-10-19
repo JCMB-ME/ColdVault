@@ -668,7 +668,7 @@ extension WalletManager {
     // MARK: - Home blocks (NFTs / ordinals)
 
     private var collectiblesKey: String? {
-        activeRecord.map { "\($0.primaryAddress)|\($0.isTestnet)" }
+        activeRecord.map { WalletManager.cacheKey($0.primaryAddress, $0.isTestnet, $0.coinKind) }
     }
 
     /// NFTs for the home block (once per account unless `force`).
@@ -1476,7 +1476,8 @@ extension WalletManager {
         }
         units = min(units, UInt64(Int64.max))
         let transaction = WalletTransaction(txid: hash, net: -Int64(units), date: Date(), confirmed: false, chain: chain.rawValue)
-        localPendingSends.append((transaction, Date(), activeRecord?.primaryAddress ?? ""))
+        let owner = activeRecord.map { WalletManager.cacheKey($0.primaryAddress, $0.isTestnet, $0.coinKind) } ?? ""
+        localPendingSends.append((transaction, Date(), owner))
         transactions = WalletManager.sorted(transactions.filter { $0.txid != hash } + [transaction])
     }
 
@@ -1485,7 +1486,8 @@ extension WalletManager {
     /// payment on its network appears from about the time it was sent; after an hour anyway.
     private func mergeLocalPending(into list: [WalletTransaction]) -> [WalletTransaction] {
         let now = Date()
-        let owner = activeRecord?.primaryAddress ?? ""
+        // Per coin too: an ETH and a Stable wallet from one phrase share the address.
+        let owner = activeRecord.map { WalletManager.cacheKey($0.primaryAddress, $0.isTestnet, $0.coinKind) } ?? ""
         localPendingSends.removeAll { entry in
             if now.timeIntervalSince(entry.sentAt) > 3600 { return true }
             guard entry.owner == owner else { return false }       // another wallet's payment

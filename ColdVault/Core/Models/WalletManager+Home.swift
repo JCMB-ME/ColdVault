@@ -700,7 +700,7 @@ struct CachedInscription: Codable {
 extension WalletManager {
     /// File name of an account's NFT / inscription list (a hash, not the address).
     static func collectiblesFile(_ record: StoredWalletRecord, kind: String) -> String {
-        let key = BitcoinHash.sha256(Data("\(record.primaryAddress)|\(record.isTestnet)|\(kind)".utf8)).hexEncodedString
+        let key = BitcoinHash.sha256(Data("\(cacheKey(record.primaryAddress, record.isTestnet, record.coinKind))|\(kind)".utf8)).hexEncodedString
         return "collectibles-\(key.prefix(16)).json"
     }
 
@@ -764,11 +764,22 @@ extension WalletManager {
         return folder
     }
 
+    /// What names an account's cache: its address and network, plus the coin for the
+    /// account-based ones (an ETH, a Polygon and a Stable wallet made from one phrase share
+    /// the same 0x address and must not read each other's balance or tokens).
+    static func cacheKey(_ primaryAddress: String, _ isTestnet: Bool, _ coin: CoinKind) -> String {
+        coin == .bitcoin ? "\(primaryAddress)|\(isTestnet)" : "\(primaryAddress)|\(isTestnet)|\(coin)"
+    }
+
+    static func cacheFileName(_ primaryAddress: String, _ isTestnet: Bool, _ coin: CoinKind) -> String {
+        let key = BitcoinHash.sha256(Data(cacheKey(primaryAddress, isTestnet, coin).utf8)).hexEncodedString
+        return "wallet-\(key.prefix(16)).json"
+    }
+
     /// One file per wallet and network (named by a hash, not by the address).
     private var walletCacheURL: URL? {
         guard let record = activeRecord, let folder = WalletManager.cacheFolder else { return nil }
-        let key = BitcoinHash.sha256(Data("\(record.primaryAddress)|\(record.isTestnet)".utf8)).hexEncodedString
-        return folder.appendingPathComponent("wallet-\(key.prefix(16)).json")
+        return folder.appendingPathComponent(WalletManager.cacheFileName(record.primaryAddress, record.isTestnet, record.coinKind))
     }
 
     /// Shows the last known balance, transactions and price immediately at launch,
@@ -785,10 +796,9 @@ extension WalletManager {
     }
 
     /// Balance stored in an account's cache file (for the wallet list).
-    static func cachedBalance(primaryAddress: String, isTestnet: Bool) -> UInt64? {
+    static func cachedBalance(primaryAddress: String, isTestnet: Bool, coin: CoinKind) -> UInt64? {
         guard let folder = cacheFolder else { return nil }
-        let key = BitcoinHash.sha256(Data("\(primaryAddress)|\(isTestnet)".utf8)).hexEncodedString
-        let url = folder.appendingPathComponent("wallet-\(key.prefix(16)).json")
+        let url = folder.appendingPathComponent(cacheFileName(primaryAddress, isTestnet, coin))
         // Read from disk once; the Wallets page asks on every render.
         if let known = balanceMemo[url.lastPathComponent] { return known }
         guard let data = try? Data(contentsOf: url),
@@ -816,8 +826,7 @@ extension WalletManager {
     func clearCaches(for records: [StoredWalletRecord]) {
         guard let folder = WalletManager.cacheFolder else { return }
         for record in records {
-            let key = BitcoinHash.sha256(Data("\(record.primaryAddress)|\(record.isTestnet)".utf8)).hexEncodedString
-            let name = "wallet-\(key.prefix(16)).json"
+            let name = WalletManager.cacheFileName(record.primaryAddress, record.isTestnet, record.coinKind)
             WalletManager.balanceMemo[name] = nil
             try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
             for kind in ["nfts", "inscriptions"] {
