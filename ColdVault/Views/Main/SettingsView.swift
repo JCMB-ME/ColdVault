@@ -63,6 +63,8 @@ public struct SettingsView: View {
     @AppStorage("settingsOpenWallet") private var openWallet = false
     @AppStorage("settingsOpenTools") private var openTools = false
     @AppStorage("settingsOpenAppearance") private var openAppearance = false
+    /// nil: the main icon; "AppIconInverted": the one with inverted colours.
+    @State private var appIconName: String? = UIApplication.shared.alternateIconName
     @AppStorage("settingsOpenAdvanced") private var openAdvanced = false
     /// Optional API keys of the Tron and TON services (Advanced).
     @AppStorage(ServiceKeys.Service.tronGrid.rawValue) private var tronGridKey = ""
@@ -321,6 +323,24 @@ public struct SettingsView: View {
                         SettingsRow(title: t("Language", "Idioma"), value: languageName(walletManager.languageChoice),
                                     chevron: true, icon: "globe")
                     }
+                    SettingsDivider(inset: 60)
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 12) {
+                            RowIcon(systemName: "app.badge")
+                            Text(t("App icon", "Ícono de la app"))
+                                .font(.system(size: 16))
+                                .foregroundColor(Color(uiColor: .label))
+                            Spacer()
+                        }
+                        HStack(spacing: 20) {
+                            appIconChoice(nil, preview: "IconPreviewDefault", title: t("Original", "Original"))
+                            appIconChoice("AppIconInverted", preview: "IconPreviewInverted", title: t("Inverted", "Invertido"))
+                            Spacer()
+                        }
+                        .padding(.leading, 44)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
                 }
 
                 SettingsDisclosureSection(title: t("Advanced", "Avanzado"), icon: "gearshape.2",
@@ -496,6 +516,38 @@ public struct SettingsView: View {
             Text(t("How many recent transactions to show on the home screen.",
                    "Cuántas transacciones recientes mostrar en la pantalla principal."))
         }
+    }
+
+    /// One app icon to choose (iOS confirms the change with its own short alert).
+    private func appIconChoice(_ name: String?, preview: String, title: String) -> some View {
+        let selected = appIconName == name
+        return Button {
+            guard !selected, UIApplication.shared.supportsAlternateIcons else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Task { @MainActor in
+                try? await UIApplication.shared.setAlternateIconName(name)
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    appIconName = UIApplication.shared.alternateIconName
+                }
+            }
+        } label: {
+            VStack(spacing: 6) {
+                Image(preview)
+                    .resizable()
+                    .frame(width: 58, height: 58)
+                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                    .padding(3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color(uiColor: .label), lineWidth: selected ? 2.5 : 0)
+                    )
+                Text(title)
+                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    .foregroundColor(selected ? Color(uiColor: .label) : Palette.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func serviceKey(_ service: ServiceKeys.Service) -> String {
