@@ -32,6 +32,7 @@ struct WalletsView: View {
     @State private var draggingSlot: String?
     /// Which coin's wallets are listed (bitcoin and Ethereum are never mixed).
     @State private var coin: CoinKind = .bitcoin
+    @State private var showAddWallet = false
     /// Coin switch: the finger's offset and the direction of the last change.
     @State private var switchOffset: CGFloat = 0
     @State private var switchForward = true
@@ -150,11 +151,10 @@ struct WalletsView: View {
                         .multilineTextAlignment(.center)
                 }
 
-                // New phrase, or one you already have (or a private key / watch-only address).
-                AppMenuButton(items: {
-                    [AppMenuItem(title: L10n.createNewWallet(lang), icon: "plus.circle") { showCreate = true },
-                     AppMenuItem(title: L10n.importWallet(lang), icon: "square.and.arrow.down") { showImport = true }]
-                }) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showAddWallet = true
+                } label: {
                     ActionPillLabel(icon: "plus", title: t("Add wallet", "Añadir billetera"), minWidth: 128)
                 }
                 .frame(maxWidth: .infinity)
@@ -190,6 +190,16 @@ struct WalletsView: View {
         }
         .sheet(item: $iconSlot) { target in
             WalletIconPicker(slot: target.slot).environmentObject(walletManager)
+        }
+        .sheet(isPresented: $showAddWallet) {
+            AddWalletSheet { choice in
+                showAddWallet = false
+                // The next sheet opens once this one has closed.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                    if choice == .create { showCreate = true } else { showImport = true }
+                }
+            }
+            .environmentObject(walletManager)
         }
         .sheet(isPresented: $showCreate) {
             CreateWalletView(coin: coin).environmentObject(walletManager)
@@ -965,6 +975,75 @@ struct WalletIconPicker: View {
             .frame(width: 50, height: 50)
             .background(Circle().fill(selected ? Color(uiColor: .label) : Color(uiColor: .systemBackground).opacity(0.9)))
             .scaleEffect(selected ? 1.06 : 1)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+
+/// "Add wallet": two cards, a new recovery phrase or one you already have.
+struct AddWalletSheet: View {
+    enum Choice { case create, restore }
+
+    @EnvironmentObject var walletManager: WalletManager
+    let onChoose: (Choice) -> Void
+
+    private var lang: AppLanguage { walletManager.appLanguage }
+    private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+
+    var body: some View {
+        ZStack {
+            GlassAmbientBackground()
+            VStack(spacing: 14) {
+                card(icon: "sparkles", title: L10n.createNewWallet(lang),
+                     detail: t("A new recovery phrase, made on this iPhone. Write it down on paper.",
+                               "Una frase de recuperación nueva, creada en este iPhone. Anótala en papel.")) {
+                    onChoose(.create)
+                }
+                card(icon: "square.and.arrow.down", title: L10n.importWallet(lang),
+                     detail: t("A recovery phrase you already have, a private key, or an address to watch.",
+                               "Una frase de recuperación que ya tengas, una clave privada o una dirección para observar.")) {
+                    onChoose(.restore)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SheetHeader(title: t("Add wallet", "Añadir billetera"))
+            }
+        }
+        .presentationDetents([.height(340)])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func card(icon: String, title: String, detail: String, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .systemBackground))
+                    .frame(width: 46, height: 46)
+                    .background(Circle().fill(Color(uiColor: .label)))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                    Text(detail)
+                        .font(.system(size: 13))
+                        .foregroundColor(Palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 8)
+                Chevron()
+            }
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .buttonStyle(.plain)
     }
