@@ -35,7 +35,7 @@ struct WalletsView: View {
     @State private var showAddWallet = false
     /// Coin switch: the finger's offset and the direction of the last change.
     @State private var switchOffset: CGFloat = 0
-    @State private var switchForward = true
+    @Namespace private var coinDock
     @State private var showLightning = false
     @State private var deleteAccountTarget: AccountTarget?
 
@@ -184,7 +184,13 @@ struct WalletsView: View {
         .onAppear { coin = walletManager.activeCoin }
         // A new wallet of another coin shows that coin; when the last wallet of a coin is
         // deleted, the switch moves to one you still have.
-        .onChange(of: walletManager.activeCoin) { coin = $0 }
+        .onChange(of: walletManager.activeCoin) { kind in
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.8)) { coin = kind }
+        }
+        // Remember each coin's last wallet, to reopen it from the dock.
+        .onChange(of: walletManager.activeSlot) { slot in
+            UserDefaults.standard.set(slot, forKey: "lastWallet.\(walletManager.activeCoin)")
+        }
         .onChange(of: walletManager.visibleLibrary.count) { _ in
             if !ownedCoins.contains(coin), let first = ownedCoins.first { coin = first }
         }
@@ -295,73 +301,68 @@ struct WalletsView: View {
     private var watchWallets: [LibraryWallet] { coinWallets.filter { isWatchOnly($0) } }
     private var testnetName: String { coin.isAccountBased ? "Testnet" : "Testnet4" }
 
-    /// One coin at a time (Bitcoin, Ethereum, Dollars): swipe sideways for the next or
-    /// previous one, or tap for the next. Dots tell where you are.
+    /// The coin dock: every coin you have as its logo on a grey track; the chosen one
+    /// grows into a black capsule with its name, sliding from coin to coin. Tap a logo,
+    /// or swipe the dock, to move. Choosing a coin also opens its wallet on the balance.
     private var coinSwitch: some View {
         let all = ownedCoins
-        return VStack(spacing: 8) {
-            ZStack {
-                HStack(spacing: 7) {
-                    CoinLogo(coin: coin, size: 20)
-                    Text(coin.title(lang))
-                        .font(.system(size: 15, weight: .semibold))
-                        .lineLimit(1)
-                }
-                .id(coin)
-                .transition(.asymmetric(
-                    insertion: .move(edge: switchForward ? .trailing : .leading).combined(with: .opacity),
-                    removal: .move(edge: switchForward ? .leading : .trailing).combined(with: .opacity)))
-                .offset(x: switchOffset)
-
-                if all.count > 1 {
-                    HStack {
-                        Image(systemName: "chevron.left")
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                    }
-                    .font(.system(size: 12, weight: .bold))
-                    .opacity(0.35)
-                    .padding(.horizontal, 16)
-                }
-            }
-            .foregroundColor(Color(uiColor: .systemBackground))
-            .frame(maxWidth: .infinity, minHeight: 40)
-            .background(Capsule().fill(Color(uiColor: .label)))
-            .clipShape(Capsule())
-            .padding(4)
-            .background(Capsule().fill(SettingsStyle.groupFill))
-            .contentShape(Capsule())
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { gesture in
-                        onSwitchDrag(true)
-                        switchOffset = gesture.translation.width * 0.35
-                    }
-                    .onEnded { gesture in
-                        onSwitchDrag(false)
-                        let dx = gesture.translation.width
-                        if abs(dx) < 10 && abs(gesture.translation.height) < 10 {
-                            stepCoin(1)
-                        } else if abs(dx) > 30 {
-                            stepCoin(dx < 0 ? 1 : -1)
-                        } else {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { switchOffset = 0 }
+        return HStack(spacing: 4) {
+            ForEach(all) { item in
+                let selected = item == coin
+                Button { select(item) } label: {
+                    HStack(spacing: 8) {
+                        CoinLogo(coin: item, size: selected ? 26 : 30)
+                            .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: selected ? 2 : 0))
+                            .saturation(selected ? 1 : 0.35)
+                            .opacity(selected ? 1 : 0.7)
+                        if selected {
+                            Text(item.title(lang))
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(Color(uiColor: .systemBackground))
+                                .lineLimit(1)
+                                .fixedSize()
+                                .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .leading)))
                         }
                     }
-            )
-
-            if all.count > 1 {
-            HStack(spacing: 5) {
-                ForEach(all) { item in
-                    Capsule()
-                        .fill(item == coin ? Color(uiColor: .label) : Color.gray.opacity(0.35))
-                        .frame(width: item == coin ? 16 : 5, height: 4)
+                    .padding(.leading, selected ? 6 : 5)
+                    .padding(.trailing, selected ? 14 : 5)
+                    .frame(height: 40)
+                    .background {
+                        if selected {
+                            Capsule()
+                                .fill(Color(uiColor: .label))
+                                .matchedGeometryEffect(id: "coinDockSelection", in: coinDock)
+                                .shadow(color: Color.black.opacity(0.18), radius: 8, x: 0, y: 3)
+                        }
+                    }
+                    .contentShape(Capsule())
                 }
-            }
-            .frame(maxWidth: .infinity)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: coin)
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(item.title(lang)))
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
+        .padding(4)
+        .background(Capsule().fill(SettingsStyle.groupFill))
+        .offset(x: switchOffset)
+        .frame(maxWidth: .infinity)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 12)
+                .onChanged { gesture in
+                    guard abs(gesture.translation.width) > abs(gesture.translation.height) else { return }
+                    onSwitchDrag(true)
+                    switchOffset = gesture.translation.width * 0.12
+                }
+                .onEnded { gesture in
+                    onSwitchDrag(false)
+                    let dx = gesture.translation.width
+                    if abs(dx) > 40, abs(dx) > abs(gesture.translation.height) {
+                        stepCoin(dx < 0 ? 1 : -1)
+                    } else {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { switchOffset = 0 }
+                    }
+                }
+        )
     }
 
     /// Next (1) or previous (-1) coin, going round.
@@ -371,13 +372,30 @@ struct WalletsView: View {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { switchOffset = 0 }
             return
         }
-        let next = all[(index + step + all.count) % all.count]
+        select(all[(index + step + all.count) % all.count])
+    }
+
+    private func select(_ next: CoinKind) {
+        guard next != coin else {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { switchOffset = 0 }
+            return
+        }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        switchForward = step > 0
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.8)) {
             switchOffset = 0
             coin = next
         }
+        // The balance follows: open this coin's wallet (the last one used, else the first).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { activateWallet(of: next) }
+    }
+
+    private func activateWallet(of kind: CoinKind) {
+        guard walletManager.activeCoin != kind else { return }
+        let wallets = walletManager.visibleLibrary.filter { ($0.bundle.accounts.first?.record.coinKind ?? .bitcoin) == kind }
+        let remembered = UserDefaults.standard.string(forKey: "lastWallet.\(kind)")
+        guard let target = wallets.first(where: { $0.slot == remembered })
+                ?? wallets.first(where: { !isWatchOnly($0) }) ?? wallets.first else { return }
+        walletManager.selectWallet(slot: target.slot, account: nil)
     }
 
     // MARK: - Folding cards
