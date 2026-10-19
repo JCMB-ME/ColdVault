@@ -179,6 +179,12 @@ struct WalletsView: View {
             LightningView().environmentObject(walletManager)
         }
         .onAppear { coin = walletManager.activeCoin }
+        // A new wallet of another coin shows that coin; when the last wallet of a coin is
+        // deleted, the switch moves to one you still have.
+        .onChange(of: walletManager.activeCoin) { coin = $0 }
+        .onChange(of: walletManager.visibleLibrary.count) { _ in
+            if !ownedCoins.contains(coin), let first = ownedCoins.first { coin = first }
+        }
         .sheet(item: $iconSlot) { target in
             WalletIconPicker(slot: target.slot).environmentObject(walletManager)
         }
@@ -270,6 +276,13 @@ struct WalletsView: View {
         return accounts.compactMap { walletManager.cachedBalance(of: $0.record) }.reduce(0, +)
     }
 
+    /// Only the coins you have wallets of (the one on screen at least).
+    private var ownedCoins: [CoinKind] {
+        let kinds = Set(walletManager.visibleLibrary.map { $0.bundle.accounts.first?.record.coinKind ?? .bitcoin })
+        let owned = CoinKind.allCases.filter { kinds.contains($0) }
+        return owned.isEmpty ? [coin] : owned
+    }
+
     private var coinWallets: [LibraryWallet] {
         walletManager.visibleLibrary.filter { ($0.bundle.accounts.first?.record.coinKind ?? .bitcoin) == coin }
     }
@@ -280,7 +293,7 @@ struct WalletsView: View {
     /// One coin at a time (Bitcoin, Ethereum, Dollars): swipe sideways for the next or
     /// previous one, or tap for the next. Dots tell where you are.
     private var coinSwitch: some View {
-        let all = CoinKind.allCases
+        let all = ownedCoins
         return VStack(spacing: 8) {
             ZStack {
                 HStack(spacing: 7) {
@@ -295,14 +308,16 @@ struct WalletsView: View {
                     removal: .move(edge: switchForward ? .leading : .trailing).combined(with: .opacity)))
                 .offset(x: switchOffset)
 
-                HStack {
-                    Image(systemName: "chevron.left")
-                    Spacer()
-                    Image(systemName: "chevron.right")
+                if all.count > 1 {
+                    HStack {
+                        Image(systemName: "chevron.left")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                    }
+                    .font(.system(size: 12, weight: .bold))
+                    .opacity(0.35)
+                    .padding(.horizontal, 16)
                 }
-                .font(.system(size: 12, weight: .bold))
-                .opacity(0.35)
-                .padding(.horizontal, 16)
             }
             .foregroundColor(Color(uiColor: .systemBackground))
             .frame(maxWidth: .infinity, minHeight: 40)
@@ -330,6 +345,7 @@ struct WalletsView: View {
                     }
             )
 
+            if all.count > 1 {
             HStack(spacing: 5) {
                 ForEach(all) { item in
                     Capsule()
@@ -339,13 +355,17 @@ struct WalletsView: View {
             }
             .frame(maxWidth: .infinity)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: coin)
+            }
         }
     }
 
     /// Next (1) or previous (-1) coin, going round.
     private func stepCoin(_ step: Int) {
-        let all = CoinKind.allCases
-        guard let index = all.firstIndex(of: coin) else { return }
+        let all = ownedCoins
+        guard all.count > 1, let index = all.firstIndex(of: coin) else {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { switchOffset = 0 }
+            return
+        }
         let next = all[(index + step + all.count) % all.count]
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         switchForward = step > 0
