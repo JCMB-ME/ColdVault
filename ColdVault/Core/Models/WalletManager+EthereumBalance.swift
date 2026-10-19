@@ -78,7 +78,11 @@ extension WalletManager {
         let rpc = EthereumRPC(isTestnet: testnet, chain: chain)
         let stablecoins = KnownToken.stablecoins(testnet: testnet).filter { $0.chain == chain }
         async let others = kind == .dollars ? [] : otherTokens(chain: chain, owner: owner, testnet: testnet)
-        let (wei, held) = try await rpc.balances(owner: owner, contracts: stablecoins.map { $0.contract })
+        let added = customTokens.filter { token in
+            token.chain == chain.rawValue && token.testnet == testnet
+                && !stablecoins.contains { $0.contract.lowercased() == token.contract.lowercased() }
+        }
+        let (wei, held) = try await rpc.balances(owner: owner, contracts: stablecoins.map { $0.contract } + added.map { $0.contract })
         var list = [EVMAsset(chain: chain, contract: nil, symbol: chain.nativeSymbol, name: chain.nativeName, decimals: 18,
                              balance: wei, usdPrice: nativeUsdPrice(chain.nativeSymbol), iconURL: nil)]
         for token in stablecoins {
@@ -89,6 +93,10 @@ extension WalletManager {
             }
         }
         list += await others
+        // Tokens added by hand: always listed, even at zero or without a price.
+        for token in added where !list.contains(where: { $0.contract?.lowercased() == token.contract.lowercased() }) {
+            if let asset = token.asset(balance: held[token.contract] ?? .zero) { list.append(asset) }
+        }
         return list
     }
 
@@ -123,6 +131,10 @@ extension WalletManager {
                                      decimals: token.decimals, balance: value, usdPrice: stablePrice(token), iconURL: nil))
             }
         }
+        for token in customTokens where token.chain == EVMChain.tron.rawValue && token.testnet == testnet
+            && !list.contains(where: { $0.contract == token.contract }) {
+            if let asset = token.asset(balance: account.tokens[token.contract] ?? .zero) { list.append(asset) }
+        }
         return list
     }
 
@@ -136,14 +148,19 @@ extension WalletManager {
         var list = [EVMAsset(chain: .ton, contract: nil, symbol: "TON", name: "Toncoin", decimals: 9,
                              balance: wallet.balance, usdPrice: nativeUsdPrice("TON"), iconURL: nil)]
         let jettons = (await jettonList).value ?? []
+        let added = customTokens.filter { $0.chain == EVMChain.ton.rawValue && $0.testnet == testnet }
+        let addedMasters = Set(added.map { $0.contract.lowercased() })
         var hasStable = false
         for jetton in jettons {
             let master = jetton.master.lowercased()
             let stable = KnownToken.isStablecoin(master, chain: .ton, testnet: testnet)
+            // Jettons added by hand always show, even unverified or at zero.
+            let byHand = addedMasters.contains(master)
             if kind == .dollars {
-                guard stable else { continue }
+                guard stable || byHand else { continue }
             } else {
-                guard stable || (jetton.verified && (jetton.usdPrice ?? 0) > 0), !jetton.balance.isZero else { continue }
+                guard stable || byHand || (jetton.verified && (jetton.usdPrice ?? 0) > 0),
+                      !jetton.balance.isZero || byHand else { continue }
             }
             hasStable = hasStable || stable
             list.append(EVMAsset(chain: .ton, contract: master,
@@ -152,6 +169,9 @@ extension WalletManager {
                                  decimals: min(max(jetton.decimals, 0), 36), balance: jetton.balance,
                                  usdPrice: stable ? 1 : jetton.usdPrice, iconURL: stable ? nil : jetton.image,
                                  tokenWallet: jetton.wallet))
+        }
+        for token in added where !list.contains(where: { $0.contract?.lowercased() == token.contract.lowercased() }) {
+            if let asset = token.asset(balance: .zero) { list.append(asset) }
         }
         if kind == .dollars && !hasStable,
            let usdt = KnownToken.stablecoins(testnet: testnet).first(where: { $0.chain == .ton }) {
@@ -253,6 +273,72 @@ extension WalletManager {
         let target = destination - source.filter { $0 < destination }.count
         rest.insert(contentsOf: moving, at: max(0, min(target, rest.count)))
         tokenOrder = rest + tokenOrder.filter { !ids.contains($0) }
+    }
+
+    // MARK: - Tokens added by contract
+
+    /// Reads a token's symbol, name and decimals from its contract on the network on screen.
+    public func lookUpToken(_ text: String) async throws -> CustomToken {
+        let chain = activeNetwork
+        let testnet = isTestnet
+        let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token: CustomToken
+        switch chain {
+        case .tron:
+            guard TronAddress.isValid(input) else { throw CustomTokenError.invalidContract }
+            let api = TronAPI(isTestnet: testnet)
+            func read(_ selector: String) async -> Data? { try? await api.constantCall(contract: input, selector: selector) }
+            guard let decimals = await read("decimals()").flatMap(CustomToken.uint), decimals <= 36,
+                  let symbol = await read("symbol()").flatMap({ CustomToken.text($0, limit: 11) }) else {
+                throw CustomTokenError.notFound
+            }
+            let name = await read("name()").flatMap { CustomToken.text($0, limit: 40) } ?? symbol
+            token = CustomToken(chain: chain.rawValue, testnet: testnet, contract: input, symbol: symbol, name: name, decimals: decimals)
+        case .ton:
+            guard TonAddress.parse(input) != nil else { throw CustomTokenError.invalidContract }
+            guard let info = try? await TonAPI(isTestnet: testnet).jettonInfo(input),
+                  (0...36).contains(info.decimals) else { throw CustomTokenError.notFound }
+            let symbol = KnownToken.cleanText(info.symbol, limit: 11)
+            token = CustomToken(chain: chain.rawValue, testnet: testnet, contract: info.address, symbol: symbol,
+                                name: KnownToken.cleanText(info.name, limit: 40), decimals: info.decimals)
+        default:
+            guard let bytes = EthereumAddress.parse(input) else { throw CustomTokenError.invalidContract }
+            let contract = EthereumAddress.checksummed(bytes)
+            let rpc = EthereumRPC(isTestnet: testnet, chain: chain)
+            func read(_ selector: String) async -> Data? {
+                guard let hex = try? await rpc.call("eth_call", [["to": contract, "data": selector], "latest"]) as? String,
+                      hex.count > 2 else { return nil }
+                return String(hex.dropFirst(2)).hexDecoded
+            }
+            guard let decimals = await read("0x313ce567").flatMap(CustomToken.uint), decimals <= 36,
+                  let symbol = await read("0x95d89b41").flatMap({ CustomToken.text($0, limit: 11) }) else {
+                throw CustomTokenError.notFound
+            }
+            let name = await read("0x06fdde03").flatMap { CustomToken.text($0, limit: 40) } ?? symbol
+            token = CustomToken(chain: chain.rawValue, testnet: testnet, contract: contract, symbol: symbol, name: name, decimals: decimals)
+        }
+        if customTokens.contains(where: { $0.id == token.id }) || evmAssets.contains(where: { $0.id == token.assetID }) {
+            throw CustomTokenError.alreadyListed
+        }
+        return token
+    }
+
+    public func addCustomToken(_ token: CustomToken) async {
+        guard !customTokens.contains(where: { $0.id == token.id }) else { return }
+        customTokens.append(token)
+        hiddenTokens.remove(token.assetID)
+        await refreshEthereumBalance()
+    }
+
+    /// Whether this asset of the network on screen was added by hand.
+    public func isCustomToken(_ asset: EVMAsset) -> Bool {
+        customTokens.contains { $0.assetID == asset.id && $0.testnet == isTestnet }
+    }
+
+    public func removeCustomToken(_ asset: EVMAsset) {
+        customTokens.removeAll { $0.assetID == asset.id && $0.testnet == isTestnet }
+        evmAssets.removeAll { $0.id == asset.id && asset.balance.isZero }
+        Task { await refreshEthereumBalance() }
     }
 
     public func setToken(_ asset: EVMAsset, visible: Bool) {

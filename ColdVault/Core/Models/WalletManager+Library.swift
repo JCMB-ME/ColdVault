@@ -137,6 +137,13 @@ extension WalletManager {
         library = wallets.slots.compactMap { slot in
             readBundle(slot: slot).map { LibraryWallet(slot: slot, bundle: $0) }
         }
+        // Default names from before Stable became $table ("Stable 2" → "$table 2").
+        for index in library.indices where library[index].bundle.accounts.first?.record.coinKind == .dollars {
+            let name = library[index].bundle.name
+            guard name == "Stable" || (name.hasPrefix("Stable ") && Int(name.dropFirst(7)) != nil) else { continue }
+            library[index].bundle.name = "$table" + name.dropFirst(6)
+            writeMetadata(library[index].bundle, slot: library[index].slot)
+        }
         guard !library.isEmpty else {
             hasWallet = false
             activeRecord = nil

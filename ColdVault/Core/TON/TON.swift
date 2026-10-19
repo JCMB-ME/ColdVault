@@ -669,6 +669,18 @@ public final class TonAPI {
         }
     }
 
+    /// A jetton's own data: its address in raw form ("0:…"), symbol, name and decimals.
+    public func jettonInfo(_ master: String) async throws -> (address: String, symbol: String, name: String, decimals: Int) {
+        guard let parsed = TonAddress.parse(master) else { throw TonError.invalidAddress }
+        let raw = parsed.raw.lowercased()
+        let object = try await json("\(tonapi)/v2/jettons/\(raw)")
+        guard let metadata = object["metadata"] as? [String: Any], let symbol = metadata["symbol"] as? String else {
+            throw TonError.unavailable
+        }
+        let decimals = Int((metadata["decimals"] as? String) ?? "") ?? (metadata["decimals"] as? NSNumber)?.intValue ?? 9
+        return (raw, symbol, (metadata["name"] as? String) ?? symbol, decimals)
+    }
+
     /// Last events (TON and jetton transfers…) of an account.
     public func events(_ address: String) async throws -> [[String: Any]] {
         let object = try await json("\(tonapi)/v2/accounts/\(address)/events?limit=50")

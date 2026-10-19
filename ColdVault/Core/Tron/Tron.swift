@@ -248,6 +248,17 @@ public final class TronAPI {
         return ((first["balance"] as? NSNumber)?.int64Value ?? 0, tokens)
     }
 
+    /// A read-only call of a contract (TRC-20 symbol(), name(), decimals()): the raw ABI answer.
+    public func constantCall(contract: String, selector: String) async throws -> Data {
+        let object = try await post("/wallet/triggerconstantcontract",
+                                    ["owner_address": contract, "contract_address": contract,
+                                     "function_selector": selector, "parameter": "", "visible": true])
+        guard let hex = (object["constant_result"] as? [String])?.first, let data = hex.hexDecoded, !data.isEmpty else {
+            throw TronError.unavailable
+        }
+        return data
+    }
+
     /// Whether the address exists on chain (sending TRX to a new one costs 1 TRX more).
     public func accountExists(_ address: String) async throws -> Bool {
         let object = try await post("/wallet/getaccount", ["address": address, "visible": true])

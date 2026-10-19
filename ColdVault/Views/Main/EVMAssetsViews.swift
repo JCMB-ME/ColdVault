@@ -26,15 +26,10 @@ struct EVMAssetIcon: View {
                     .scaledToFit()
                     .frame(width: size, height: size)
             } else if let url = asset.iconURL ?? asset.fallbackIconURL(testnet: walletManager.isTestnet) {
-                AsyncImage(url: url) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else {
-                        letter
-                    }
-                }
-                .frame(width: size, height: size)
-                .clipShape(Circle())
+                // Downloaded once, then read from the phone (also offline).
+                SavedTokenImage(url: url) { letter }
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
             } else {
                 letter
             }
@@ -63,6 +58,27 @@ struct EVMAssetIcon: View {
             .foregroundColor(Color(uiColor: .label))
             .frame(width: size, height: size)
             .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+    }
+}
+
+/// A token's picture, saved on the phone after the first download (the same store as the
+/// NFT thumbnails), so it is not fetched again at every launch.
+struct SavedTokenImage<Placeholder: View>: View {
+    let url: URL
+    @ViewBuilder let placeholder: () -> Placeholder
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image = image ?? NFTImageLoader.shared.cached(url) {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                placeholder()
+            }
+        }
+        .task(id: url) {
+            if image == nil { image = await NFTImageLoader.shared.load(url) }
+        }
     }
 }
 
@@ -219,8 +235,8 @@ struct NetworkUnavailableCard: View {
                 .buttonStyle(.plain)
                 .disabled(isWorking)
             } else {
-                Text(t("It needs a wallet made from a recovery phrase (TON can't use a private key). Create or import a Stable wallet with your phrase.",
-                       "Hace falta una billetera creada con frase de recuperación (TON no funciona con clave privada). Crea o importa una billetera Stable con tu frase."))
+                Text(t("It needs a wallet made from a recovery phrase (TON can't use a private key). Create or import a $table wallet with your phrase.",
+                       "Hace falta una billetera creada con frase de recuperación (TON no funciona con clave privada). Crea o importa una billetera $table con tu frase."))
                     .font(.system(size: 13))
                     .foregroundColor(Palette.secondary)
                     .multilineTextAlignment(.center)
@@ -275,7 +291,7 @@ struct EVMAssetsCard: View {
                 if walletManager.homeShowTokens {
                     VStack(spacing: 10) {
                         // Every stablecoin of the network (hide any in Manage tokens).
-                        section("Stable", walletManager.orderedTokens())
+                        section("$table", walletManager.orderedTokens())
                         manageButton
                     }
                     section(t("Gas (pays the fees)", "Gas (paga las comisiones)"), natives,
@@ -410,6 +426,10 @@ struct EVMAssetsCard: View {
 /// order (drag the handles).
 struct ManageTokensView: View {
     @EnvironmentObject var walletManager: WalletManager
+    @State private var contractText = ""
+    @State private var found: CustomToken?
+    @State private var isLooking = false
+    @State private var addError: String?
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -429,10 +449,17 @@ struct ManageTokensView: View {
                     ForEach(tokens) { item in
                         row(item)
                             .listRowBackground(SettingsStyle.groupFill)
+                            // Only tokens added by hand can be removed.
+                            .deleteDisabled(!walletManager.isCustomToken(item))
                     }
                     .onMove { source, destination in
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         walletManager.moveTokens(tokens, from: source, to: destination)
+                    }
+                    .onDelete { offsets in
+                        for index in offsets where tokens.indices.contains(index) {
+                            walletManager.removeCustomToken(tokens[index])
+                        }
                     }
                 } header: {
                     HStack(spacing: 6) {
@@ -446,6 +473,7 @@ struct ManageTokensView: View {
                     Text(t("Turn a token off to hide it from the home screen. Drag to change the order.",
                            "Apaga un token para ocultarlo de la pantalla principal. Arrastra para cambiar el orden."))
                 }
+                addSection
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
@@ -458,6 +486,93 @@ struct ManageTokensView: View {
         .presentationDragIndicator(.visible)
     }
 
+    /// Add a token by its contract on the network on screen.
+    private var addSection: some View {
+        Section {
+            HStack(spacing: 10) {
+                TextField(t("Contract address", "Dirección del contrato"), text: $contractText)
+                    .font(.system(size: 14, design: .monospaced))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .onChange(of: contractText) { _ in
+                        found = nil
+                        addError = nil
+                    }
+                Button {
+                    if let text = UIPasteboard.general.string { contractText = text.trimmingCharacters(in: .whitespacesAndNewlines) }
+                } label: {
+                    Image(systemName: "doc.on.clipboard").foregroundColor(Color(uiColor: .label))
+                }
+                .buttonStyle(.plain)
+            }
+            .listRowBackground(SettingsStyle.groupFill)
+            if let token = found {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(token.symbol).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                        Text(token.name + " · " + t("\(token.decimals) decimals", "\(token.decimals) decimales"))
+                            .font(.system(size: 12))
+                            .foregroundColor(Palette.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Button(t("Add", "Añadir")) {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        found = nil
+                        contractText = ""
+                        Task { await walletManager.addCustomToken(token) }
+                    }
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color(uiColor: .systemBackground))
+                    .padding(.horizontal, 16)
+                    .frame(height: 34)
+                    .background(Capsule().fill(Color(uiColor: .label)))
+                    .buttonStyle(.plain)
+                }
+                .listRowBackground(SettingsStyle.groupFill)
+            } else {
+                Button {
+                    lookUp()
+                } label: {
+                    HStack {
+                        Text(t("Look up token", "Buscar token")).font(.system(size: 15, weight: .semibold))
+                        Spacer()
+                        if isLooking { ProgressView() }
+                    }
+                    .foregroundColor(Color(uiColor: .label))
+                }
+                .buttonStyle(.plain)
+                .disabled(isLooking || contractText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .listRowBackground(SettingsStyle.groupFill)
+            }
+            if let error = addError {
+                Text(error)
+                    .font(.system(size: 13))
+                    .foregroundColor(.red)
+                    .listRowBackground(SettingsStyle.groupFill)
+            }
+        } header: {
+            Text(t("Add a token", "Añadir un token"))
+        } footer: {
+            Text(t("Paste the token's contract on \(walletManager.activeNetwork.name(testnet: walletManager.isTestnet)). Anyone can create a token with any name (even \"USDT\"): add only contracts you checked on the project's own website. Swipe left on a token you added to remove it.",
+                   "Pega el contrato del token en \(walletManager.activeNetwork.name(testnet: walletManager.isTestnet)). Cualquiera puede crear un token con cualquier nombre (incluso \"USDT\"): añade solo contratos que hayas comprobado en la web oficial del proyecto. Desliza a la izquierda un token añadido para quitarlo."))
+        }
+    }
+
+    private func lookUp() {
+        let text = contractText
+        isLooking = true
+        addError = nil
+        Task {
+            do {
+                found = try await walletManager.lookUpToken(text)
+            } catch {
+                addError = error.localizedDescription
+            }
+            isLooking = false
+        }
+    }
+
     private func row(_ item: EVMAsset) -> some View {
         HStack(spacing: 12) {
             EVMAssetIcon(asset: item, size: 36)
@@ -465,7 +580,8 @@ struct ManageTokensView: View {
                 Text(item.symbol)
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
-                Text(item.formatted() + (walletManager.fiatValue(of: item).map { " · " + $0 } ?? ""))
+                Text(item.formatted() + (walletManager.fiatValue(of: item).map { " · " + $0 } ?? "")
+                     + (walletManager.isCustomToken(item) ? t(" · added", " · añadido") : ""))
                     .font(.system(size: 12))
                     .foregroundColor(Palette.secondary)
                     .lineLimit(1)

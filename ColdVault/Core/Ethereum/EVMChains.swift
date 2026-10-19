@@ -211,6 +211,69 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
 }
 
 /// A token the app always knows (stablecoins), on one chain.
+/// A token the user added by its contract (Manage tokens), on one network.
+public struct CustomToken: Codable, Equatable, Identifiable {
+    public let chain: String          // EVMChain raw value
+    public let testnet: Bool
+    public let contract: String       // as the network writes it (0x… checksummed, T…, TON "0:…")
+    public let symbol: String
+    public let name: String
+    public let decimals: Int
+
+    public var id: String { "\(testnet ? "testnet" : "mainnet"):\(chain):\(contract.lowercased())" }
+    /// The id of the asset it shows as (EVMAsset.id).
+    public var assetID: String { "\(chain):\(contract.lowercased())" }
+
+    func asset(balance: UInt256) -> EVMAsset? {
+        guard let network = EVMChain(rawValue: chain) else { return nil }
+        return EVMAsset(chain: network, contract: contract, symbol: symbol, name: name, decimals: decimals,
+                        balance: balance, usdPrice: nil, iconURL: nil)
+    }
+
+    /// A uint answer of a contract call (decimals()).
+    static func uint(_ data: Data) -> Int? {
+        let bytes = [UInt8](data)
+        guard bytes.count == 32, bytes[0..<31].allSatisfy({ $0 == 0 }) else { return nil }
+        return Int(bytes[31])
+    }
+
+    /// A string answer of a contract call (symbol(), name()), or the bytes32 some old tokens return.
+    static func text(_ data: Data, limit: Int) -> String? {
+        let bytes = [UInt8](data)
+        var raw: [UInt8]
+        if bytes.count >= 64, bytes[0..<31].allSatisfy({ $0 == 0 }), bytes[31] == 0x20 {
+            guard bytes[32..<56].allSatisfy({ $0 == 0 }) else { return nil }
+            let length = bytes[56..<64].reduce(0) { $0 << 8 | Int($1) }
+            guard length <= 256, 64 + length <= bytes.count else { return nil }
+            raw = Array(bytes[64..<(64 + length)])
+        } else if bytes.count == 32 {
+            raw = bytes
+            while raw.last == 0 { raw.removeLast() }
+        } else {
+            return nil
+        }
+        guard let text = String(bytes: raw, encoding: .utf8) else { return nil }
+        let clean = KnownToken.cleanText(text, limit: limit)
+        return clean == "?" ? nil : clean
+    }
+}
+
+public enum CustomTokenError: LocalizedError {
+    case invalidContract, notFound, alreadyListed
+
+    public var errorDescription: String? {
+        let english = AppLanguage.current == .english
+        switch self {
+        case .invalidContract:
+            return english ? "That is not a contract address of this network." : "Esa no es una dirección de contrato de esta red."
+        case .notFound:
+            return english ? "No token answers at that contract on this network." : "Ningún token responde en ese contrato en esta red."
+        case .alreadyListed:
+            return english ? "This token is already in the list." : "Este token ya está en la lista."
+        }
+    }
+}
+
 public struct KnownToken {
     public let chain: EVMChain
     public let testnet: Bool
@@ -315,7 +378,7 @@ public struct EVMAsset: Identifiable, Equatable, @unchecked Sendable {
         return KnownToken.stablecoins.contains { $0.chain == chain && $0.contract.lowercased() == contract.lowercased() }
     }
 
-    /// Logo bundled with the app: the native coins, USDC, USDT.
+    /// Logo bundled with the app: the native coins and the known stablecoins.
     public var logoName: String? {
         if isNative { return chain.nativeLogoName }
         // The real logos only for the real contracts (a fake "USDT" keeps its own icon).
@@ -324,6 +387,8 @@ public struct EVMAsset: Identifiable, Equatable, @unchecked Sendable {
         case "USDC": return "UsdcLogo"
         case "USDT": return "UsdtLogo"
         case "EURC": return "EurcLogo"
+        case "DAI": return "DaiLogo"
+        case "USDe": return "UsdeLogo"
         default: return nil
         }
     }
