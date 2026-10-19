@@ -173,7 +173,7 @@ struct CalculatorView: View {
     private func unitPicker(selection: String, onPick: @escaping (String) -> Void) -> some View {
         AppMenuButton(items: {
             CalculatorView.units.map { item in
-                AppMenuItem(title: "\(item) · \(name(item))",
+                AppMenuItem(title: item, image: AnyView(unitIcon(item, size: 26)),
                             selected: item == selection) { onPick(item) }
             }
         }) {
@@ -202,42 +202,42 @@ struct CalculatorView: View {
 
     /// Bitcoin and Ethereum logos in colour, the country flag for each currency.
     @ViewBuilder
-    private func unitIcon(_ item: String) -> some View {
+    private func unitIcon(_ item: String, size: CGFloat = 38) -> some View {
         switch item {
         case "BTC":
-            BitcoinLogo(size: 38)
+            BitcoinLogo(size: size)
         case "ETH":
-            CoinLogo(coin: .ethereum, size: 38)       // the logo is already a full circle
+            CoinLogo(coin: .ethereum, size: size)       // the logo is already a full circle
         case "POL":
-            CoinLogo(coin: .polygon, size: 38)
+            CoinLogo(coin: .polygon, size: size)
         case "TRX":
-            CoinLogo(coin: .tron, size: 38)
+            CoinLogo(coin: .tron, size: size)
         case "TON":
-            CoinLogo(coin: .ton, size: 38)
+            CoinLogo(coin: .ton, size: size)
         case "USDT", "USDC":
             Image(item == "USDT" ? "UsdtLogo" : "UsdcLogo")
                 .resizable()
                 .scaledToFit()
-                .frame(width: 38, height: 38)
+                .frame(width: size, height: size)
                 .clipShape(Circle())
         case "EURC":
             Text("€")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .font(.system(size: size * 0.47, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
-                .frame(width: 38, height: 38)
+                .frame(width: size, height: size)
                 .background(Circle().fill(Color(red: 0.16, green: 0.46, blue: 0.86)))
         case "sats":
             Text("s")
-                .font(.system(size: 17, weight: .bold, design: .rounded))
+                .font(.system(size: size * 0.45, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
-                .frame(width: 38, height: 38)
+                .frame(width: size, height: size)
                 .background(Circle().fill(Color.orange))
         default:
             // The country's flag filling the whole circle.
             Image("Flag\(item)")
                 .resizable()
                 .scaledToFill()
-                .frame(width: 38, height: 38)
+                .frame(width: size, height: size)
                 .clipShape(Circle())
                 .overlay(Circle().stroke(Color(uiColor: .separator).opacity(0.5), lineWidth: 0.5))
         }

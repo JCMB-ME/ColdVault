@@ -15,6 +15,8 @@ struct AppMenuItem: Identifiable {
     let id = UUID()
     let title: String
     var icon: String? = nil
+    /// A picture instead of a symbol (a coin logo, a flag).
+    var image: AnyView? = nil
     var selected: Bool = false
     var destructive: Bool = false
     /// A second list (e.g. "Rename account" › the accounts) instead of an action.
@@ -156,7 +158,9 @@ private struct AppMenuCard: View {
     private func row(_ item: AppMenuItem) -> some View {
         let tint = item.destructive ? Color.red : Color(uiColor: .label)
         return HStack(spacing: 12) {
-            if let icon = item.icon {
+            if let image = item.image {
+                image.frame(width: 26, height: 26)
+            } else if let icon = item.icon {
                 Image(systemName: icon)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(tint)
