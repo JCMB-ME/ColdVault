@@ -278,6 +278,8 @@ struct EthSendView: View {
     @State private var pickedPercent: Int?
     @State private var pickedText: String?
     @State private var fast = false
+    /// The fee estimate shown under the amount (before the review).
+    @State private var liveFee: UInt256?
     @State private var plan: EthereumSendPlan?
     @State private var isProcessing = false
     @State private var errorMessage: String?
@@ -333,8 +335,75 @@ struct EthSendView: View {
     }
     private var trimmedRecipient: String { recipient.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var tooMuch: Bool { amountUnits.map { asset.balance < $0 } ?? false }
+    /// The network's coin held on this network (pays the fee).
+    private var nativeBalance: UInt256 {
+        walletManager.networkAssets.first { $0.isNative && $0.chain == asset.chain }?.balance ?? (asset.isNative ? asset.balance : .zero)
+    }
+    /// The amount plus the fee is more than the balance (native coin), or the fee is more than
+    /// the network coin held (token).
+    private var feeTooMuch: Bool {
+        guard !sendAll, let fee = liveFee else { return false }
+        if asset.isNative {
+            guard let units = amountUnits, let total = units.adding(fee) else { return false }
+            return asset.balance < total
+        }
+        return nativeBalance < fee
+    }
     private var canReview: Bool {
-        asset.chain.isValidAddress(trimmedRecipient) && (sendAll || amountUnits != nil) && !tooMuch && !isProcessing
+        asset.chain.isValidAddress(trimmedRecipient) && (sendAll || amountUnits != nil) && !tooMuch && !feeTooMuch && !isProcessing
+    }
+
+    private func nativeText(_ value: UInt256) -> String {
+        "\(value.formatted(decimals: asset.chain.nativeDecimals, maxFraction: 8)) \(asset.chain.nativeSymbol)"
+    }
+
+    /// Under the amount: the fee added and the total, or why it does not fit.
+    @ViewBuilder
+    private func feeLine(_ units: UInt256) -> some View {
+        if let fee = liveFee {
+            if asset.isNative, let total = units.adding(fee) {
+                if asset.balance < total {
+                    notEnoughForFee(t("With the fee (≈ \(nativeText(fee))) your balance isn't enough.",
+                                      "Con la comisión (≈ \(nativeText(fee))) no te alcanza el saldo."), canSendMax: true)
+                } else {
+                    Text(t("+ ≈ \(nativeText(fee)) fee · total ≈ \(nativeText(total))",
+                           "+ ≈ \(nativeText(fee)) de comisión · total ≈ \(nativeText(total))"))
+                }
+            } else if !asset.isNative {
+                if nativeBalance < fee {
+                    notEnoughForFee(t("The fee (≈ \(nativeText(fee))) is paid in \(asset.chain.nativeSymbol), and you don't have enough.",
+                                      "La comisión (≈ \(nativeText(fee))) se paga en \(asset.chain.nativeSymbol) y no tienes suficiente."),
+                                    canSendMax: false)
+                } else {
+                    Text(t("+ ≈ \(nativeText(fee)) fee (paid in \(asset.chain.nativeSymbol))",
+                           "+ ≈ \(nativeText(fee)) de comisión (se paga en \(asset.chain.nativeSymbol))"))
+                }
+            }
+        }
+    }
+
+    private func notEnoughForFee(_ text: String, canSendMax: Bool) -> some View {
+        VStack(spacing: 6) {
+            Label(text, systemImage: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+            if canSendMax {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        sendAll = true
+                        amountText = ""
+                    }
+                } label: {
+                    Text(t("Send the most possible", "Enviar el máximo posible"))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .systemBackground))
+                        .padding(.horizontal, 14)
+                        .frame(height: 30)
+                        .background(Capsule().fill(Color(uiColor: .label)))
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
     /// Contacts with an address of this network.
     private var ethContacts: [Contact] { walletManager.contacts.filter { asset.chain.isValidAddress($0.address) } }
@@ -491,6 +560,10 @@ struct EthSendView: View {
                 .frame(maxWidth: .infinity)
                 .minimumScaleFactor(0.5)
                 assetPicker
+                    .task(id: "\(asset.id)-\(fast)") {
+                        liveFee = nil
+                        liveFee = await walletManager.estimatedSendFee(asset: asset, fast: fast)
+                    }
                 Group {
                     if sendAll {
                         Text(asset.isNative ? t("Entire balance minus the network fee", "Todo el saldo menos la comisión de red")
@@ -499,14 +572,18 @@ struct EthSendView: View {
                     } else if tooMuch {
                         Label(t("Not enough balance", "Saldo insuficiente"), systemImage: "exclamationmark.triangle.fill")
                             .foregroundColor(.red)
-                    } else if let units = amountUnits, let value = fiat(units, of: asset) {
-                        Text(value)
+                    } else if let units = amountUnits {
+                        VStack(spacing: 4) {
+                            if let value = fiat(units, of: asset) { Text(value) }
+                            feeLine(units)
+                        }
                     } else {
                         Text(t("Amount", "Monto"))
                     }
                 }
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(Palette.secondary)
+                .multilineTextAlignment(.center)
             }
             VStack(spacing: 10) {
             HStack(spacing: 10) {

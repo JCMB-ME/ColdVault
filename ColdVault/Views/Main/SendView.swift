@@ -144,9 +144,51 @@ public struct SendView: View {
         }
     }
 
+    /// A typical payment (1 input, 2 outputs) is about 141 vB: the fee shown under the amount.
+    private var estimatedFeeSats: UInt64 { feeRate * 141 }
+
+    /// The amount plus the fee is more than what can be spent.
+    private var feeTooMuch: Bool {
+        guard !sendAll, let sats = amountSats else { return false }
+        return sats + estimatedFeeSats > walletManager.availableSats
+    }
+
+    /// Under the amount: the fee added and the total, or why it does not fit.
+    @ViewBuilder
+    private func feeLine(_ sats: UInt64) -> some View {
+        let fee = estimatedFeeSats
+        if sats + fee > walletManager.availableSats {
+            VStack(spacing: 6) {
+                Label(t("With the fee (≈ \(amountText(fee))) your balance isn't enough.",
+                        "Con la comisión (≈ \(amountText(fee))) no te alcanza el saldo."),
+                      systemImage: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        sendAll = true
+                        amountString = ""
+                    }
+                } label: {
+                    Text(t("Send the most possible", "Enviar el máximo posible"))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .systemBackground))
+                        .padding(.horizontal, 14)
+                        .frame(height: 30)
+                        .background(Capsule().fill(Color(uiColor: .label)))
+                }
+                .buttonStyle(.plain)
+            }
+        } else {
+            Text(t("+ ≈ \(amountText(fee)) fee · total ≈ \(amountText(sats + fee))",
+                   "+ ≈ \(amountText(fee)) de comisión · total ≈ \(amountText(sats + fee))"))
+        }
+    }
+
     private var canReview: Bool {
         !recipientAddress.trimmingCharacters(in: .whitespaces).isEmpty
             && (sendAll || amountSats != nil)
+            && !feeTooMuch
             && !isProcessing
             && (fees != nil || feesUnavailable)
     }
@@ -287,15 +329,19 @@ public struct SendView: View {
                         Label(t("Not enough balance", "Saldo insuficiente"), systemImage: "exclamationmark.triangle.fill")
                             .foregroundColor(.red)
                     } else if let sats = amountSats {
-                        Text(([unit == .btc ? "\(SendView.satsText(sats)) sats" : "\(SendView.btcText(sats)) BTC"]
-                              + [fiatText(sats)].compactMap { $0 }).joined(separator: " · "))
+                        VStack(spacing: 4) {
+                            Text(([unit == .btc ? "\(SendView.satsText(sats)) sats" : "\(SendView.btcText(sats)) BTC"]
+                                  + [fiatText(sats)].compactMap { $0 }).joined(separator: " · "))
+                            feeLine(sats)
+                        }
                     } else {
                         Text(t("Amount", "Monto"))
                     }
                 }
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(Palette.secondary)
-                .lineLimit(1)
+                .lineLimit(3)
+                .multilineTextAlignment(.center)
                 .minimumScaleFactor(0.7)
             }
 

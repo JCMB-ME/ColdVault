@@ -1144,6 +1144,24 @@ extension WalletManager {
     /// Builds (does not sign) a payment of a native coin or a token on one network;
     /// `amount == nil` sends everything (native coin: minus the fee). The fee is paid in
     /// that network's coin. `fast` (EVM) pays a higher tip to be included sooner.
+    /// What a send of `asset` costs at most, in the network's coin, before the review (which
+    /// computes it exactly): EVM as the review does (twice the base fee plus the tip, a plain
+    /// transfer's gas); Tron and TON their usual fee.
+    public func estimatedSendFee(asset: EVMAsset, fast: Bool) async -> UInt256? {
+        switch asset.chain {
+        case .tron:
+            return UInt256(UInt64(asset.isNative ? 300_000 : 15_000_000))          // 0.3 TRX / ~15 TRX of energy
+        case .ton:
+            return UInt256(UInt64(asset.isNative ? 6_000_000 : 56_000_000))        // ~0.006 TON / 0.05 TON attached
+        default:
+            guard let fees = try? await EthereumRPC(isTestnet: isTestnet, chain: asset.chain).fees() else { return nil }
+            let tip = fast ? (fees.tip.multiplied(by: 2) ?? fees.tip) : fees.tip
+            guard let doubled = fees.baseFee.multiplied(by: 2), let perGas = doubled.adding(tip),
+                  let cost = perGas.multiplied(by: asset.isNative ? 21_000 : 65_000) else { return nil }
+            return cost.adding(asset.chain.extraFeeReserve)
+        }
+    }
+
     public func prepareEVMSend(asset: EVMAsset, to recipient: String, amount: UInt256?, fast: Bool = false) async throws -> EthereumSendPlan {
         switch asset.chain {
         case .tron: return try await prepareTronSend(asset: asset, to: recipient, amount: amount)
