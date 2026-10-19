@@ -102,6 +102,9 @@ public struct WalletTransaction: Identifiable, Equatable, Codable {
     public let confirmed: Bool
     /// EVM wallets: the chain ("ethereum", "base"); nil = Ethereum / bitcoin.
     public var chain: String? = nil
+    /// Bitcoin payments received and confirmed (Electrum): true once their Merkle proof and
+    /// block header checked out (SPV), false while the server has not proven it; nil otherwise.
+    public var verified: Bool? = nil
 }
 
 public enum FiatCurrency {

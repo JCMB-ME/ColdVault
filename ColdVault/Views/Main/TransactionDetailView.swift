@@ -47,6 +47,7 @@ struct TransactionDetailView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 16) {
                     summary
+                    if transaction.verified == false { unverifiedCard }
                     noteField
                     details
                     if let info = feeInfo, !info.inputs.isEmpty {
@@ -99,6 +100,18 @@ struct TransactionDetailView: View {
 
     // MARK: - Pieces
 
+    /// A received payment the server calls confirmed without proving it is in a block (SPV).
+    private var unverifiedCard: some View {
+        Label(t("The server says this payment is confirmed but has not sent a valid proof that it is in a block. Do not count it as received yet: the app checks again on every refresh. If it stays like this, change the server (Settings › Advanced).",
+                "El servidor dice que este pago está confirmado, pero no ha enviado una prueba válida de que esté en un bloque. No lo des por recibido todavía: la app lo vuelve a comprobar en cada actualización. Si sigue así, cambia de servidor (Ajustes › Avanzado)."),
+              systemImage: "exclamationmark.triangle.fill")
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(.orange)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(SettingsStyle.groupFill))
+    }
+
     private var summary: some View {
         VStack(spacing: 8) {
             Image(systemName: received ? "arrow.down.left" : "arrow.up.right")
@@ -131,6 +144,12 @@ struct TransactionDetailView: View {
                 Text(transaction.confirmed ? t("Confirmed", "Confirmada") : t("Pending", "Pendiente"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Palette.secondary)
+                if transaction.verified == true {
+                    // Its Merkle proof and its block's proof of work were checked on this iPhone.
+                    Label(t("Verified in its block", "Verificada en su bloque"), systemImage: "checkmark.seal.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Palette.secondary)
+                }
             }
         }
         .padding(.vertical, 22)

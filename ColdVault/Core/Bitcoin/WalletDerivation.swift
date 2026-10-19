@@ -75,11 +75,15 @@ public struct WalletSecret: Codable, Equatable {
     public var mnemonic: String?
     public var passphrase: String?
     public var privateKey: String?   // WIF (or 64-char hex in very old records)
+    /// The phrase is in the TON wallets' own format (Tonkeeper), not BIP-39: it gives one
+    /// TON key and nothing else (see TonMnemonic). Absent in every other secret.
+    public var tonNative: Bool?
 
-    public init(mnemonic: String? = nil, passphrase: String? = nil, privateKey: String? = nil) {
+    public init(mnemonic: String? = nil, passphrase: String? = nil, privateKey: String? = nil, tonNative: Bool? = nil) {
         self.mnemonic = mnemonic
         self.passphrase = passphrase
         self.privateKey = privateKey
+        self.tonNative = tonNative
     }
 
     public func encoded() throws -> Data {

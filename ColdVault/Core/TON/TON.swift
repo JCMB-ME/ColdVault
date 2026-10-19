@@ -545,6 +545,16 @@ public enum TonError: LocalizedError {
     }
 }
 
+/// What the network did with a message the wallet sent.
+public enum TonSendOutcome: Equatable {
+    /// It ran, and so did everything it set off (a jetton transfer, the recipient's side).
+    case done
+    /// It ran but the payment did not happen; the reason, ready to show.
+    case failed(String)
+    /// Not seen yet (it can still run until it expires).
+    case unknown
+}
+
 public struct TonJetton {
     public let master: String          // "0:…"
     public let wallet: String          // the owner's jetton wallet "0:…"
@@ -675,6 +685,68 @@ public final class TonAPI {
     public func nfts(_ address: String) async throws -> [[String: Any]] {
         let object = try await json("\(tonapi)/v2/accounts/\(address)/nfts?limit=100&indirect_ownership=false")
         return (object["nft_items"] as? [[String: Any]]) ?? []
+    }
+
+    /// A tonapi object, or nil when it does not exist (yet).
+    private func lookup(_ url: String) async throws -> [String: Any]? {
+        guard let endpoint = URL(string: url) else { throw TonError.unavailable }
+        var request = URLRequest(url: endpoint)
+        ServiceKeys.authorize(&request)
+        let (data, response) = try await session.data(for: request)
+        switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
+        case 200: return try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        case 404: return nil
+        default: throw TonError.unavailable
+        }
+    }
+
+    /// Follows a message sent from the wallet until the network has run it and what it set off,
+    /// for up to `timeout` seconds. The wallet sends with mode 3 ("ignore errors"): it accepts a
+    /// message whose payment then fails (not enough TON for the amount and its fee, a bad
+    /// destination), its seqno moves on and only the fee is spent; tonapi says which.
+    public func outcome(ofMessage hash: String, timeout: TimeInterval = 40) async -> TonSendOutcome {
+        guard hash.count == 64, hash.allSatisfy({ $0.isHexDigit }) else { return .unknown }
+        let english = AppLanguage.current == .english
+        let deadline = Date().addingTimeInterval(timeout)
+        var transaction: [String: Any]?
+        while Date() < deadline && !Task.isCancelled {
+            if transaction == nil, let found = try? await lookup("\(tonapi)/v2/blockchain/messages/\(hash)/transaction") {
+                if let reason = TonAPI.failure(of: found, english: english) { return .failed(reason) }
+                transaction = found
+            }
+            // The wallet's transaction id is also the id of the whole event (its trace).
+            if let id = transaction?["hash"] as? String, id.allSatisfy({ $0.isHexDigit }),
+               let event = try? await lookup("\(tonapi)/v2/events/\(id)"), (event["in_progress"] as? Bool) == false {
+                let actions = (event["actions"] as? [[String: Any]]) ?? []
+                if actions.contains(where: { ($0["status"] as? String) == "failed" }) {
+                    return .failed(english
+                        ? "the payment did not go through: the network sent it back (the recipient refused it or the token balance was short). It returns to your wallet minus the fee."
+                        : "el pago no se completó: la red lo devolvió (el destino lo rechazó o no alcanzó el saldo del token). Vuelve a tu billetera menos la comisión.")
+                }
+                return .done
+            }
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+        }
+        return .unknown
+    }
+
+    /// Why the wallet's own transaction paid nothing, or nil when it sent its message.
+    static func failure(of transaction: [String: Any], english: Bool) -> String? {
+        let compute = transaction["compute_phase"] as? [String: Any]
+        let action = transaction["action_phase"] as? [String: Any]
+        if (transaction["aborted"] as? Bool) == true || (transaction["success"] as? Bool) == false
+            || (compute?["success"] as? Bool) == false || (action?["success"] as? Bool) == false {
+            return english ? "the network rejected the payment. Only the fee was charged."
+                           : "la red rechazó el pago. Solo se cobró la comisión."
+        }
+        let skipped = (action?["skipped_actions"] as? NSNumber)?.intValue ?? 0
+        let outgoing = (transaction["out_msgs"] as? [Any])?.count ?? 0
+        if skipped > 0 || outgoing == 0 {
+            return english
+                ? "the network did not make the payment (usually the balance did not cover the amount and its fee). Only the fee was charged."
+                : "la red no hizo el pago (normalmente porque el saldo no cubría el importe y su comisión). Solo se cobró la comisión."
+        }
+        return nil
     }
 
     /// Broadcasts a signed external message (toncenter, then tonapi).

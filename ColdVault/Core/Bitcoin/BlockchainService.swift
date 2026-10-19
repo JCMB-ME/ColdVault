@@ -187,12 +187,15 @@ public final class BlockchainService {
     private var rawTxCache = [String: Transaction]()
     private var rawTxHex = [String: String]()
     private var blockTimeCache = [Int: Date]()
+    /// Received payments whose inclusion in a block was proven (SPV): checked once.
+    private var spvVerified = Set<String>()
     private var diskLoaded = false
     private var diskDirty = false
 
     private struct DiskHistory: Codable {
         var transactions: [String: String]       // txid → raw hex
         var blockTimes: [String: Double]          // height (negative: testnet) → unix time
+        var verified: [String]?                   // txids proven to be in their block
     }
 
     private static var diskURL: URL? {
@@ -210,6 +213,7 @@ public final class BlockchainService {
         for (key, time) in disk.blockTimes {
             if let height = Int(key) { blockTimeCache[height] = Date(timeIntervalSince1970: time) }
         }
+        spvVerified = Set(disk.verified ?? [])
     }
 
     private func cachedTx(_ txid: String) -> Transaction? {
@@ -243,12 +247,27 @@ public final class BlockchainService {
         lock.unlock()
     }
 
+    private func isVerified(_ txid: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        loadDiskIfNeeded()
+        return spvVerified.contains(txid)
+    }
+
+    private func markVerified(_ txids: [String]) {
+        guard !txids.isEmpty else { return }
+        lock.lock()
+        spvVerified.formUnion(txids)
+        diskDirty = true
+        lock.unlock()
+    }
+
     /// Forgets the saved history (the last wallet was deleted).
     public func clearDiskHistory() {
         lock.lock()
         rawTxCache = [:]
         rawTxHex = [:]
         blockTimeCache = [:]
+        spvVerified = []
         diskDirty = false
         diskLoaded = true
         lock.unlock()
@@ -263,8 +282,12 @@ public final class BlockchainService {
         if rawTxHex.count > 4000 {
             for key in rawTxHex.keys.prefix(rawTxHex.count - 3000) { rawTxHex[key] = nil }
         }
+        if spvVerified.count > 4000 {
+            for txid in spvVerified.prefix(spvVerified.count - 3000) { spvVerified.remove(txid) }
+        }
         let disk = DiskHistory(transactions: rawTxHex,
-                               blockTimes: Dictionary(uniqueKeysWithValues: blockTimeCache.map { ("\($0.key)", $0.value.timeIntervalSince1970) }))
+                               blockTimes: Dictionary(uniqueKeysWithValues: blockTimeCache.map { ("\($0.key)", $0.value.timeIntervalSince1970) }),
+                               verified: Array(spvVerified))
         lock.unlock()
         if let data = try? JSONEncoder().encode(disk) {
             try? LocalOnlyFiles.write(data, to: url)
@@ -318,32 +341,14 @@ public final class BlockchainService {
             }
         }
 
-        let confirmedHeights = Set(heights.values.filter { $0 > 0 })
-        var times = [Int: Date]()
-        var unknownHeights = [Int]()
-        for height in confirmedHeights {
-            if let time = cachedTime(timeKey(height)) { times[height] = time } else { unknownHeights.append(height) }
-        }
-        for chunk in stride(from: 0, to: unknownHeights.count, by: 100).map({ Array(unknownHeights[$0..<min($0 + 100, unknownHeights.count)]) }) {
-            let headers = try await client.batch(chunk.map { ("blockchain.block.header", [$0]) })
-            for (height, header) in zip(chunk, headers) {
-                guard let hex = header as? String, let bytes = hex.hexDecoded, bytes.count == 80 else { continue }
-                let b = [UInt8](bytes)
-                let timestamp = UInt32(b[68]) | UInt32(b[69]) << 8 | UInt32(b[70]) << 16 | UInt32(b[71]) << 24
-                let date = Date(timeIntervalSince1970: TimeInterval(timestamp))
-                times[height] = date
-                cache(time: date, height: timeKey(height))
-            }
-        }
-        saveDiskHistory()
-
         var ourOutputs = [String: UInt64]()       // "txid:vout" → value
         for (txid, tx) in transactions {
             for (index, output) in tx.outputs.enumerated() where ownScripts.contains(output.scriptPubKey) {
                 ourOutputs["\(txid):\(index)"] = output.value
             }
         }
-        return transactions.map { txid, tx in
+        var nets = [String: Int64]()
+        for (txid, tx) in transactions {
             var net: Int64 = 0
             for output in tx.outputs where ownScripts.contains(output.scriptPubKey) {
                 net += Int64(output.value)
@@ -351,8 +356,63 @@ public final class BlockchainService {
             for input in tx.inputs {
                 if let value = ourOutputs["\(input.prevTxidHex):\(input.vout)"] { net -= Int64(value) }
             }
+            nets[txid] = net
+        }
+        // Confirmed payments received that are not proven yet (SPV, once each).
+        let toVerify = nets.keys.filter { (heights[$0] ?? 0) > 0 && (nets[$0] ?? 0) > 0 && !isVerified($0) }
+
+        let confirmedHeights = Set(heights.values.filter { $0 > 0 })
+        var times = [Int: Date]()
+        var unknownHeights = Set<Int>()
+        for height in confirmedHeights {
+            if let time = cachedTime(timeKey(height)) { times[height] = time } else { unknownHeights.insert(height) }
+        }
+        // One header per block: its time, and its Merkle root and proof of work for SPV.
+        let headerHeights = Array(unknownHeights.union(toVerify.compactMap { heights[$0] }))
+        var headers = [Int: Data]()
+        for chunk in stride(from: 0, to: headerHeights.count, by: 100).map({ Array(headerHeights[$0..<min($0 + 100, headerHeights.count)]) }) {
+            let answers = try await client.batchResults(chunk.map { ("blockchain.block.header", [$0]) })
+            for (height, answer) in zip(chunk, answers) {
+                guard case .success(let header) = answer else {
+                    if unknownHeights.contains(height) { throw ElectrumError.invalidResponse }   // as before: no half history
+                    continue
+                }
+                guard let hex = header as? String, let bytes = hex.hexDecoded, bytes.count == 80 else { continue }
+                headers[height] = bytes
+                guard unknownHeights.contains(height) else { continue }
+                let b = [UInt8](bytes)
+                let timestamp = UInt32(b[68]) | UInt32(b[69]) << 8 | UInt32(b[70]) << 16 | UInt32(b[71]) << 24
+                let date = Date(timeIntervalSince1970: TimeInterval(timestamp))
+                times[height] = date
+                cache(time: date, height: timeKey(height))
+            }
+        }
+
+        var proven = [String]()
+        for chunk in stride(from: 0, to: toVerify.count, by: 100).map({ Array(toVerify[$0..<min($0 + 100, toVerify.count)]) }) {
+            // A failed request leaves those payments unproven (shown as such), never proven.
+            guard let answers = try? await client.batchResults(chunk.map { ("blockchain.transaction.get_merkle", [$0, heights[$0] ?? 0]) }) else { continue }
+            for (txid, answer) in zip(chunk, answers) {
+                guard case .success(let value) = answer, let proof = value as? [String: Any],
+                      let branch = proof["merkle"] as? [String], let position = (proof["pos"] as? NSNumber)?.intValue,
+                      let height = heights[txid], ((proof["block_height"] as? NSNumber)?.intValue ?? height) == height,
+                      let header = headers[height], let tx = transactions[txid] else { continue }
+                if SPV.verify(txid: txid, strippedSize: tx.serialized(includeWitness: false).count, branch: branch,
+                              position: position, header: header, height: height, isTestnet: isTestnet) {
+                    proven.append(txid)
+                }
+            }
+        }
+        markVerified(proven)
+        saveDiskHistory()
+
+        let provenNow = Set(proven)
+        return transactions.map { txid, _ in
+            let net = nets[txid] ?? 0
             let height = heights[txid] ?? 0
-            return WalletTransaction(txid: txid, net: net, date: height > 0 ? times[height] : nil, confirmed: height > 0)
+            var item = WalletTransaction(txid: txid, net: net, date: height > 0 ? times[height] : nil, confirmed: height > 0)
+            if height > 0 && net > 0 { item.verified = provenNow.contains(txid) || isVerified(txid) }
+            return item
         }
     }
 

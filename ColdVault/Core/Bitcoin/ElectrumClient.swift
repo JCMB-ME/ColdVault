@@ -166,6 +166,21 @@ public actor ElectrumClient {
         }
     }
 
+    /// Like `batch`, but each answer stands alone: one refused request does not fail the others.
+    public func batchResults(_ calls: [(String, [Any])]) async throws -> [Result<Any, Error>] {
+        try await ensureConnected()
+        return await withTaskGroup(of: (Int, Result<Any, Error>).self) { group in
+            for (index, call) in calls.enumerated() {
+                group.addTask {
+                    do { return (index, .success(try await self.send(call.0, call.1))) } catch { return (index, .failure(error)) }
+                }
+            }
+            var results = [Result<Any, Error>](repeating: .failure(ElectrumError.invalidResponse), count: calls.count)
+            for await (index, value) in group { results[index] = value }
+            return results
+        }
+    }
+
     /// Subscribes to changes of these script hashes (payments in or out).
     public func subscribe(_ scriptHashes: [String]) async {
         let fresh = scriptHashes.filter { !subscribed.contains($0) }

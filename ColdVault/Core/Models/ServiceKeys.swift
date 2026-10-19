@@ -5,7 +5,8 @@
 //  Optional free API keys for the public Tron and TON services. Without them TronGrid,
 //  toncenter and tonapi allow about one request per second and answer "busy" (429)
 //  more often; with them the limits are much higher. They are not secrets of the
-//  wallet (they only identify the app to the service) and stay on this iPhone.
+//  wallet (they only identify the app to the service); they stay in the Keychain of
+//  this iPhone (older versions kept them in UserDefaults and are moved once).
 //
 
 import Foundation
@@ -37,9 +38,49 @@ public enum ServiceKeys {
     }
 
     public static func key(_ service: Service) -> String? {
-        let value = (UserDefaults.standard.string(forKey: service.rawValue) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
+        store.value(service)
+    }
+
+    /// Saves a key (empty removes it). False if the Keychain refused it.
+    @discardableResult
+    public static func set(_ value: String, for service: Service) -> Bool {
+        store.set(value.trimmingCharacters(in: .whitespacesAndNewlines), for: service)
+    }
+
+    /// Read from the Keychain once, then from memory: every Tron and TON request asks.
+    private static let store = Store()
+
+    private final class Store: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [Service: String]?
+
+        func value(_ service: Service) -> String? {
+            lock.lock()
+            defer { lock.unlock() }
+            if values == nil {
+                var loaded = [Service: String]()
+                var complete = true
+                for item in Service.allCases {
+                    KeychainValue.migrate(fromDefaults: item.rawValue, to: item.rawValue)
+                    let read = KeychainValue.read(item.rawValue)
+                    complete = complete && read.readable
+                    if let value = read.value { loaded[item] = value }
+                }
+                // Not kept if the Keychain could not be read (asked again next time).
+                guard complete else { return loaded[service] }
+                values = loaded
+            }
+            return values?[service]
+        }
+
+        func set(_ value: String, for service: Service) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard KeychainValue.set(value, for: service.rawValue) else { return false }
+            UserDefaults.standard.removeObject(forKey: service.rawValue)
+            values?[service] = value.isEmpty ? nil : value
+            return true
+        }
     }
 
     /// Adds the key header a service expects (nothing when no key is set).

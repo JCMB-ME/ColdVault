@@ -128,6 +128,8 @@ extension WalletManager {
 
     nonisolated private static func seed(_ secret: WalletSecret) throws -> Data? {
         guard let mnemonic = secret.mnemonic else { return nil }
+        // A TON-format phrase has no BIP-39 seed: only its one TON key (tonKey).
+        guard secret.tonNative != true else { throw WalletError.derivationFailed }
         return try BIP39.mnemonicToSeed(mnemonic: mnemonic, passphrase: secret.passphrase ?? "")
     }
 
@@ -163,15 +165,32 @@ extension WalletManager {
         throw WalletError.derivationFailed
     }
 
-    /// TON key: m/44'/607'/n' of the phrase (Ed25519; there is none for a hex key).
+    /// TON key: m/44'/607'/n' of a BIP-39 phrase, or the one key of a TON-format phrase
+    /// (Tonkeeper). Ed25519; there is none for a hex key.
     nonisolated static func tonKey(secret: WalletSecret, account: UInt32) throws -> Data {
+        if secret.tonNative == true {
+            guard account == 0, let mnemonic = secret.mnemonic else { throw WalletError.derivationFailed }
+            return try TonMnemonic.privateKey(mnemonic)
+        }
         guard let seed = try seed(secret) else { throw WalletError.derivationFailed }
         return TonKeys.privateKey(seed: seed, index: account)
+    }
+
+    /// The account comes from a TON-format phrase (Tonkeeper): a single account, no path.
+    nonisolated static func isTonNative(_ record: StoredWalletRecord?) -> Bool {
+        record?.chainAddresses?["tonScheme"] == "native"
     }
 
     /// The main address of an account of `coin`, and (Stable) its Tron and TON addresses.
     nonisolated static func accountAddresses(secret: WalletSecret, account: UInt32,
                                              coin: CoinKind) throws -> (primary: String, extra: [String: String]?) {
+        if secret.tonNative == true {
+            guard coin == .ton else { throw WalletError.derivationFailed }
+            let key = try tonKey(secret: secret, account: account)
+            guard let publicKey = TonKeys.publicKey(privateKey: key),
+                  let address = TonWallet.displayAddress(publicKey: publicKey, testnet: false) else { throw WalletError.derivationFailed }
+            return (address, ["tonPublicKey": publicKey.hexEncodedString, "tonScheme": "native"])
+        }
         let seed = try seed(secret)
         let hex = hexKey(secret)
         func evm() throws -> String {
@@ -332,7 +351,8 @@ extension WalletManager {
     /// Stores an account-based wallet from a phrase, a 64-hex private key or an address
     /// (watch-only) and selects it.
     @discardableResult
-    func importEthereum(input: String, passphrase: String, isTestnet: Bool, coin: CoinKind = .ethereum) async throws -> StoredWalletRecord {
+    func importEthereum(input: String, passphrase: String, isTestnet: Bool, coin: CoinKind = .ethereum,
+                        tonNative: Bool? = nil) async throws -> StoredWalletRecord {
         try await ensureSelfTest()
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         var watchAddress: String?
@@ -350,7 +370,12 @@ extension WalletManager {
         }
         let secret: WalletSecret
         let type: WalletSecurityType
-        if BIP39.validateMnemonic(trimmed) {
+        let bip39 = BIP39.validateMnemonic(trimmed)
+        // A phrase valid in both formats (1 in 256) takes the format the user chose.
+        if coin == .ton, TonMnemonic.isValid(trimmed), !bip39 || tonNative == true {
+            secret = WalletSecret(mnemonic: BIP39.normalizedWords(trimmed).joined(separator: " "), tonNative: true)
+            type = .mnemonic24
+        } else if bip39 {
             let words = BIP39.normalizedWords(trimmed)
             secret = WalletSecret(mnemonic: words.joined(separator: " "), passphrase: passphrase.isEmpty ? nil : passphrase)
             type = words.count == 24 ? .mnemonic24 : .mnemonic12
@@ -359,15 +384,32 @@ extension WalletManager {
             secret = WalletSecret(privateKey: trimmed.lowercased().replacingOccurrences(of: "0x", with: ""))
             type = .privateKey
         }
-        let result = try await Task.detached(priority: .userInitiated) {
+        var result = try await Task.detached(priority: .userInitiated) {
             try WalletManager.accountAddresses(secret: secret, account: 0, coin: coin)
         }.value
+        if secret.tonNative == true, let hex = result.extra?["tonPublicKey"], let publicKey = hex.hexDecoded {
+            let version = await nativeTonVersion(publicKey: publicKey, isTestnet: isTestnet)
+            result.extra?["tonVersion"] = version.rawValue
+        }
         let stored = try persist(ethereumRecord(type: type, address: result.primary, isTestnet: isTestnet, account: 0,
                                                 coin: coin, extra: result.extra),
                                  secret: secret)
         renameNewEthereumWallet(coin)
         activate(stored)
         return stored
+    }
+
+    /// The contract a TON-format phrase's wallet uses: the one with funds or history (an
+    /// older Tonkeeper wallet is v4R2), else W5, what Tonkeeper makes today. Switchable in Settings.
+    private func nativeTonVersion(publicKey: Data, isTestnet: Bool) async -> TonWalletVersion {
+        let api = TonAPI(isTestnet: isTestnet)
+        func used(_ version: TonWalletVersion) async -> Bool {
+            guard let address = TonWallet.displayAddress(publicKey: publicKey, testnet: isTestnet, version: version),
+                  let info = try? await api.wallet(address) else { return false }
+            return info.active || !info.balance.isZero
+        }
+        if await used(.w5) { return .w5 }
+        return await used(.v4r2) ? .v4r2 : .w5
     }
 
     /// "Ethereum n" / "Stable n" / "TON n"… instead of "Wallet n" for the wallet just stored.
@@ -1455,6 +1497,11 @@ extension WalletManager {
             }
             unconfirmedSends[sendKey] = nil
             hash = messageHash
+            // Accepted is not paid (mode 3 ignores a failed payment): wait for the network's verdict.
+            if case .failed(let reason) = await TonAPI(isTestnet: isTestnet).outcome(ofMessage: messageHash) {
+                Task { await refreshAll() }
+                throw TonError.server(reason)
+            }
         }
         addLocalPending(hash: hash, plan: plan)
         Task { await refreshAll() }

@@ -34,9 +34,9 @@ extension WalletManager {
 
     public var activeWallet: LibraryWallet? { library.first { $0.slot == activeSlot } }
 
-    /// Accounts can be added to seed-phrase wallets only.
+    /// Accounts can be added to seed-phrase wallets only (not to a TON-format phrase: it has one key).
     public var canAddAccounts: Bool {
-        activeRecord?.type == .mnemonic12 || activeRecord?.type == .mnemonic24
+        (activeRecord?.type == .mnemonic12 || activeRecord?.type == .mnemonic24) && !WalletManager.isTonNative(activeRecord)
     }
 
     // MARK: - Keychain I/O
@@ -497,7 +497,8 @@ extension WalletManager {
                                           key: key.hexEncodedString))
             case .ton:
                 let key = try tonKey(secret: secret, account: account.number)
-                result.append(ExportedKey(title: "\(account.name) · TON", detail: TonKeys.path(index: account.number) + " · Ed25519",
+                let origin = secret.tonNative == true ? "TON (Tonkeeper)" : TonKeys.path(index: account.number)
+                result.append(ExportedKey(title: "\(account.name) · TON", detail: origin + " · Ed25519",
                                           key: key.hexEncodedString))
             case .dollars:
                 let evm = try ethereumKey(secret: secret, account: account.number)

@@ -4,6 +4,7 @@
 //
 //  Universal importer, on a native sheet with the same look as Receive / Create:
 //  - BIP-39 recovery phrase (12–24 words) → full control (optional passphrase)
+//  - TON: also the 24-word phrase of the TON wallets (Tonkeeper format, one account)
 //  - Private key (WIF or hex) → full control
 //  - Address, xpub/zpub or output descriptors (also animated UR QR) → watch-only
 //  What was pasted or scanned is recognised live; an optional name can be given.
@@ -27,6 +28,8 @@ public struct ImportWalletView: View {
     @State private var errorMessage: String?
     /// What the input is, worked out once per edit (not on every render).
     @State private var detection = Detection.empty
+    /// A TON phrase valid in both formats: true = the TON wallets' format (Tonkeeper), false = BIP-39.
+    @State private var tonNativeChoice: Bool?
 
     @State private var coin: CoinKind
 
@@ -46,6 +49,11 @@ public struct ImportWalletView: View {
         default: isAddress = EthereumAddress.parse(text) != nil
         }
         if isAddress { return t("\(coin.title(lang)) address (watch-only)", "Dirección de \(coin.title(lang)) (solo observación)") }
+        if coin == .ton && detection.tonNative {
+            return tonPhraseAmbiguous
+                ? t("Recovery phrase (TON or BIP-39 format)", "Frase de recuperación (formato TON o BIP-39)")
+                : t("TON recovery phrase (Tonkeeper, Tonhub, MyTonWallet)", "Frase de TON (Tonkeeper, Tonhub, MyTonWallet)")
+        }
         if BIP39.validateMnemonic(text) { return t("Recovery phrase", "Frase de recuperación") }
         let hex = text.lowercased().replacingOccurrences(of: "0x", with: "")
         if coin != .ton, hex.count == 64, let key = hex.hexDecoded, Secp256k1.isValidPrivateKey(key) {
@@ -90,7 +98,10 @@ public struct ImportWalletView: View {
                     .foregroundColor(.white)
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(ethKind == nil ? Color.orange : Color.green))
-                Text(ethKind ?? t("Not a phrase, private key or \(coin.title(lang)) address.", "No es una frase, clave privada ni dirección de \(coin.title(lang))."))
+                Text(ethKind ?? (detection.tonNative
+                                 ? t("This is a TON wallet phrase (Tonkeeper). Choose TON above to import it.",
+                                     "Es una frase de billetera TON (Tonkeeper). Elige TON arriba para importarla.")
+                                 : t("Not a phrase, private key or \(coin.title(lang)) address.", "No es una frase, clave privada ni dirección de \(coin.title(lang)).")))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Color(uiColor: .label))
                 Spacer()
@@ -107,6 +118,8 @@ public struct ImportWalletView: View {
         var payload: WalletImportPayload?
         /// Output descriptors / zpub for an HD watch-only wallet (nil: not that kind of input).
         var descriptors: Result<WatchOnlyImport, Error>?
+        /// 24 words in the TON wallets' own format (Tonkeeper); may also be valid BIP-39.
+        var tonNative = false
 
         static let empty = Detection(payload: nil, descriptors: nil)
 
@@ -124,14 +137,60 @@ public struct ImportWalletView: View {
                 descriptors = .failure(error)
             }
             return Detection(payload: descriptors == nil ? BitcoinAddress.parseImportString(text) : nil,
-                             descriptors: descriptors)
+                             descriptors: descriptors, tonNative: descriptors == nil && TonMnemonic.isValid(trimmed))
         }
     }
 
     private var isMnemonic: Bool {
-        if coin.isAccountBased { return BIP39.validateMnemonic(inputText.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        if coin.isAccountBased {
+            // A TON-format phrase has no BIP-39 passphrase.
+            if coin == .ton && detection.tonNative && (!tonPhraseAmbiguous || tonNativeChoice == true) { return false }
+            return BIP39.validateMnemonic(inputText.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
         if case .mnemonic = detection.payload { return true }
         return false
+    }
+
+    /// Valid both in the TON wallets' format and as BIP-39 (1 phrase in 256): the two give
+    /// different addresses, so the user says where it comes from.
+    private var tonPhraseAmbiguous: Bool {
+        coin == .ton && detection.tonNative && BIP39.validateMnemonic(inputText.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private var tonFormatChoice: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(t("This phrase works in both formats, and each gives a different wallet. Where does it come from?",
+                   "Esta frase vale en los dos formatos y cada uno da una billetera distinta. ¿De dónde viene?"))
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(Color(uiColor: .label))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 4) {
+                tonFormatButton(true, t("Tonkeeper · Tonhub", "Tonkeeper · Tonhub"))
+                tonFormatButton(false, t("Other wallet (BIP-39)", "Otra (BIP-39)"))
+            }
+            .padding(4)
+            .background(Capsule().fill(Color(uiColor: .systemBackground).opacity(0.6)))
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(SettingsStyle.groupFill))
+    }
+
+    private func tonFormatButton(_ native: Bool, _ title: String) -> some View {
+        let selected = tonNativeChoice == native
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { tonNativeChoice = native }
+        } label: {
+            Text(title)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .font(.system(size: 14, weight: selected ? .semibold : .regular))
+                .foregroundColor(selected ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                .frame(maxWidth: .infinity, minHeight: 38)
+                .background(Capsule().fill(selected ? Color(uiColor: .label) : Color.clear))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     public var body: some View {
@@ -163,6 +222,12 @@ public struct ImportWalletView: View {
                     }
                         .padding(.horizontal, 20)
                         .animation(.spring(response: 0.45, dampingFraction: 0.82), value: detectionKey)
+
+                    if tonPhraseAmbiguous {
+                        tonFormatChoice
+                            .padding(.horizontal, 20)
+                            .transition(.opacity)
+                    }
 
                     if isSecretInput {
                         secretOriginCheck
@@ -252,6 +317,7 @@ public struct ImportWalletView: View {
             errorMessage = nil
             detection = Detection.of(text)
             ownSecretConfirmed = false
+            tonNativeChoice = nil
         }
         .sheet(isPresented: $showScanner) {
             // Animated wallet exports (ur:crypto-account / crypto-output / crypto-hdkey)
@@ -369,6 +435,7 @@ public struct ImportWalletView: View {
     /// A seed phrase or a private key (not an address or a descriptor).
     private var isSecretInput: Bool {
         guard detection.descriptors == nil else { return false }
+        if coin == .ton && detection.tonNative { return true }
         switch detection.payload {
         case .mnemonic, .privateKey: return true
         default: return false
@@ -461,7 +528,9 @@ public struct ImportWalletView: View {
     // MARK: - Import
 
     private var canImport: Bool {
-        if coin.isAccountBased { return ethKind != nil && (!isSecretInput || ownSecretConfirmed) }
+        if coin.isAccountBased {
+            return ethKind != nil && (!isSecretInput || ownSecretConfirmed) && (!tonPhraseAmbiguous || tonNativeChoice != nil)
+        }
         if let descriptors = detection.descriptors {
             if case .success = descriptors { return true }
             return false
@@ -489,10 +558,11 @@ public struct ImportWalletView: View {
         }
         let phrase = usePassphrase && isMnemonic ? passphrase : ""
         let name = walletName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tonNative = chosenCoin == .ton ? tonNativeChoice : nil
 
         Task {
             do {
-                try await walletManager.importWallet(input: input, passphrase: phrase, coin: chosenCoin)
+                try await walletManager.importWallet(input: input, passphrase: phrase, coin: chosenCoin, tonNative: tonNative)
                 if !name.isEmpty {
                     walletManager.renameWallet(slot: walletManager.activeSlot, to: name)
                 }

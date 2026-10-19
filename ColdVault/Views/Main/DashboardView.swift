@@ -873,11 +873,20 @@ struct TransactionCard: View {
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
                         .lineLimit(1)
-                    Text(timeText)
-                        .font(.system(size: 13))
-                        .foregroundColor(Palette.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                    if transaction.verified == false {
+                        // The server says it is confirmed but has not proven it (SPV).
+                        Label(t("Not verified", "Sin verificar"), systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.orange)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    } else {
+                        Text(timeText)
+                            .font(.system(size: 13))
+                            .foregroundColor(Palette.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
                 }
                 // Takes the room the amount leaves, so "Sent" / "3 hours ago" are not cut.
                 .frame(maxWidth: .infinity, alignment: .leading)

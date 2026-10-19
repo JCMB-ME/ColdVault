@@ -435,10 +435,13 @@ public final class WalletManager: ObservableObject {
     /// The network comes from the input itself when it encodes one (WIF, address);
     /// otherwise `isTestnet` (default mainnet) is used.
     @discardableResult
+    /// `tonNative`: for a TON phrase valid both as BIP-39 and in the TON wallets' format,
+    /// which one it is (the user says; nil keeps BIP-39).
     public func importWallet(input: String, passphrase: String = "", isTestnet requested: Bool? = nil,
-                             coin: CoinKind = .bitcoin) async throws -> StoredWalletRecord {
+                             coin: CoinKind = .bitcoin, tonNative: Bool? = nil) async throws -> StoredWalletRecord {
         if coin.isAccountBased {
-            return try await importEthereum(input: input, passphrase: passphrase, isTestnet: requested ?? false, coin: coin)
+            return try await importEthereum(input: input, passphrase: passphrase, isTestnet: requested ?? false, coin: coin,
+                                            tonNative: tonNative)
         }
         // Watch-only HD wallet from output descriptors / zpub (public keys only).
         if let watch = try WatchOnlyDescriptorParser.parse(input) {

@@ -15,13 +15,13 @@ final class LightningManager: ObservableObject {
     @Published var kind: LightningEngineKind {
         didSet { UserDefaults.standard.set(kind.rawValue, forKey: "lightningEngine") }
     }
-    /// Free key from Breez (breez.technology), needed by the Breez SDK.
+    /// Free key from Breez (breez.technology), needed by the Breez SDK. Kept in the Keychain.
     @Published var breezAPIKey: String {
-        didSet { UserDefaults.standard.set(breezAPIKey.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "breezApiKey") }
+        didSet { KeychainValue.set(breezAPIKey.trimmingCharacters(in: .whitespacesAndNewlines), for: "breezApiKey") }
     }
-    /// Optional LSPS2 provider for LDK ("nodeId@host:port").
+    /// Optional LSPS2 provider for LDK ("nodeId@host:port"). Kept in the Keychain.
     @Published var ldkLSP: String {
-        didSet { UserDefaults.standard.set(ldkLSP.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "ldkLsp") }
+        didSet { KeychainValue.set(ldkLSP.trimmingCharacters(in: .whitespacesAndNewlines), for: "ldkLsp") }
     }
 
     /// Settings › Advanced › Lightning: off hides it and stops the engine.
@@ -41,8 +41,11 @@ final class LightningManager: ObservableObject {
     private init() {
         let defaults = UserDefaults.standard
         kind = LightningEngineKind(rawValue: defaults.string(forKey: "lightningEngine") ?? "") ?? .breez
-        breezAPIKey = defaults.string(forKey: "breezApiKey") ?? ""
-        ldkLSP = defaults.string(forKey: "ldkLsp") ?? ""
+        // Older versions kept both in UserDefaults (a plain file inside backups).
+        KeychainValue.migrate(fromDefaults: "breezApiKey", to: "breezApiKey")
+        KeychainValue.migrate(fromDefaults: "ldkLsp", to: "ldkLsp")
+        breezAPIKey = KeychainValue.read("breezApiKey").value ?? defaults.string(forKey: "breezApiKey") ?? ""
+        ldkLSP = KeychainValue.read("ldkLsp").value ?? defaults.string(forKey: "ldkLsp") ?? ""
         enabled = defaults.object(forKey: "lightningEnabled") as? Bool ?? true
     }
 

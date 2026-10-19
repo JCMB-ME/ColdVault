@@ -121,8 +121,9 @@ struct EthReceiveView: View {
                                 .font(.system(size: 12))
                                 .foregroundColor(Palette.secondary)
                                 .multilineTextAlignment(.center)
-                            if let record = walletManager.activeRecord {
-                                Text(network.path(index: record.accountNumber ?? 0))
+                            if let record = walletManager.activeRecord, record.type == .mnemonic12 || record.type == .mnemonic24 {
+                                Text(WalletManager.isTonNative(record) ? t("TON phrase (Tonkeeper format)", "Frase TON (formato Tonkeeper)")
+                                                                       : network.path(index: record.accountNumber ?? 0))
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundColor(Palette.secondary)
                             }
@@ -989,6 +990,14 @@ struct EthSendView: View {
             SlideToConfirm(title: t("Slide to send", "Desliza para enviar"), isLoading: isProcessing) { confirm(plan) }
                 .padding(.top, 4)
                 .task(id: plan.recipient) { await checkContract(plan) }
+            if isProcessing && plan.asset.chain == .ton {
+                // TON reports a payment only once the network has run it (a few seconds).
+                Text(t("Waiting for the TON network to confirm the payment…", "Esperando a que la red TON confirme el pago…"))
+                    .font(.system(size: 13))
+                    .foregroundColor(Palette.secondary)
+                    .multilineTextAlignment(.center)
+                    .transition(.opacity)
+            }
             Button {
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { self.plan = nil }
             } label: {

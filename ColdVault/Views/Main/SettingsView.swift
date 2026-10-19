@@ -70,10 +70,9 @@ public struct SettingsView: View {
     @AppStorage(FocusStyle.scaleKey) private var focusScale = FocusStyle.defaultScale
     @AppStorage(FocusStyle.fadeKey) private var focusFade = FocusStyle.defaultFade
     @AppStorage("settingsOpenAdvanced") private var openAdvanced = false
-    /// Optional API keys of the Tron and TON services (Advanced).
-    @AppStorage(ServiceKeys.Service.tronGrid.rawValue) private var tronGridKey = ""
-    @AppStorage(ServiceKeys.Service.toncenter.rawValue) private var toncenterKey = ""
-    @AppStorage(ServiceKeys.Service.tonapi.rawValue) private var tonapiKey = ""
+    /// Optional API keys of the Tron and TON services (Advanced; kept in the Keychain).
+    @State private var serviceKeyValues: [ServiceKeys.Service: String] = Dictionary(
+        uniqueKeysWithValues: ServiceKeys.Service.allCases.compactMap { service in ServiceKeys.key(service).map { (service, $0) } })
     @State private var editingServiceKey: ServiceKeys.Service?
     @State private var serviceKeyTarget: ServiceKeys.Service = .tronGrid
     @State private var serviceKeyDraft = ""
@@ -651,20 +650,14 @@ public struct SettingsView: View {
     }
 
     private func serviceKey(_ service: ServiceKeys.Service) -> String {
-        switch service {
-        case .tronGrid: return tronGridKey
-        case .toncenter: return toncenterKey
-        case .tonapi: return tonapiKey
-        }
+        serviceKeyValues[service] ?? ""
     }
 
     private func setServiceKey(_ service: ServiceKeys.Service, _ value: String) {
-        let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch service {
-        case .tronGrid: tronGridKey = key
-        case .toncenter: toncenterKey = key
-        case .tonapi: tonapiKey = key
+        if !ServiceKeys.set(value, for: service) {
+            errorMessage = t("Could not save the key in the Keychain.", "No se pudo guardar la clave en el Keychain.")
         }
+        serviceKeyValues[service] = ServiceKeys.key(service)
     }
 
     private var transactionCountMenu: [AppMenuItem] {
@@ -1558,7 +1551,10 @@ struct BackupDetailView: View {
         let name: String
         switch type {
         case .mnemonic12: name = t("12-word recovery phrase", "Frase de recuperación de 12 palabras")
-        case .mnemonic24: name = t("24-word recovery phrase", "Frase de recuperación de 24 palabras")
+        case .mnemonic24:
+            name = WalletManager.isTonNative(wallet.bundle.accounts.first?.record)
+                ? t("24-word TON phrase (Tonkeeper format)", "Frase TON de 24 palabras (formato Tonkeeper)")
+                : t("24-word recovery phrase", "Frase de recuperación de 24 palabras")
         case .privateKey: name = t("Private key", "Clave privada")
         case .watchOnly: name = t("Watch-only", "Observación")
         case nil: name = ""
