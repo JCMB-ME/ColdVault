@@ -85,12 +85,15 @@ public struct DashboardView: View {
                         HStack(spacing: 0) {
                             walletsPage
                                 .frame(width: geo.size.width, height: geo.size.height)
+                                .modifier(PageFocusTransition())
                                 .id(0)
                             balancePage
                                 .frame(width: geo.size.width, height: geo.size.height)
+                                .modifier(PageFocusTransition())
                                 .id(1)
                             settingsPage
                                 .frame(width: geo.size.width, height: geo.size.height)
+                                .modifier(PageFocusTransition())
                                 .id(2)
                         }
                         .scrollTargetLayout()
@@ -979,6 +982,22 @@ struct MinimalPriceChart: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .center)
+        }
+    }
+}
+
+/// Moving between Wallets, the balance and Settings: the page arriving comes from a
+/// full blur into focus as the finger moves (and the one leaving blurs away), growing
+/// slightly, like the screens of a foldable phone. Follows the finger in real time.
+@available(iOS 17.0, *)
+struct PageFocusTransition: ViewModifier {
+    func body(content: Content) -> some View {
+        content.scrollTransition(.interactive, axis: .horizontal) { view, phase in
+            let distance = abs(phase.value)
+            return view
+                .blur(radius: distance * 22)
+                .opacity(1 - distance * 0.45)
+                .scaleEffect(1 - distance * 0.07)
         }
     }
 }
