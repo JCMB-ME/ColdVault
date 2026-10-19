@@ -112,6 +112,10 @@ public final class WalletManager: ObservableObject {
     @Published public var alwaysShowAccountDots: Bool {
         didSet { UserDefaults.standard.set(alwaysShowAccountDots, forKey: "alwaysShowAccountDots") }
     }
+    /// Receive and Send on the home screen (on by default).
+    @Published public var homeShowActions: Bool {
+        didSet { UserDefaults.standard.set(homeShowActions, forKey: "homeShowActions") }
+    }
     /// One Receive/Send pill switched by swiping (on) or two separate buttons (off).
     @Published public var swipeActionButton: Bool {
         didSet { UserDefaults.standard.set(swipeActionButton, forKey: "swipeActionButton") }
@@ -224,6 +228,7 @@ public final class WalletManager: ObservableObject {
         self.homeTransactionCount = defaults.object(forKey: "homeTransactionCount") as? Int ?? 10
         self.homeShowCalculator = defaults.bool(forKey: "homeShowCalculator")
         self.swipeActionButton = defaults.bool(forKey: "swipeActionButton")
+        self.homeShowActions = defaults.object(forKey: "homeShowActions") as? Bool ?? true
         self.alwaysShowAccountDots = defaults.object(forKey: "alwaysShowAccountDots") as? Bool ?? true
         self.evmNetwork = EVMChain(rawValue: defaults.string(forKey: "evmNetwork") ?? "") ?? .ethereum
         self.homeShowTokens = defaults.object(forKey: "homeShowTokens") as? Bool ?? true

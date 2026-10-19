@@ -62,6 +62,7 @@ public struct SettingsView: View {
     @AppStorage("settingsOpenHome") private var openHome = false
     @AppStorage("settingsOpenWallet") private var openWallet = false
     @AppStorage("settingsOpenTools") private var openTools = false
+    @AppStorage("settingsOpenAppearance") private var openAppearance = false
     @AppStorage("settingsOpenAdvanced") private var openAdvanced = false
 
     public init(route: Binding<SettingsRoute?>) {
@@ -166,9 +167,15 @@ public struct SettingsView: View {
                         }
                     } else if walletManager.isDollars {
                         SettingsDivider(inset: 60)
-                        Button { showManageTokens = true } label: {
-                            SettingsRow(title: t("Manage tokens", "Administrar tokens"), chevron: true,
-                                        icon: "slider.horizontal.3")
+                        SettingsRow(title: t("Coins and tokens", "Monedas y tokens"), icon: "circle.hexagongrid") {
+                            Toggle("", isOn: $walletManager.homeShowTokens.animation()).labelsHidden()
+                        }
+                        if walletManager.homeShowTokens {
+                            SettingsDivider(inset: 60)
+                            Button { showManageTokens = true } label: {
+                                SettingsRow(title: t("Manage tokens", "Administrar tokens"), chevron: true,
+                                            icon: "slider.horizontal.3")
+                            }
                         }
                     } else if walletManager.activeCoin == .bitcoin {
                         SettingsDivider(inset: 60)
@@ -185,8 +192,14 @@ public struct SettingsView: View {
                         Toggle("", isOn: $walletManager.progressiveDecimals).labelsHidden()
                     }
                     SettingsDivider(inset: 60)
-                    SettingsRow(title: t("Swipe button", "Botón deslizable"), icon: "hand.draw") {
-                        Toggle("", isOn: $walletManager.swipeActionButton).labelsHidden()
+                    SettingsRow(title: t("Receive and Send", "Recibir y Enviar"), icon: "arrow.up.arrow.down") {
+                        Toggle("", isOn: $walletManager.homeShowActions.animation()).labelsHidden()
+                    }
+                    if walletManager.homeShowActions {
+                        SettingsDivider(inset: 60)
+                        SettingsRow(title: t("Swipe button", "Botón deslizable"), icon: "hand.draw") {
+                            Toggle("", isOn: $walletManager.swipeActionButton).labelsHidden()
+                        }
                     }
                 }
 
@@ -300,7 +313,8 @@ public struct SettingsView: View {
                     InheritanceView().environmentObject(walletManager)
                 }
 
-                SettingsSection(header: t("Appearance", "Apariencia"), footer: nil) {
+                SettingsDisclosureSection(title: t("Appearance", "Apariencia"), icon: "paintpalette",
+                                          isExpanded: $openAppearance, footer: nil) {
                     Menu {
                         Picker("", selection: $walletManager.appTheme) {
                             ForEach(AppTheme.allCases) { theme in Text(themeName(theme)).tag(theme) }
@@ -915,7 +929,7 @@ struct SettingsDisclosureSection<Content: View>: View {
             VStack(spacing: 0) {
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) { isExpanded.toggle() }
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.84, blendDuration: 0.1)) { isExpanded.toggle() }
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: icon)
@@ -946,11 +960,16 @@ struct SettingsDisclosureSection<Content: View>: View {
                         SettingsDivider(inset: 16)
                         content
                     }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(.asymmetric(
+                        insertion: .modifier(active: SettingsReveal(progress: 0), identity: SettingsReveal(progress: 1)),
+                        removal: .modifier(active: SettingsReveal(progress: 0), identity: SettingsReveal(progress: 1))
+                            .animation(.easeOut(duration: 0.18))))
                 }
             }
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .shadow(color: Color.black.opacity(isExpanded ? 0.06 : 0), radius: 14, x: 0, y: 6)
+            .scaleEffect(isExpanded ? 1 : 0.995)
 
             if isExpanded, let footer = footer {
                 Text(footer)
@@ -960,6 +979,20 @@ struct SettingsDisclosureSection<Content: View>: View {
                     .transition(.opacity)
             }
         }
+    }
+}
+
+/// How the rows of a group appear: they fade in from a blur, sliding down a little
+/// and growing from the top.
+struct SettingsReveal: ViewModifier {
+    let progress: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(progress)
+            .blur(radius: (1 - progress) * 10)
+            .offset(y: (1 - progress) * -14)
+            .scaleEffect(x: 1, y: 0.92 + 0.08 * progress, anchor: .top)
     }
 }
 

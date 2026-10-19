@@ -1156,13 +1156,16 @@ struct EVMAssetsCard: View {
                 NetworkUnavailableCard()
             } else if walletManager.isDollars {
                 // Stable: its coins in the order chosen, hidden ones left out (Manage tokens).
-                VStack(spacing: 10) {
-                    section("Stable", walletManager.orderedTokens())
-                    manageButton
+                // Settings › Coins and tokens hides the whole list, gas included.
+                if walletManager.homeShowTokens {
+                    VStack(spacing: 10) {
+                        section("Stable", walletManager.orderedTokens())
+                        manageButton
+                    }
+                    section(t("Gas (pays the fees)", "Gas (paga las comisiones)"), natives,
+                            footer: t("Each send costs a little \(network.nativeSymbol) on \(networkName). Receive it at this same address.",
+                                      "Cada envío cuesta un poco de \(network.nativeSymbol) en \(networkName). Recíbelo en esta misma dirección."))
                 }
-                section(t("Gas (pays the fees)", "Gas (paga las comisiones)"), natives,
-                        footer: t("Each send costs a little \(network.nativeSymbol) on \(networkName). Receive it at this same address.",
-                                  "Cada envío cuesta un poco de \(network.nativeSymbol) en \(networkName). Recíbelo en esta misma dirección."))
             } else {
                 // Settings › Coins and tokens hides the whole list (the coin too).
                 if walletManager.homeShowTokens {

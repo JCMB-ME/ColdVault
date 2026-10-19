@@ -455,7 +455,10 @@ public struct DashboardView: View {
                     .foregroundColor(Palette.secondary)
             }
 
-            if isWatchOnly {
+            if !walletManager.homeShowActions {
+                // Settings › Receive and Send off: no buttons on the home screen.
+                EmptyView()
+            } else if isWatchOnly {
                 // Watch-only: no keys, nothing to send from here.
                 actionButton(icon: "arrow.down.left", title: L10n.receive(lang)) {
                     showReceiveSheet = true
@@ -545,11 +548,9 @@ public struct DashboardView: View {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
                             isButtonPressed = false
                             buttonDragOffset = 0
-                            if dx < -25, abs(dx) > abs(dy), currentAction != .send {
-                                currentAction = .send
-                                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-                            } else if dx > 25, abs(dx) > abs(dy), currentAction != .receive {
-                                currentAction = .receive
+                            // Any side, as many times as you like: each swipe flips Receive ⇄ Send.
+                            if abs(dx) > 25, abs(dx) > abs(dy) {
+                                currentAction = currentAction == .receive ? .send : .receive
                                 UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
                             }
                         }
