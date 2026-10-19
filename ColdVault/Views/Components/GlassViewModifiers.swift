@@ -90,7 +90,6 @@ public struct GlassCardModifier: ViewModifier {
 // MARK: - Glass Pill Modifier
 public struct GlassPillModifier: ViewModifier {
     @Environment(\.colorScheme) var colorScheme
-    @AppStorage("liquidGlass") private var liquidGlass: Bool = false
     public var isEmphasized: Bool = false
     
     private var isDark: Bool {
@@ -125,17 +124,8 @@ public struct GlassPillModifier: ViewModifier {
         Color.black.opacity(isDark ? 0.45 : 0.15)
     }
     
-    @ViewBuilder
     public func body(content: Content) -> some View {
-        if liquidGlass, #available(iOS 26.0, *) {
-            // Apple's Liquid Glass: refracts what is behind and reacts to touch.
-            let glass: Glass = isEmphasized
-                ? Glass.regular.tint(Color.black.opacity(isDark ? 0.25 : 0.55)).interactive()
-                : Glass.regular.interactive()
-            content.glassEffect(glass, in: Capsule(style: .continuous))
-        } else {
-            frosted(content)
-        }
+        frosted(content)
     }
 
     private func frosted(_ content: Content) -> some View {

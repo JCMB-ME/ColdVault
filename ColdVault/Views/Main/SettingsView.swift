@@ -58,6 +58,11 @@ public struct SettingsView: View {
     @State private var backupSlot: String?
     @State private var revealedSlot: String?
     @State private var copiedBackup = false
+    /// Which groups of Settings are open (closed by default).
+    @AppStorage("settingsOpenHome") private var openHome = false
+    @AppStorage("settingsOpenWallet") private var openWallet = false
+    @AppStorage("settingsOpenTools") private var openTools = false
+    @AppStorage("settingsOpenAdvanced") private var openAdvanced = false
 
     public init(route: Binding<SettingsRoute?>) {
         self._route = route
@@ -98,7 +103,8 @@ public struct SettingsView: View {
             VStack(alignment: .leading, spacing: 26) {
                 SettingsTitle(text: t("Settings", "Ajustes"))
 
-                SettingsSection(header: t("Home screen", "Pantalla principal"),
+                SettingsDisclosureSection(title: t("Home screen", "Pantalla principal"), icon: "house",
+                                          isExpanded: $openHome,
                                 footer: t("Start minimal. Add only what you need. Swipe button: one Receive button you swipe to turn into Send.",
                                           "Empieza mínimo. Añade solo lo que necesites. Botón deslizable: un solo botón Recibir que se convierte en Enviar al deslizarlo.")) {
                     SettingsRow(title: t("Transactions", "Transacciones"), icon: "list.bullet") {
@@ -184,7 +190,8 @@ public struct SettingsView: View {
                     }
                 }
 
-                SettingsSection(header: t("Wallet", "Billetera"),
+                SettingsDisclosureSection(title: t("Wallet", "Billetera"), icon: "wallet.pass",
+                                          isExpanded: $openWallet,
                                 footer: walletManager.isEthereum ? nil
                                     : t("Fixed address: each account always receives on the same address and change returns to it. Off: a new address for every payment (more privacy). Your coins are safe either way.",
                                         "Dirección fija: cada cuenta recibe siempre en la misma dirección y el cambio vuelve a ella. Desactivada: una dirección nueva en cada cobro (más privacidad). Tus fondos están seguros en ambos casos.")) {
@@ -252,7 +259,8 @@ public struct SettingsView: View {
                     }
                 }
 
-                SettingsSection(header: t("Tools", "Herramientas"),
+                SettingsDisclosureSection(title: t("Tools", "Herramientas"), icon: "wrench.and.screwdriver",
+                                          isExpanded: $openTools,
                                 footer: t("Sign PSBT: cosign multisig or transactions made in Sparrow, Nunchuk or Electrum.",
                                           "Firmar PSBT: cofirma multisig o transacciones hechas en Sparrow, Nunchuk o Electrum.")) {
                     if !walletManager.isWatchOnly && !walletManager.isEthereum {
@@ -292,66 +300,7 @@ public struct SettingsView: View {
                     InheritanceView().environmentObject(walletManager)
                 }
 
-                SettingsSection(header: "Lightning",
-                                footer: t("Breez: instant, no channels, needs a free API key (breez.technology). LDK: your own node in this iPhone; you open channels. Mainnet only.",
-                                          "Breez: instantáneo, sin canales, necesita una API key gratuita (breez.technology). LDK: tu propio nodo en este iPhone; tú abres los canales. Solo mainnet.")) {
-                    Menu {
-                        Button { switchLightning(.breez) } label: {
-                            menuLabel("Breez (Spark)", selected: lightning.kind == .breez)
-                        }
-                        Button { switchLightning(.ldk) } label: {
-                            menuLabel(t("LDK (own node)", "LDK (nodo propio)"), selected: lightning.kind == .ldk)
-                        }
-                    } label: {
-                        SettingsRow(title: t("Engine", "Motor"), value: lightning.kind == .breez ? "Breez" : "LDK",
-                                    chevron: true, icon: "bolt")
-                    }
-                    if lightning.kind == .breez {
-                        SettingsDivider(inset: 60)
-                        Button {
-                            breezKeyDraft = lightning.breezAPIKey
-                            showBreezKey = true
-                        } label: {
-                            SettingsRow(title: t("Breez API key", "API key de Breez"),
-                                        value: lightning.breezAPIKey.isEmpty ? t("Missing", "Falta") : "••••" + String(lightning.breezAPIKey.suffix(4)),
-                                        chevron: true, icon: "key.horizontal")
-                        }
-                    }
-                }
-                .alert(t("Breez API key", "API key de Breez"), isPresented: $showBreezKey) {
-                    TextField("API key", text: $breezKeyDraft)
-                    Button(t("Save", "Guardar")) { lightning.breezAPIKey = breezKeyDraft }
-                    Button(t("Cancel", "Cancelar"), role: .cancel) {}
-                } message: {
-                    Text(t("Request it free at breez.technology (Breez SDK).", "Pídela gratis en breez.technology (Breez SDK)."))
-                }
-
-                SettingsSection(header: t("Export", "Exportar"),
-                                footer: t("History of the account on screen. Labels in BIP-329, readable by Sparrow and other wallets.",
-                                          "Historial de la cuenta en pantalla. Etiquetas en BIP-329, que leen Sparrow y otras billeteras.")) {
-                    Button {
-                        exportItem = walletManager.exportFile(name: "ColdVault-history.csv", contents: walletManager.historyCSV())
-                            .map { ExportItem(url: $0) }
-                    } label: {
-                        SettingsRow(title: t("History (CSV)", "Historial (CSV)"), chevron: true, icon: "tablecells")
-                    }
-                    SettingsDivider(inset: 60)
-                    Button {
-                        exportItem = walletManager.exportFile(name: "ColdVault-labels.jsonl", contents: walletManager.labelsBIP329())
-                            .map { ExportItem(url: $0) }
-                    } label: {
-                        SettingsRow(title: t("Labels (BIP-329)", "Etiquetas (BIP-329)"),
-                                    value: walletManager.transactionLabels.isEmpty ? nil : "\(walletManager.transactionLabels.count)",
-                                    chevron: true, icon: "tag")
-                    }
-                }
-                .sheet(item: $exportItem) { item in
-                    ActivityView(items: [item.url])
-                        .onDisappear { ExportFiles.remove(item.url) }
-                }
-
-                SettingsSection(header: t("Appearance", "Apariencia"),
-                                footer: t("Liquid Glass needs iOS 26 or later.", "Liquid Glass requiere iOS 26 o posterior.")) {
+                SettingsSection(header: t("Appearance", "Apariencia"), footer: nil) {
                     Menu {
                         Picker("", selection: $walletManager.appTheme) {
                             ForEach(AppTheme.allCases) { theme in Text(themeName(theme)).tag(theme) }
@@ -371,42 +320,100 @@ public struct SettingsView: View {
                         SettingsRow(title: t("Language", "Idioma"), value: languageName(walletManager.languageChoice),
                                     chevron: true, icon: "globe")
                     }
-                    SettingsDivider(inset: 60)
-                    SettingsRow(title: "Liquid Glass", icon: "drop") {
-                        Toggle("", isOn: $walletManager.liquidGlass).labelsHidden()
-                    }
                 }
 
-                SettingsSection(header: "Cold wallet",
-                                footer: t("Testnet re-derives your addresses (Face ID). Server: use your own node so public servers never see your addresses.",
-                                          "Testnet vuelve a derivar tus direcciones (Face ID). Servidor: usa tu propio nodo para que los servidores públicos nunca vean tus direcciones.")) {
-                    Button { route = .server } label: {
-                        SettingsRow(title: t("Server", "Servidor"),
-                                    value: ElectrumServerConfig.current?.host ?? t("Public", "Públicos"), chevron: true,
-                                    icon: "server.rack")
-                    }
-                    SettingsDivider(inset: 60)
-                    SettingsRow(title: walletManager.isEthereum ? "Testnet" : "Testnet4", icon: "testtube.2") {
-                        if isSwitchingNetwork {
-                            ProgressView()
-                        } else {
-                            Toggle("", isOn: Binding(get: { walletManager.isTestnet },
-                                                     set: { on in
-                                                         // Going to testnet changes every address: ask first.
-                                                         if on { confirmTestnet = true } else { switchNetwork(toTestnet: false) }
-                                                     }))
-                                .labelsHidden()
-                                .disabled(walletManager.isWatchOnly)
-                                .confirmationDialog(t("Switch to testnet?", "¿Cambiar a testnet?"),
-                                                    isPresented: $confirmTestnet, titleVisibility: .visible) {
-                                    Button(t("Switch to testnet", "Cambiar a testnet")) { switchNetwork(toTestnet: true) }
-                                    Button(t("Cancel", "Cancelar"), role: .cancel) { }
-                                } message: {
-                                    Text(t("This changes this wallet's addresses to testnet. Your mainnet funds will not show until you switch back. Do not send real money to testnet addresses.",
-                                           "Esto cambia las direcciones de esta billetera a testnet. Tus fondos de mainnet no se verán hasta volver a mainnet. No envíes dinero real a direcciones de testnet."))
-                                }
+                SettingsDisclosureSection(title: t("Advanced", "Avanzado"), icon: "gearshape.2",
+                                          isExpanded: $openAdvanced, footer: nil) {
+                    Group {
+                        SettingsSubheader(text: "Lightning", first: true)
+                        Menu {
+                            Button { switchLightning(.breez) } label: {
+                                menuLabel("Breez (Spark)", selected: lightning.kind == .breez)
+                            }
+                            Button { switchLightning(.ldk) } label: {
+                                menuLabel(t("LDK (own node)", "LDK (nodo propio)"), selected: lightning.kind == .ldk)
+                            }
+                        } label: {
+                            SettingsRow(title: t("Engine", "Motor"), value: lightning.kind == .breez ? "Breez" : "LDK",
+                                        chevron: true, icon: "bolt")
                         }
+                        if lightning.kind == .breez {
+                            SettingsDivider(inset: 60)
+                            Button {
+                                breezKeyDraft = lightning.breezAPIKey
+                                showBreezKey = true
+                            } label: {
+                                SettingsRow(title: t("Breez API key", "API key de Breez"),
+                                            value: lightning.breezAPIKey.isEmpty ? t("Missing", "Falta") : "••••" + String(lightning.breezAPIKey.suffix(4)),
+                                            chevron: true, icon: "key.horizontal")
+                            }
+                        }
+                        SettingsNote(text: t("Breez: instant, no channels, needs a free API key (breez.technology). LDK: your own node in this iPhone; you open channels. Mainnet only.",
+                                          "Breez: instantáneo, sin canales, necesita una API key gratuita (breez.technology). LDK: tu propio nodo en este iPhone; tú abres los canales. Solo mainnet."))
                     }
+                    Group {
+                        SettingsSubheader(text: t("Export", "Exportar"))
+                        Button {
+                            exportItem = walletManager.exportFile(name: "ColdVault-history.csv", contents: walletManager.historyCSV())
+                                .map { ExportItem(url: $0) }
+                        } label: {
+                            SettingsRow(title: t("History (CSV)", "Historial (CSV)"), chevron: true, icon: "tablecells")
+                        }
+                        SettingsDivider(inset: 60)
+                        Button {
+                            exportItem = walletManager.exportFile(name: "ColdVault-labels.jsonl", contents: walletManager.labelsBIP329())
+                                .map { ExportItem(url: $0) }
+                        } label: {
+                            SettingsRow(title: t("Labels (BIP-329)", "Etiquetas (BIP-329)"),
+                                        value: walletManager.transactionLabels.isEmpty ? nil : "\(walletManager.transactionLabels.count)",
+                                        chevron: true, icon: "tag")
+                        }
+                        SettingsNote(text: t("History of the account on screen. Labels in BIP-329, readable by Sparrow and other wallets.",
+                                          "Historial de la cuenta en pantalla. Etiquetas en BIP-329, que leen Sparrow y otras billeteras."))
+                    }
+                    Group {
+                        SettingsSubheader(text: "Cold wallet")
+                        Button { route = .server } label: {
+                            SettingsRow(title: t("Server", "Servidor"),
+                                        value: ElectrumServerConfig.current?.host ?? t("Public", "Públicos"), chevron: true,
+                                        icon: "server.rack")
+                        }
+                        SettingsDivider(inset: 60)
+                        SettingsRow(title: walletManager.isEthereum ? "Testnet" : "Testnet4", icon: "testtube.2") {
+                            if isSwitchingNetwork {
+                                ProgressView()
+                            } else {
+                                Toggle("", isOn: Binding(get: { walletManager.isTestnet },
+                                                         set: { on in
+                                                             // Going to testnet changes every address: ask first.
+                                                             if on { confirmTestnet = true } else { switchNetwork(toTestnet: false) }
+                                                         }))
+                                    .labelsHidden()
+                                    .disabled(walletManager.isWatchOnly)
+                                    .confirmationDialog(t("Switch to testnet?", "¿Cambiar a testnet?"),
+                                                        isPresented: $confirmTestnet, titleVisibility: .visible) {
+                                        Button(t("Switch to testnet", "Cambiar a testnet")) { switchNetwork(toTestnet: true) }
+                                        Button(t("Cancel", "Cancelar"), role: .cancel) { }
+                                    } message: {
+                                        Text(t("This changes this wallet's addresses to testnet. Your mainnet funds will not show until you switch back. Do not send real money to testnet addresses.",
+                                               "Esto cambia las direcciones de esta billetera a testnet. Tus fondos de mainnet no se verán hasta volver a mainnet. No envíes dinero real a direcciones de testnet."))
+                                    }
+                            }
+                        }
+                        SettingsNote(text: t("Testnet re-derives your addresses (Face ID). Server: use your own node so public servers never see your addresses.",
+                                          "Testnet vuelve a derivar tus direcciones (Face ID). Servidor: usa tu propio nodo para que los servidores públicos nunca vean tus direcciones."))
+                    }
+                }
+                .alert(t("Breez API key", "API key de Breez"), isPresented: $showBreezKey) {
+                    TextField("API key", text: $breezKeyDraft)
+                    Button(t("Save", "Guardar")) { lightning.breezAPIKey = breezKeyDraft }
+                    Button(t("Cancel", "Cancelar"), role: .cancel) {}
+                } message: {
+                    Text(t("Request it free at breez.technology (Breez SDK).", "Pídela gratis en breez.technology (Breez SDK)."))
+                }
+                .sheet(item: $exportItem) { item in
+                    ActivityView(items: [item.url])
+                        .onDisappear { ExportFiles.remove(item.url) }
                 }
 
                 errorText
@@ -414,6 +421,7 @@ public struct SettingsView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 40)
             .buttonStyle(.plain)
+            .toggleStyle(AppToggleStyle())
         }
         .sheet(isPresented: $showCalculator) {
             CalculatorView().environmentObject(walletManager)
@@ -492,6 +500,7 @@ public struct SettingsView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 40)
                     .buttonStyle(.plain)
+                    .toggleStyle(AppToggleStyle())
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -881,6 +890,144 @@ struct SettingsSection<Content: View>: View {
                     .padding(.horizontal, 16)
             }
         }
+    }
+}
+
+/// A group of Settings that opens and closes with one tap on its title row.
+struct SettingsDisclosureSection<Content: View>: View {
+    let title: String
+    let icon: String
+    @Binding var isExpanded: Bool
+    let footer: String?
+    @ViewBuilder let content: Content
+
+    init(title: String, icon: String, isExpanded: Binding<Bool>, footer: String?,
+         @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.icon = icon
+        self._isExpanded = isExpanded
+        self.footer = footer
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(spacing: 0) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) { isExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: icon)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(isExpanded ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                            .frame(width: 36, height: 36)
+                            .background(Circle().fill(isExpanded ? Color(uiColor: .label)
+                                                                 : Color(uiColor: .systemBackground).opacity(0.9)))
+                        Text(title)
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(Color(uiColor: .label))
+                        Spacer(minLength: 12)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(Palette.secondary)
+                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 62)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+
+                if isExpanded {
+                    VStack(spacing: 0) {
+                        SettingsDivider(inset: 16)
+                        content
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+
+            if isExpanded, let footer = footer {
+                Text(footer)
+                    .font(.system(size: 12))
+                    .foregroundColor(Palette.secondary)
+                    .padding(.horizontal, 16)
+                    .transition(.opacity)
+            }
+        }
+    }
+}
+
+/// A small title inside an open group (Advanced: Lightning, Export, Cold wallet).
+struct SettingsSubheader: View {
+    let text: String
+    var first: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !first { SettingsDivider(inset: 16) }
+            Text(text.uppercased())
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(Palette.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, first ? 12 : 18)
+                .padding(.bottom, 4)
+        }
+    }
+}
+
+/// The explanation under a few rows, inside the card.
+struct SettingsNote: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundColor(Palette.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 16)
+            .padding(.top, 2)
+            .padding(.bottom, 12)
+    }
+}
+
+/// The app's own switch: a black capsule (white in dark mode) with a round knob,
+/// grey when off, instead of the green iOS switch.
+struct AppToggleStyle: ToggleStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 8) {
+            configuration.label
+            ZStack(alignment: configuration.isOn ? .trailing : .leading) {
+                Capsule(style: .continuous)
+                    .fill(configuration.isOn ? Color(uiColor: .label) : Color(uiColor: .tertiarySystemFill))
+                    .frame(width: 50, height: 30)
+                Circle()
+                    .fill(configuration.isOn ? Color(uiColor: .systemBackground) : Color.white)
+                    .shadow(color: Color.black.opacity(0.18), radius: 2, x: 0, y: 1)
+                    .frame(width: 24, height: 24)
+                    .padding(3)
+            }
+            .opacity(isEnabled ? 1 : 0.4)
+            .contentShape(Capsule())
+            .onTapGesture {
+                guard isEnabled else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { configuration.isOn.toggle() }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(configuration.isOn ? "On" : "Off")
+        .accessibilityAction { configuration.isOn.toggle() }
     }
 }
 

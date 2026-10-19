@@ -958,9 +958,8 @@ struct MinimalPriceChart: View {
 }
 
 /// Compact black capsule (white in dark mode) with a small icon and label, as in the
-/// reference design; Liquid Glass instead when enabled in Settings.
+/// reference design.
 struct ActionPillLabel: View {
-    @AppStorage("liquidGlass") private var liquidGlass: Bool = false
     let icon: String
     let title: String
     var minWidth: CGFloat = 0
@@ -976,15 +975,9 @@ struct ActionPillLabel: View {
         .frame(minWidth: minWidth, minHeight: 40)
         .contentShape(Capsule())
 
-        if liquidGlass {
-            label
-                .foregroundColor(.white)
-                .modifier(GlassPillModifier(isEmphasized: true))
-        } else {
-            label
-                .foregroundColor(Color(uiColor: .systemBackground))
-                .background(Capsule(style: .continuous).fill(Color(uiColor: .label)))
-                .shadow(color: Color.black.opacity(0.12), radius: 6, x: 0, y: 3)
-        }
+        label
+            .foregroundColor(Color(uiColor: .systemBackground))
+            .background(Capsule(style: .continuous).fill(Color(uiColor: .label)))
+            .shadow(color: Color.black.opacity(0.12), radius: 6, x: 0, y: 3)
     }
 }

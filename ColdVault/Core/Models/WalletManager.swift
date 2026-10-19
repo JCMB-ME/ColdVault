@@ -69,11 +69,6 @@ public final class WalletManager: ObservableObject {
         }
     }
 
-    /// Liquid Glass buttons (iOS 26+). Read by GlassPillModifier through @AppStorage.
-    @Published public var liquidGlass: Bool {
-        didSet { UserDefaults.standard.set(liquidGlass, forKey: "liquidGlass") }
-    }
-
     // Home screen extras ("start minimal": all off by default).
     @Published public var homeShowTransactions: Bool {
         didSet { saveHomeOption(homeShowTransactions, "homeShowTransactions") }
@@ -220,7 +215,8 @@ public final class WalletManager: ObservableObject {
         self.fixedAddress = defaults.object(forKey: "fixedAddress") as? Bool ?? true
         let savedDecimals = defaults.object(forKey: "displayDecimals") as? Int ?? -1
         self.displayDecimals = savedDecimals >= 0 ? savedDecimals : nil
-        self.liquidGlass = defaults.bool(forKey: "liquidGlass")
+        // Liquid Glass was removed: forget the old switch.
+        defaults.removeObject(forKey: "liquidGlass")
         self.homeShowTransactions = defaults.bool(forKey: "homeShowTransactions")
         self.homeShowFiat = defaults.bool(forKey: "homeShowFiat")
         self.homeShowPriceChart = defaults.bool(forKey: "homeShowPriceChart")
