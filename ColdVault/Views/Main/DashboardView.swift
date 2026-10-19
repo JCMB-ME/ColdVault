@@ -233,8 +233,10 @@ public struct DashboardView: View {
             if walletManager.isEthereum {
                 ZStack {
                     // The logo fades away after a few seconds; a tap on this strip brings it back.
+                    // Fixed height: a bare Color would stretch and push the balance down.
                     Color.clear
-                        .frame(maxWidth: .infinity, minHeight: 34)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 34)
                         .contentShape(Rectangle())
                         .onTapGesture { showNetworkPill() }
                     if networkPillVisible || networkMenuOpen {
@@ -243,6 +245,7 @@ public struct DashboardView: View {
                             .transition(.opacity.combined(with: .scale(scale: 0.6)))
                     }
                 }
+                .frame(height: 34)
                 .padding(.top, 10)
                 .frame(maxWidth: .infinity)
                 .background(networkMenuCatcher)
