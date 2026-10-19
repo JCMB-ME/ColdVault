@@ -227,11 +227,10 @@ struct CalculatorView: View {
                 .frame(width: size, height: size)
                 .background(Circle().fill(Color(red: 0.16, green: 0.46, blue: 0.86)))
         case "sats":
-            Text("s")
-                .font(.system(size: size * 0.45, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
+            Image("SatsLogo")
+                .resizable()
+                .scaledToFit()
                 .frame(width: size, height: size)
-                .background(Circle().fill(Color.orange))
         default:
             // The country's flag filling the whole circle.
             Image("Flag\(item)")
