@@ -62,6 +62,7 @@ public struct SettingsView: View {
     @AppStorage("settingsOpenHome") private var openHome = false
     @AppStorage("settingsOpenWallet") private var openWallet = false
     @AppStorage("settingsOpenTools") private var openTools = false
+    @AppStorage("settingsOpenBackup") private var openBackup = false
     @AppStorage("settingsOpenAppearance") private var openAppearance = false
     /// nil: the main icon; "AppIconInverted": the one with inverted colours.
     @State private var appIconName: String? = UIApplication.shared.alternateIconName
@@ -262,8 +263,9 @@ public struct SettingsView: View {
                     }
                 }
 
-                // Backup and Security on their own card, always in view.
-                SettingsSection(header: t("Backup and security", "Respaldo y seguridad"), footer: nil) {
+                // Backup and Security: their own group, opened like the others.
+                SettingsDisclosureSection(title: t("Backup and security", "Respaldo y seguridad"), icon: "lock.shield",
+                                          isExpanded: $openBackup, footer: nil) {
                     Button {
                         backupSlot = walletManager.activeSlot
                         route = .backup
