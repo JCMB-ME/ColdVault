@@ -30,6 +30,8 @@ public struct SendView: View {
     @State private var amountString: String = ""
     /// Unit the amount is typed in (starts as the home screen's unit; tap it to switch).
     @State private var amountUnit: DisplayUnit?
+    /// The amount is typed in the chosen currency (USD, MXN…) instead of BTC / sats.
+    @State private var amountInFiat = false
     @State private var sendAll: Bool = false
     /// A share chosen with the 10–75 % buttons (shown selected while the amount is unchanged).
     @State private var pickedPercent: Int?
@@ -78,6 +80,14 @@ public struct SendView: View {
     private var unit: DisplayUnit { amountUnit ?? walletManager.displayUnit }
 
     private var amountSats: UInt64? {
+        if amountInFiat {
+            guard let price = walletManager.fiatPrice, price > 0,
+                  let money = Double(amountString.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")),
+                  money > 0 else { return nil }
+            let sats = (money / price * 100_000_000).rounded()
+            guard sats >= 1, sats <= 2_100_000_000_000_000 else { return nil }
+            return UInt64(sats)
+        }
         let value = unit == .btc ? SendView.parseBTC(amountString) : SendView.parseSats(amountString)
         guard let sats = value, sats > 0, sats <= 2_100_000_000_000_000 else { return nil }
         return sats
@@ -131,18 +141,37 @@ public struct SendView: View {
     }
 
     /// Switches BTC ⇄ sats, converting what was typed.
+    /// BTC → sats → the chosen currency → BTC, converting what was typed.
     private func toggleAmountUnit() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let current = amountSats
         withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
-            amountUnit = unit == .btc ? .sats : .btc
-            if let sats = current {
-                amountString = unit == .btc
-                    ? SendView.btcText(sats).replacingOccurrences(of: Locale.current.groupingSeparator ?? ",", with: "")
-                    : "\(sats)"
+            if amountInFiat {
+                amountInFiat = false
+                amountUnit = .btc
+            } else if unit == .btc {
+                amountUnit = .sats
+            } else if walletManager.fiatPrice != nil {
+                amountInFiat = true
+            } else {
+                amountUnit = .btc
             }
+            if let sats = current { amountString = typedText(sats) }
         }
     }
+
+    /// An amount as it is typed in the unit on screen (no grouping).
+    private func typedText(_ sats: UInt64) -> String {
+        if amountInFiat, let price = walletManager.fiatPrice {
+            return String(format: "%.2f", Double(sats) / 100_000_000 * price)
+        }
+        return unit == .btc
+            ? SendView.btcText(sats).replacingOccurrences(of: Locale.current.groupingSeparator ?? ",", with: "")
+            : "\(sats)"
+    }
+
+    /// The unit button: BTC, sats or the currency code.
+    private var unitTitle: String { amountInFiat ? walletManager.fiatCurrency : unit.rawValue }
 
     /// A typical payment (1 input, 2 outputs) is about 141 vB: the fee shown under the amount.
     private var estimatedFeeSats: UInt64 { feeRate * 141 }
@@ -246,6 +275,10 @@ public struct SendView: View {
                 SheetHeader(title: L10n.sendBitcoin(lang), onClose: { presentationMode.wrappedValue.dismiss() })
             }
         }
+        // Money values (balance, amount in money) even when the home screen does not load the price.
+        .task {
+            if walletManager.fiatPrice == nil { await walletManager.refreshMarketData(force: false) }
+        }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .sheet(item: $scanTarget) { target in
@@ -294,17 +327,17 @@ public struct SendView: View {
                     TextField("0", text: $amountString)
                         .font(.system(size: 48, weight: .bold))
                         .multilineTextAlignment(.center)
-                        .keyboardType(unit == .btc ? .decimalPad : .numberPad)
+                        .keyboardType(unit == .btc || amountInFiat ? .decimalPad : .numberPad)
                         .fixedSize()
                         .disabled(sendAll)
                         .opacity(sendAll ? 0.3 : 1)
                         .modifier(RollingDigits())
-                    // Tap the unit to type the amount in BTC or in sats.
+                    // Tap the unit to type the amount in BTC, in sats or in money.
                     Button(action: toggleAmountUnit) {
                         HStack(spacing: 3) {
-                            Text(unit.rawValue)
+                            Text(unitTitle)
                                 .font(.system(size: 17, weight: .semibold))
-                                .id(unit)
+                                .id(unitTitle)
                                 .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
                                                         removal: .move(edge: .top).combined(with: .opacity)))
                             Image(systemName: "arrow.up.arrow.down")
@@ -330,8 +363,10 @@ public struct SendView: View {
                             .foregroundColor(.red)
                     } else if let sats = amountSats {
                         VStack(spacing: 4) {
-                            Text(([unit == .btc ? "\(SendView.satsText(sats)) sats" : "\(SendView.btcText(sats)) BTC"]
-                                  + [fiatText(sats)].compactMap { $0 }).joined(separator: " · "))
+                            Text(amountInFiat
+                                 ? "= \(SendView.btcText(sats)) BTC · \(SendView.satsText(sats)) sats"
+                                 : ([unit == .btc ? "\(SendView.satsText(sats)) sats" : "\(SendView.btcText(sats)) BTC"]
+                                    + [fiatText(sats)].compactMap { $0 }).joined(separator: " · "))
                             feeLine(sats)
                         }
                     } else {
@@ -354,6 +389,11 @@ public struct SendView: View {
                     Text("\(walletManager.formattedBalance) \(walletManager.displayUnit.rawValue)")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
+                    if let money = fiatText(walletManager.balanceSats) {
+                        Text("≈ \(money)")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(Palette.secondary)
+                    }
                 }
                 Spacer(minLength: 8)
             }
@@ -366,7 +406,8 @@ public struct SendView: View {
                     sendAll = false
                     let sats = walletManager.availableSats / 100 * UInt64(percent)
                         + walletManager.availableSats % 100 * UInt64(percent) / 100
-                    amountString = unit == .btc ? UInt256(sats).formatted(decimals: 8, maxFraction: 8) : String(sats)
+                    amountString = amountInFiat ? typedText(sats)
+                        : (unit == .btc ? UInt256(sats).formatted(decimals: 8, maxFraction: 8) : String(sats))
                     pickedPercent = percent
                     pickedText = amountString
                 }
@@ -850,6 +891,7 @@ public struct SendView: View {
         if let request = BitcoinAddress.parsePaymentURI(text) {
             recipientAddress = request.address
             if let amount = request.amountSats {
+                amountInFiat = false
                 amountString = unit == .btc
                     ? SendView.btcText(amount).replacingOccurrences(of: Locale.current.groupingSeparator ?? ",", with: "")
                     : "\(amount)"

@@ -280,6 +280,8 @@ struct EthSendView: View {
     @State private var fast = false
     /// The fee estimate shown under the amount (before the review).
     @State private var liveFee: UInt256?
+    /// The amount is typed in the chosen currency (USD, MXN…) instead of the coin.
+    @State private var amountInFiat = false
     @State private var plan: EthereumSendPlan?
     @State private var isProcessing = false
     @State private var errorMessage: String?
@@ -330,8 +332,43 @@ struct EthSendView: View {
     }
     private var networkName: String { asset.chain.name(testnet: walletManager.isTestnet) }
     private var amountUnits: UInt256? {
+        if amountInFiat {
+            guard let price = unitPrice, price > 0,
+                  let money = Double(amountText.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")),
+                  money > 0 else { return nil }
+            let places = min(asset.decimals, 8)
+            guard let value = UInt256(decimal: String(format: "%.\(places)f", money / price), decimals: asset.decimals),
+                  !value.isZero else { return nil }
+            return value
+        }
         guard let value = UInt256(decimal: amountText, decimals: asset.decimals), !value.isZero else { return nil }
         return value
+    }
+
+    /// One coin in the chosen currency (the mainnet price on testnet).
+    private var unitPrice: Double? {
+        if asset.isNative { return walletManager.nativeFiatPrice(asset.symbol) }
+        guard let usd = asset.usdPrice, let factor = walletManager.usdToFiat else { return nil }
+        return usd * factor
+    }
+
+    /// Coin ⇄ the chosen currency, converting what was typed.
+    private func toggleFiatInput() {
+        guard unitPrice != nil || amountInFiat else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let current = amountUnits
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
+            amountInFiat.toggle()
+            if let units = current { amountText = typedText(units) }
+        }
+    }
+
+    /// An amount as it is typed in the unit on screen.
+    private func typedText(_ units: UInt256) -> String {
+        if amountInFiat, let price = unitPrice {
+            return String(format: "%.2f", units.doubleValue / pow(10, Double(asset.decimals)) * price)
+        }
+        return units.formatted(decimals: asset.decimals, maxFraction: min(asset.decimals, 8))
     }
     private var trimmedRecipient: String { recipient.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var tooMuch: Bool { amountUnits.map { asset.balance < $0 } ?? false }
@@ -556,6 +593,26 @@ struct EthSendView: View {
                         .disabled(sendAll)
                         .opacity(sendAll ? 0.3 : 1)
                         .modifier(RollingDigits())
+                    // Tap to type the amount in the coin or in money.
+                    Button(action: toggleFiatInput) {
+                        HStack(spacing: 3) {
+                            Text(amountInFiat ? walletManager.fiatCurrency : asset.symbol)
+                                .font(.system(size: 17, weight: .semibold))
+                                .lineLimit(1)
+                                .id(amountInFiat)
+                                .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                                        removal: .move(edge: .top).combined(with: .opacity)))
+                            Image(systemName: "arrow.up.arrow.down")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundColor(Color(uiColor: .label))
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background(Capsule().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+                        .clipped()
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(sendAll)
                 }
                 .frame(maxWidth: .infinity)
                 .minimumScaleFactor(0.5)
@@ -574,7 +631,11 @@ struct EthSendView: View {
                             .foregroundColor(.red)
                     } else if let units = amountUnits {
                         VStack(spacing: 4) {
-                            if let value = fiat(units, of: asset) { Text(value) }
+                            if amountInFiat {
+                                Text("= \(units.formatted(decimals: asset.decimals, maxFraction: min(asset.decimals, 8))) \(asset.symbol)")
+                            } else if let value = fiat(units, of: asset) {
+                                Text(value)
+                            }
                             feeLine(units)
                         }
                     } else {
@@ -594,6 +655,11 @@ struct EthSendView: View {
                     Text("\(asset.formatted()) \(asset.symbol)")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
+                    if let money = fiat(asset.balance, of: asset, onTestnet: true) {
+                        Text("≈ \(money)")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(Palette.secondary)
+                    }
                 }
                 Spacer(minLength: 8)
             }
@@ -605,7 +671,7 @@ struct EthSendView: View {
                 } else {
                     sendAll = false
                     let share = (asset.balance.multiplied(by: UInt64(percent)) ?? .zero).quotientAndRemainder(dividingBy: 100).quotient
-                    amountText = share.formatted(decimals: asset.decimals, maxFraction: min(asset.decimals, 8))
+                    amountText = typedText(share)
                     pickedPercent = percent
                     pickedText = amountText
                 }
@@ -794,11 +860,13 @@ struct EthSendView: View {
             }
             assetID = token.id
             recipient = request.recipient ?? ""
+            amountInFiat = false
             amountText = request.amountUnits.flatMap { EIP681.decimalAmount($0, decimals: token.decimals) } ?? ""
         } else {
             // A plain request moves the native coin, whatever token was selected before.
             assetID = assets.first(where: { $0.chain == asset.chain && $0.isNative })?.id
             recipient = request.target
+            amountInFiat = false
             amountText = request.amountUnits.flatMap { EIP681.decimalAmount($0, decimals: asset.chain.nativeDecimals) } ?? ""
         }
         sendAll = false
