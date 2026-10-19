@@ -21,7 +21,7 @@ public enum ChainTransaction {
     case evm(EthereumTransaction)
     case tron(TronTransaction)
     /// TON: what the key signs; the StateInit is added when the wallet is not deployed.
-    case ton(wallet: TonAddress, signing: TonCell, deploy: Bool)
+    case ton(wallet: TonAddress, signing: TonCell, deploy: Bool, version: TonWalletVersion)
 }
 
 /// A broadcast whose outcome is unknown, with what is needed to ask the chain about it.
@@ -184,18 +184,21 @@ extension WalletManager {
             guard let key, let address = TronKeys.address(privateKey: key) else { throw WalletError.derivationFailed }
             return address
         }
+        func tonPublicKey() -> Data? {
+            guard let seed else { return nil }
+            return TonKeys.publicKey(privateKey: TonKeys.privateKey(seed: seed, index: account))
+        }
         func ton() -> String? {
-            guard let seed, let publicKey = TonKeys.publicKey(privateKey: TonKeys.privateKey(seed: seed, index: account)) else {
-                return nil
-            }
-            return TonWallet.displayAddress(publicKey: publicKey, testnet: false)
+            tonPublicKey().flatMap { TonWallet.displayAddress(publicKey: $0, testnet: false) }
         }
         switch coin {
         case .ethereum, .polygon, .bitcoin: return (try evm(), nil)
         case .tron: return (try tron(), nil)
         case .ton:
-            guard let address = ton() else { throw WalletError.derivationFailed }
-            return (address, nil)
+            // The public key is kept (not secret) so the W5 address can be shown without Face ID.
+            guard let publicKey = tonPublicKey(),
+                  let address = TonWallet.displayAddress(publicKey: publicKey, testnet: false) else { throw WalletError.derivationFailed }
+            return (address, ["tonPublicKey": publicKey.hexEncodedString])
         case .dollars:
             var extra = ["tron": try tron()]
             extra["ton"] = ton()
@@ -226,12 +229,62 @@ extension WalletManager {
         case .bitcoin: return nil
         case .ethereum, .polygon: return chain.isEVM ? record.primaryAddress : nil
         case .tron: return chain == .tron ? record.primaryAddress : nil
-        case .ton: return chain == .ton ? tonForm(record.primaryAddress) : nil
+        case .ton:
+            guard chain == .ton else { return nil }
+            if WalletManager.tonVersion(of: record) == .w5, let hex = record.chainAddresses?["tonPublicKey"],
+               let publicKey = hex.hexDecoded,
+               let w5 = TonWallet.displayAddress(publicKey: publicKey, testnet: record.isTestnet, version: .w5) {
+                return w5
+            }
+            return tonForm(record.primaryAddress)
         case .dollars:
             if chain.isEVM { return record.primaryAddress }
             let stored = record.chainAddresses?[chain.rawValue]
             return chain == .ton ? tonForm(stored) : stored
         }
+    }
+
+    /// The TON wallet contract an account uses (v4R2 unless W5 was chosen).
+    nonisolated static func tonVersion(of record: StoredWalletRecord?) -> TonWalletVersion {
+        TonWalletVersion(rawValue: record?.chainAddresses?["tonVersion"] ?? "") ?? .v4r2
+    }
+
+    /// The TON wallet's version, for its selector (nil: not a TON wallet with keys).
+    public var activeTonVersion: TonWalletVersion? {
+        guard let record = activeRecord, record.coinKind == .ton, record.type != .watchOnly else { return nil }
+        return WalletManager.tonVersion(of: record)
+    }
+
+    /// Switches every account of this TON wallet to v4R2 or W5. Wallets made before the public
+    /// key was kept ask for Face ID once to read it; the stored address must match.
+    public func setTonVersion(_ version: TonWalletVersion) async throws {
+        guard let wallet = activeWallet, let first = wallet.bundle.accounts.first?.record,
+              first.coinKind == .ton, first.type != .watchOnly else { throw WalletError.unsupportedForWatchOnly }
+        var bundle = wallet.bundle
+        var secret: WalletSecret?
+        if bundle.accounts.contains(where: { $0.record.chainAddresses?["tonPublicKey"] == nil }) {
+            secret = try await loadSecret(reason: appLanguage == .english ? "Confirm to change the TON wallet version"
+                                                                          : "Confirma para cambiar la versión de la billetera TON")
+        }
+        for position in bundle.accounts.indices {
+            var record = bundle.accounts[position].record
+            var extra = record.chainAddresses ?? [:]
+            if extra["tonPublicKey"] == nil, let secret {
+                let key = try WalletManager.tonKey(secret: secret, account: bundle.accounts[position].number)
+                guard let publicKey = TonKeys.publicKey(privateKey: key),
+                      let derived = TonWallet.address(publicKey: publicKey),
+                      derived == TonAddress.parse(record.primaryAddress) else { throw WalletError.secretMismatch }
+                extra["tonPublicKey"] = publicKey.hexEncodedString
+            }
+            extra["tonVersion"] = version.rawValue
+            record.chainAddresses = extra
+            bundle.accounts[position].record = record
+        }
+        guard let index = library.firstIndex(where: { $0.slot == wallet.slot }) else { return }
+        library[index].bundle = bundle
+        writeMetadata(bundle, slot: wallet.slot)
+        evmAssets = []
+        selectWallet(slot: wallet.slot, account: bundle.selected)
     }
 
     /// The network on screen: the one chosen if this coin has it, else its first.
@@ -1226,6 +1279,7 @@ extension WalletManager {
         let target = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let destination = TonAddress.parse(target) else { throw TonError.invalidAddress }
         let info = try await TonAPI(isTestnet: isTestnet).wallet(owner)
+        let version = WalletManager.tonVersion(of: activeRecord)
         let fee = UInt256(UInt64(info.active ? 6_000_000 : 12_000_000))          // ~0.006 TON, more to deploy
         let validUntil = UInt32(Date().timeIntervalSince1970) + 300
 
@@ -1248,8 +1302,9 @@ extension WalletManager {
                 total = info.balance
             }
             let message = TonWallet.internalMessage(to: destination, amount: messageValue, bounce: destination.bounceable)
-            let signing = TonWallet.signingMessage(seqno: info.seqno, validUntil: validUntil, messages: [(mode: mode, message: message)])
-            return EthereumSendPlan(payload: .ton(wallet: me, signing: signing, deploy: !info.active), recipient: target,
+            let signing = TonWallet.signingMessage(seqno: info.seqno, validUntil: validUntil, messages: [(mode: mode, message: message)],
+                                                   version: version, testnet: isTestnet)
+            return EthereumSendPlan(payload: .ton(wallet: me, signing: signing, deploy: !info.active, version: version), recipient: target,
                                     maxFee: fee, total: total, asset: asset, amount: value, seqno: info.seqno)
         }
 
@@ -1264,8 +1319,9 @@ extension WalletManager {
         }
         let body = TonWallet.jettonTransferBody(amount: tokenAmount, to: destination, responseTo: me)
         let message = TonWallet.internalMessage(to: jettonWallet, amount: attached, bounce: true, body: body)
-        let signing = TonWallet.signingMessage(seqno: info.seqno, validUntil: validUntil, messages: [(mode: 3, message: message)])
-        return EthereumSendPlan(payload: .ton(wallet: me, signing: signing, deploy: !info.active), recipient: target,
+        let signing = TonWallet.signingMessage(seqno: info.seqno, validUntil: validUntil, messages: [(mode: 3, message: message)],
+                                               version: version, testnet: isTestnet)
+        return EthereumSendPlan(payload: .ton(wallet: me, signing: signing, deploy: !info.active, version: version), recipient: target,
                                 maxFee: needed, total: needed, asset: asset, amount: tokenAmount, seqno: info.seqno)
     }
 
@@ -1348,12 +1404,14 @@ extension WalletManager {
                 throw TronError.server(text)
             }
             unconfirmedSends[sendKey] = nil
-        case .ton(let wallet, let signing, let deploy):
+        case .ton(let wallet, let signing, let deploy, let version):
             let key = try WalletManager.tonKey(secret: secret, account: account)
-            guard let publicKey = TonKeys.publicKey(privateKey: key), TonWallet.address(publicKey: publicKey) == wallet,
+            guard let publicKey = TonKeys.publicKey(privateKey: key),
+                  TonWallet.address(publicKey: publicKey, version: version, testnet: isTestnet) == wallet,
                   let signature = TonKeys.sign(signing.hash, privateKey: key) else { throw WalletError.secretMismatch }
-            let state = deploy ? TonWallet.stateInit(publicKey: publicKey) : nil
-            let message = TonWallet.externalMessage(wallet: wallet, stateInit: state, signature: signature, signing: signing)
+            let state = deploy ? TonWallet.stateInit(publicKey: publicKey, version: version, testnet: isTestnet) : nil
+            let message = TonWallet.externalMessage(wallet: wallet, stateInit: state, signature: signature, signing: signing,
+                                                    version: version)
             let messageHash = message.hash.hexEncodedString
             if let seqno = plan.seqno {
                 unconfirmedSends[sendKey] = UnconfirmedSend(recipient: plan.recipient, amount: plan.amount,

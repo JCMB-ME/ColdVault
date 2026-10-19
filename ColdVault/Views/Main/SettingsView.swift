@@ -214,6 +214,25 @@ public struct SettingsView: View {
                         }
                         SettingsDivider(inset: 60)
                     }
+                    if let tonVersion = walletManager.activeTonVersion {
+                        AppMenuButton(items: {
+                            TonWalletVersion.allCases.map { version in
+                                AppMenuItem(title: version == .w5 ? "W5 (Tonkeeper)" : "v4R2",
+                                            selected: version == tonVersion) {
+                                    Task {
+                                        do { try await walletManager.setTonVersion(version) }
+                                        catch { errorMessage = error.localizedDescription }
+                                    }
+                                }
+                            }
+                        }) {
+                            SettingsRow(title: t("TON wallet version", "Versión de la billetera TON"),
+                                        value: tonVersion.title, chevron: true, icon: "square.stack.3d.up")
+                        }
+                        SettingsNote(text: t("The same key has a different address in each version. W5 is what Tonkeeper uses today; v4R2 the earlier standard. Your coins stay in the address you used: switch back to see them.",
+                                             "La misma clave tiene otra dirección en cada versión. W5 es la que usa Tonkeeper hoy; v4R2, el estándar anterior. Tus fondos se quedan en la dirección que usaste: vuelve a esa versión para verlos."))
+                        SettingsDivider(inset: 60)
+                    }
                     AppMenuButton(items: {
                         DisplayUnit.allCases.map { unit in
                             AppMenuItem(title: unit.rawValue, selected: walletManager.displayUnit == unit) {

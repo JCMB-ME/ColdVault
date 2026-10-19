@@ -311,6 +311,15 @@ public struct TonAddress: Equatable {
 
 // MARK: - Wallet v4R2
 
+/// Which wallet contract holds the coins. The same key gives a different address in each:
+/// v4R2 (the long-time standard, ColdVault's default) or W5 (v5R1, Tonkeeper's default).
+public enum TonWalletVersion: String, CaseIterable, Sendable {
+    case v4r2
+    case w5
+
+    public var title: String { self == .v4r2 ? "v4R2" : "W5" }
+}
+
 public enum TonWallet {
     /// The wallet v4R2 contract code (its hash: feb5ff68…dabd5c0).
     static let codeHex = "B5EE9C72410214010002D4000114FF00F4A413F4BCF2C80B010201200203020148040504F8F28308D71820D31FD31FD31F02F823BBF264ED44D0D31F"
@@ -329,37 +338,69 @@ public enum TonWallet {
 
     static let code: TonCell? = codeHex.lowercased().hexDecoded.flatMap { TonBOC.parse($0) }
 
+    /// The wallet v5R1 (W5) contract code (its hash: 20834b7b…52d2b72f).
+    static let codeW5Hex = "b5ee9c7201021401000281000114ff00f4a413f4bcf2c80b01020120020d020148030402dcd020d749c120915b8f6320d70b1f2082106578746ebd21"
+        + "821073696e74bdb0925f03e082106578746eba8eb48020d72101d074d721fa4030fa44f828fa443058bd915be0ed44d0810141d721f4058307f40e6f"
+        + "a1319130e18040d721707fdb3ce03120d749810280b99130e070e2100f020120050c020120060902016e07080019adce76a2684020eb90eb85ffc000"
+        + "19af1df6a2684010eb90eb858fc00201480a0b0017b325fb51341c75c875c2c7e00011b262fb513435c280200019be5f0f6a2684080a0eb90fa02c01"
+        + "02f20e011e20d70b1f82107369676ebaf2e08a7f0f01e68ef0eda2edfb218308d722028308d723208020d721d31fd31fd31fed44d0d200d31f20d31f"
+        + "d3ffd70a000af90140ccf9109a28945f0adb31e1f2c087df02b35007b0f2d0845125baf2e0855036baf2e086f823bbf2d0882292f800de01a47fc8ca"
+        + "00cb1f01cf16c9ed542092f80fde70db3cd81003f6eda2edfb02f404216e926c218e4c0221d73930709421c700b38e2d01d72820761e436c20d749c0"
+        + "08f2e09320d74ac002f2e09320d71d06c712c2005230b0f2d089d74cd7393001a4e86c128407bbf2e093d74ac000f2e093ed55e2d20001c000915be0"
+        + "ebd72c08142091709601d72c081c12e25210b1e30f20d74a111213009601fa4001fa44f828fa443058baf2e091ed44d0810141d718f405049d7fc8ca"
+        + "0040048307f453f2e08b8e14038307f45bf2e08c22d70a00216e01b3b0f2d090e2c85003cf1612f400c9ed54007230d72c08248e2d21f2e092d200ed"
+        + "44d0d2005113baf2d08f54503091319c01810140d721d70a00f2e08ee2c8ca0058cf16c9ed5493f2c08de20010935bdb31e1d74cd0"
+
+    static let codeW5: TonCell? = codeW5Hex.hexDecoded.flatMap { TonBOC.parse($0) }
+
+    static func code(_ version: TonWalletVersion) -> TonCell? { version == .v4r2 ? code : codeW5 }
+
+    /// W5 wallet id: workchain 0, version 0, subwallet 0 (top bit set), XOR the network's
+    /// global id (−239 mainnet, −3 testnet), so a W5 address differs between networks.
+    public static func w5WalletID(testnet: Bool) -> UInt64 {
+        UInt64(UInt32(0x8000_0000) ^ UInt32(bitPattern: testnet ? -3 : -239))
+    }
+
     /// Default subwallet id of workchain 0.
     public static let walletID: UInt64 = 698_983_191
 
-    static func data(publicKey: Data) -> TonCell {
+    static func data(publicKey: Data, version: TonWalletVersion = .v4r2, testnet: Bool = false) -> TonCell {
         var builder = TonBuilder()
-        builder.uint(0, 32)                 // seqno
-        builder.uint(walletID, 32)
-        builder.bytes(publicKey)
-        builder.bit(false)                  // no plugins
+        switch version {
+        case .v4r2:
+            builder.uint(0, 32)                 // seqno
+            builder.uint(walletID, 32)
+            builder.bytes(publicKey)
+            builder.bit(false)                  // no plugins
+        case .w5:
+            builder.bit(true)                   // signatures allowed
+            builder.uint(0, 32)                 // seqno
+            builder.uint(w5WalletID(testnet: testnet), 32)
+            builder.bytes(publicKey)
+            builder.bit(false)                  // no extensions
+        }
         return builder.build()
     }
 
     /// StateInit: code and data (deploys the wallet with its first payment).
-    static func stateInit(publicKey: Data) -> TonCell? {
-        guard let code else { return nil }
+    static func stateInit(publicKey: Data, version: TonWalletVersion = .v4r2, testnet: Bool = false) -> TonCell? {
+        guard let code = code(version) else { return nil }
         var builder = TonBuilder()
         builder.bit(false); builder.bit(false)          // split_depth, special
         builder.bit(true); builder.ref(code)
-        builder.bit(true); builder.ref(data(publicKey: publicKey))
+        builder.bit(true); builder.ref(data(publicKey: publicKey, version: version, testnet: testnet))
         builder.bit(false)                              // library
         return builder.build()
     }
 
-    public static func address(publicKey: Data) -> TonAddress? {
-        guard publicKey.count == 32, let state = stateInit(publicKey: publicKey) else { return nil }
+    public static func address(publicKey: Data, version: TonWalletVersion = .v4r2, testnet: Bool = false) -> TonAddress? {
+        guard publicKey.count == 32, let state = stateInit(publicKey: publicKey, version: version, testnet: testnet) else { return nil }
         return TonAddress(workchain: 0, hash: state.hash, bounceable: false)
     }
 
     /// The address a wallet shows ("UQ…", or "0Q…" on testnet).
-    public static func displayAddress(publicKey: Data, testnet: Bool) -> String? {
-        address(publicKey: publicKey)?.friendly(bounceable: false, testnet: testnet)
+    public static func displayAddress(publicKey: Data, testnet: Bool, version: TonWalletVersion = .v4r2) -> String? {
+        address(publicKey: publicKey, version: version, testnet: testnet)?.friendly(bounceable: false, testnet: testnet)
     }
 
     /// int_msg_info: a message from the wallet to `to` carrying `amount` nanotons.
@@ -391,8 +432,29 @@ public enum TonWallet {
     }
 
     /// What the key signs: subwallet, deadline, seqno, op 0 and the messages with their modes.
-    public static func signingMessage(seqno: UInt32, validUntil: UInt32, messages: [(mode: UInt8, message: TonCell)]) -> TonCell {
+    public static func signingMessage(seqno: UInt32, validUntil: UInt32, messages: [(mode: UInt8, message: TonCell)],
+                                      version: TonWalletVersion = .v4r2, testnet: Bool = false) -> TonCell {
         var builder = TonBuilder()
+        if version == .w5 {
+            // W5: "sign" op, wallet id, deadline, seqno, then the send actions as a linked list.
+            builder.uint(0x7369_676E, 32)
+            builder.uint(w5WalletID(testnet: testnet), 32)
+            builder.uint(UInt64(validUntil), 32)
+            builder.uint(UInt64(seqno), 32)
+            var list = TonBuilder().build()
+            for item in messages {
+                var action = TonBuilder()
+                action.ref(list)
+                action.uint(0x0EC3_C86D, 32)            // action_send_msg
+                action.uint(UInt64(item.mode), 8)
+                action.ref(item.message)
+                list = action.build()
+            }
+            builder.bit(true)
+            builder.ref(list)
+            builder.bit(false)                          // no extended actions
+            return builder.build()
+        }
         builder.uint(walletID, 32)
         builder.uint(seqno == 0 ? 0xFFFF_FFFF : UInt64(validUntil), 32)
         builder.uint(UInt64(seqno), 32)
@@ -406,11 +468,9 @@ public enum TonWallet {
 
     /// The external message sent to the network: signature + signing message, with the
     /// StateInit the first time (seqno 0, the wallet is deployed by its first payment).
-    public static func externalMessage(wallet: TonAddress, stateInit: TonCell?, signature: Data, signing: TonCell) -> TonCell {
-        var bodyBuilder = TonBuilder()
-        bodyBuilder.bytes(signature)
-        bodyBuilder.append(signing)
-        let body = bodyBuilder.build()
+    public static func externalMessage(wallet: TonAddress, stateInit: TonCell?, signature: Data, signing: TonCell,
+                                       version: TonWalletVersion = .v4r2) -> TonCell {
+        let body = signedBody(signature: signature, signing: signing, version: version)
 
         var builder = TonBuilder()
         builder.uint(2, 2)                  // ext_in_msg_info$10
@@ -435,6 +495,19 @@ public enum TonWallet {
         } else {
             builder.bit(true)
             builder.ref(body)
+        }
+        return builder.build()
+    }
+
+    /// v4R2 puts the signature first, W5 after the signed fields.
+    static func signedBody(signature: Data, signing: TonCell, version: TonWalletVersion) -> TonCell {
+        var builder = TonBuilder()
+        if version == .w5 {
+            builder.append(signing)
+            builder.bytes(signature)
+        } else {
+            builder.bytes(signature)
+            builder.append(signing)
         }
         return builder.build()
     }
