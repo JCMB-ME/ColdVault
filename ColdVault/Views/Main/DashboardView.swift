@@ -493,7 +493,10 @@ public struct DashboardView: View {
                         .font(.system(size: 12, weight: .semibold))
                     Text(t("Pending", "Pendiente") + " +"
                          + walletManager.format(units: walletManager.pendingIncomingSats, coin: walletManager.activeCoin)
-                         + " " + walletManager.unitLabel(walletManager.activeCoin))
+                         + " " + walletManager.unitLabel(walletManager.activeCoin)
+                         // With Fiat value on, its value in money too.
+                         + ((walletManager.homeShowFiat ? walletManager.fiatText(units: walletManager.pendingIncomingSats) : nil)
+                             .map { " · ≈ " + $0 } ?? ""))
                         .font(.system(size: 14, weight: .semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -882,10 +885,13 @@ struct TransactionCard: View {
                         .foregroundColor(Color(uiColor: .label))
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
-                    Text(walletManager.unitLabel(walletManager.activeCoin))
+                    Text(walletManager.unitLabel(walletManager.activeCoin)
+                         + ((walletManager.homeShowFiat ? walletManager.fiatText(units: UInt64(abs(transaction.net))) : nil)
+                             .map { " · ≈ " + $0 } ?? ""))
                         .font(.system(size: 12))
                         .foregroundColor(Palette.secondary)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
                 .layoutPriority(1)
             }
