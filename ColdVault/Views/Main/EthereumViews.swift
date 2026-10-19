@@ -348,11 +348,11 @@ struct EthSendView: View {
     }
 
     /// An amount of `item` in the chosen currency.
-    private func fiat(_ value: UInt256, of item: EVMAsset) -> String? {
+    private func fiat(_ value: UInt256, of item: EVMAsset, onTestnet: Bool = false) -> String? {
         let amount = value.doubleValue / pow(10, Double(item.decimals))
         let fiatValue: Double
         if item.isNative {
-            guard let price = walletManager.nativeFiatPrice(item.symbol), !walletManager.isTestnet else { return nil }
+            guard let price = walletManager.nativeFiatPrice(item.symbol), onTestnet || !walletManager.isTestnet else { return nil }
             fiatValue = amount * price
         } else {
             guard let usd = item.usdPrice, let factor = walletManager.usdToFiat else { return nil }
@@ -360,6 +360,19 @@ struct EthSendView: View {
         }
         return WalletManager.currencyFormatter(walletManager.fiatCurrency, fractionDigits: 2)
             .string(from: NSNumber(value: fiatValue))
+    }
+
+    /// "≈ $1.23" for the review; on testnet the coins have no value, so the mainnet price is
+    /// shown as a reference and said so.
+    private func reviewFiat(_ value: UInt256, of item: EVMAsset) -> String? {
+        guard let text = fiat(value, of: item, onTestnet: true) else { return nil }
+        return walletManager.isTestnet ? "≈ \(text) · " + t("mainnet price", "precio de mainnet") : "≈ \(text)"
+    }
+
+    /// EVM: the most each unit of gas can cost, in gwei.
+    private func gasPrice(_ plan: EthereumSendPlan) -> (gwei: String, limit: UInt64)? {
+        guard case .evm(let transaction) = plan.payload else { return nil }
+        return (transaction.maxFeePerGas.formatted(decimals: 9, maxFraction: 3), transaction.gasLimit)
     }
 
     /// The native coin of a network (for the fee's value).
@@ -734,8 +747,8 @@ struct EthSendView: View {
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundColor(Palette.secondary)
                     }
-                    if let value = fiat(plan.amount, of: plan.asset) {
-                        Text("≈ \(value)")
+                    if let value = reviewFiat(plan.amount, of: plan.asset) {
+                        Text(value)
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(Palette.secondary)
                     }
@@ -756,14 +769,19 @@ struct EthSendView: View {
                 VStack(spacing: 0) {
                     row(plan.feeIsEstimate ? t("Estimated fee", "Comisión estimada") : t("Max network fee", "Comisión máxima"),
                         "\(plan.maxFee.formatted(decimals: plan.asset.chain.nativeDecimals, maxFraction: 8)) \(plan.asset.chain.nativeSymbol)",
-                        detail: fiat(plan.maxFee, of: ethAsset(plan.asset.chain)).map { "≈ \($0)" })
+                        detail: reviewFiat(plan.maxFee, of: ethAsset(plan.asset.chain)))
+                    if let gas = gasPrice(plan) {
+                        SettingsDivider(inset: 14)
+                        row(t("Gas price (max)", "Precio del gas (máx.)"), "\(gas.gwei) gwei",
+                            detail: t("Limit: \(gas.limit) gas", "Límite: \(gas.limit) de gas"))
+                    }
                     SettingsDivider(inset: 14)
                     row(t("Network", "Red"), plan.asset.chain.name(testnet: walletManager.isTestnet))
                     if plan.asset.isNative {
                         SettingsDivider(inset: 14)
                         row(t("Total (at most)", "Total (como máximo)"),
                             "\(plan.total.formatted(decimals: plan.asset.chain.nativeDecimals, maxFraction: 8)) \(plan.asset.chain.nativeSymbol)",
-                            bold: true, detail: fiat(plan.total, of: plan.asset).map { "≈ \($0)" })
+                            bold: true, detail: reviewFiat(plan.total, of: plan.asset))
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
