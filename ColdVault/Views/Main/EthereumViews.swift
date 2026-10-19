@@ -975,41 +975,59 @@ struct EVMNetworkPill: View {
         Button {
             guard networks.count > 1 else { return }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { expanded.toggle() }
+            setExpanded(!expanded)
         } label: {
+            // Closed: only the network's logo. Open: the pill with its name.
             HStack(spacing: 7) {
                 Image(current.logoName)
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 18, height: 18)
-                Text(current.name(testnet: walletManager.isTestnet))
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                if networks.count > 1 {
-                    Image(systemName: "chevron.down")
+                    .frame(width: 20, height: 20)
+                    .id(current)
+                    .transition(.opacity.combined(with: .scale(scale: 0.6)))
+                if expanded {
+                    Text(current.name(testnet: walletManager.isTestnet))
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                        .fixedSize()
+                        .transition(.opacity.combined(with: .move(edge: .leading)))
+                    Image(systemName: "chevron.up")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(Palette.secondary)
-                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                        .transition(.opacity)
                 }
             }
-            .id(current)
-            .transition(.opacity.combined(with: .scale(scale: 0.9)))
             .foregroundColor(Color(uiColor: .label))
-            .padding(.horizontal, 12)
-            .frame(height: 32)
+            .padding(.horizontal, expanded ? 12 : 7)
+            .frame(minWidth: 34, minHeight: 34)
             .background(Capsule().fill(SettingsStyle.groupFill))
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text("Network"))
-        // The list opens over the screen, without moving the balance.
+        .accessibilityLabel(Text(current.name(testnet: walletManager.isTestnet)))
+        .accessibilityHint(Text("Network"))
+        // The list opens over the screen, without moving the balance. While it is open,
+        // a tap anywhere else (or a scroll) closes it.
         .overlay(alignment: .top) {
             if expanded {
+                Color.black.opacity(0.001)
+                    .frame(width: 3000, height: 3000)
+                    .offset(y: -1500)
+                    .contentShape(Rectangle())
+                    .onTapGesture { setExpanded(false) }
+                    .gesture(DragGesture(minimumDistance: 8).onChanged { _ in setExpanded(false) })
+                    .accessibilityHidden(true)
                 list
-                    .offset(y: 40)
+                    .offset(y: 44)
                     .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
             }
         }
         .onChange(of: walletManager.activeRecord?.primaryAddress) { _ in expanded = false }
+    }
+
+    private func setExpanded(_ value: Bool) {
+        guard expanded != value else { return }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) { expanded = value }
     }
 
     private var list: some View {
