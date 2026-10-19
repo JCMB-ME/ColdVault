@@ -31,6 +31,9 @@ public struct SendView: View {
     /// Unit the amount is typed in (starts as the home screen's unit; tap it to switch).
     @State private var amountUnit: DisplayUnit?
     @State private var sendAll: Bool = false
+    /// A share chosen with the 10–75 % buttons (shown selected while the amount is unchanged).
+    @State private var pickedPercent: Int?
+    @State private var pickedText: String?
     @State private var fees: RecommendedFees?
     @State private var feesUnavailable: Bool = false
     @State private var feeChoice: FeeChoice = .normal
@@ -296,6 +299,7 @@ public struct SendView: View {
                 .minimumScaleFactor(0.7)
             }
 
+            VStack(spacing: 10) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(L10n.balanceLabel(lang))
@@ -306,21 +310,21 @@ public struct SendView: View {
                         .foregroundColor(Color(uiColor: .label))
                 }
                 Spacer(minLength: 8)
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                        sendAll.toggle()
-                        if sendAll { amountString = "" }
-                    }
-                } label: {
-                    Text(L10n.maxButton(lang))
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(sendAll ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
-                        .padding(.horizontal, 16)
-                        .frame(height: 34)
-                        .background(Capsule().fill(sendAll ? Color(uiColor: .label) : Color(uiColor: .systemBackground).opacity(0.9)))
+            }
+            AmountPercentPicker(selected: sendAll ? 100 : (pickedText == amountString ? pickedPercent : nil),
+                                maxTitle: L10n.maxButton(lang)) { percent in
+                if percent == 100 {
+                    sendAll.toggle()
+                    if sendAll { amountString = "" }
+                } else {
+                    sendAll = false
+                    let sats = walletManager.availableSats / 100 * UInt64(percent)
+                        + walletManager.availableSats % 100 * UInt64(percent) / 100
+                    amountString = unit == .btc ? UInt256(sats).formatted(decimals: 8, maxFraction: 8) : String(sats)
+                    pickedPercent = percent
+                    pickedText = amountString
                 }
-                .buttonStyle(.plain)
+            }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)

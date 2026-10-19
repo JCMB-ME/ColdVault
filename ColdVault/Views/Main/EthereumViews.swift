@@ -274,6 +274,9 @@ struct EthSendView: View {
     @State private var assetID: String?
     @State private var amountText = ""
     @State private var sendAll = false
+    /// A share chosen with the 10–75 % buttons (shown selected while the amount is unchanged).
+    @State private var pickedPercent: Int?
+    @State private var pickedText: String?
     @State private var fast = false
     @State private var plan: EthereumSendPlan?
     @State private var isProcessing = false
@@ -505,6 +508,7 @@ struct EthSendView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(Palette.secondary)
             }
+            VStack(spacing: 10) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(L10n.balanceLabel(lang))
@@ -515,21 +519,20 @@ struct EthSendView: View {
                         .foregroundColor(Color(uiColor: .label))
                 }
                 Spacer(minLength: 8)
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                        sendAll.toggle()
-                        if sendAll { amountText = "" }
-                    }
-                } label: {
-                    Text(L10n.maxButton(lang))
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(sendAll ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
-                        .padding(.horizontal, 16)
-                        .frame(height: 34)
-                        .background(Capsule().fill(sendAll ? Color(uiColor: .label) : Color(uiColor: .systemBackground).opacity(0.9)))
+            }
+            AmountPercentPicker(selected: sendAll ? 100 : (pickedText == amountText ? pickedPercent : nil),
+                                maxTitle: L10n.maxButton(lang)) { percent in
+                if percent == 100 {
+                    sendAll.toggle()
+                    if sendAll { amountText = "" }
+                } else {
+                    sendAll = false
+                    let share = (asset.balance.multiplied(by: UInt64(percent)) ?? .zero).quotientAndRemainder(dividingBy: 100).quotient
+                    amountText = share.formatted(decimals: asset.decimals, maxFraction: min(asset.decimals, 8))
+                    pickedPercent = percent
+                    pickedText = amountText
                 }
-                .buttonStyle(.plain)
+            }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
