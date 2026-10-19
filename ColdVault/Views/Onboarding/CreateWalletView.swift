@@ -15,6 +15,8 @@ public struct CreateWalletView: View {
     @EnvironmentObject var walletManager: WalletManager
     @Environment(\.presentationMode) var presentationMode
 
+    /// The card that asks before skipping the word check.
+    @State private var showSkipWarning = false
     @State private var wordCountSelection: Int = 12
     @State private var words: [String] = []
     @State private var generationID: Int = 0
@@ -442,7 +444,7 @@ public struct CreateWalletView: View {
                 // The words can be checked later in Settings › Backup.
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    verifyAndCommit(checkWords: false)
+                    showSkipWarning = true
                 } label: {
                     Text(t("Continue without typing the words", "Continuar sin escribir las palabras"))
                         .font(.system(size: 14, weight: .semibold))
@@ -450,6 +452,15 @@ public struct CreateWalletView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isCreating)
+                // Skipping stays possible, but never by accident.
+                .confirmCard(isPresented: $showSkipWarning, icon: "exclamationmark.triangle.fill",
+                             title: t("Continue without checking the words?", "¿Continuar sin comprobar las palabras?"),
+                             message: t("If a word was written down wrong you won't know until you need to restore, and the funds could be lost. You can check them later in Settings › Backup.",
+                                        "Si anotaste mal alguna palabra no lo sabrás hasta que necesites restaurar, y podrías perder tus fondos. Puedes revisarlas después en Ajustes › Respaldo."),
+                             confirmTitle: t("Continue without checking", "Continuar sin comprobar"),
+                             cancelTitle: t("Check the words", "Comprobar las palabras")) {
+                    verifyAndCommit(checkWords: false)
+                }
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     errorMessage = nil

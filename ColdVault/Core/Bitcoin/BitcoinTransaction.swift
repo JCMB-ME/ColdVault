@@ -658,7 +658,11 @@ public enum TransactionBuilder {
     public static func build(coins: [SpendableCoin], recipientScript: Data, amount: UInt64?,
                              feeRate: UInt64, changeScript: Data, uncompressedLegacy: Bool = false) throws -> TransactionPlan {
         guard feeRate >= 1, feeRate <= 10_000 else { throw TransactionError.invalidFeeRate }
-        let usable = coins.filter { $0.type.isSpendable }.sorted { $0.value > $1.value }
+        // Confirmed coins first (largest first); unconfirmed ones only when needed: a payment
+        // built on someone else's unconfirmed coin fails if that coin is replaced (RBF).
+        let usable = coins.filter { $0.type.isSpendable }.sorted {
+            ($0.confirmed ? 1 : 0, $0.value) > ($1.confirmed ? 1 : 0, $1.value)
+        }
         guard !usable.isEmpty else { throw TransactionError.noSpendableCoins }
         let available = usable.reduce(UInt64(0)) { $0 + $1.value }
 

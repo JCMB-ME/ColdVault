@@ -23,9 +23,14 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>ColdVault requiere la cámara para escanear códigos QR de direcciones y transacciones Bitcoin.</string>
+	<string>ColdVault uses the camera to scan QR codes of addresses, payment requests and transactions.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>ColdVault utiliza Face ID / Touch ID para proteger tus claves criptográficas y autorizar firmas.</string>
+	<string>ColdVault uses Face ID to authorize payments and signatures and to show your recovery phrase.</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>es</string>
+	</array>
 	<!-- Classic design by default; Liquid Glass buttons are opt-in from Settings. -->
 	<key>UIDesignRequiresCompatibility</key>
 	<true/>
