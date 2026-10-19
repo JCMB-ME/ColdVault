@@ -25,6 +25,8 @@ public struct DashboardView: View {
     @Environment(\.scenePhase) private var scenePhase
     /// The app went to the background: show the balance when it comes back.
     @State private var wasInBackground = false
+    /// The network list under the logo (ETH, Stable…).
+    @State private var networkMenuOpen = false
 
     @State private var currentAction: DashboardAction = .receive
     @State private var showReceiveSheet: Bool = false
@@ -194,16 +196,32 @@ public struct DashboardView: View {
             .environmentObject(walletManager)
     }
 
+    private var networkMenuCatcher: some View {
+        Color.black.opacity(networkMenuOpen ? 0.001 : 0)
+            .contentShape(Rectangle())
+            .allowsHitTesting(networkMenuOpen)
+            .onTapGesture {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) { networkMenuOpen = false }
+            }
+            .simultaneousGesture(DragGesture(minimumDistance: 6).onChanged { _ in
+                guard networkMenuOpen else { return }
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) { networkMenuOpen = false }
+            })
+    }
+
     private var balancePage: some View {
         VStack(spacing: 0) {
             // Ethereum / dollars: the network on screen (tap or shake for the next one).
             if walletManager.isEthereum {
-                EVMNetworkPill()
+                EVMNetworkPill(expanded: $networkMenuOpen)
                     .environmentObject(walletManager)
                     .padding(.top, 10)
+                    .frame(maxWidth: .infinity)
+                    .background(networkMenuCatcher)
                     .zIndex(10)                       // its list opens over the balance
             }
 
+            VStack(spacing: 0) {
             // Badges sit above the scroll view, so the pull-to-refresh spinner appears
             // below them instead of on top of "Watch-only".
             statusBadges
@@ -231,6 +249,13 @@ public struct DashboardView: View {
                 // Pull down to refresh the balance (needs a scrollable container).
                 .refreshable {
                     await walletManager.refreshAll()
+                }
+            }
+            }
+            // While the network list is open, a tap anywhere else closes it.
+            .overlay {
+                if networkMenuOpen {
+                    networkMenuCatcher
                 }
             }
         }

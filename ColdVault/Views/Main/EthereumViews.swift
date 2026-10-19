@@ -396,6 +396,7 @@ struct EthSendView: View {
                 SheetHeader(title: t("Send \(asset.symbol)", "Enviar \(asset.symbol)"))
             }
         }
+        .appMenuHost()
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .sheet(isPresented: $showScanner) {
@@ -407,21 +408,18 @@ struct EthSendView: View {
 
     /// ETH or token, and on which chain.
     private var assetPicker: some View {
-        Menu {
-            ForEach(assets) { item in
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        AppMenuButton(items: {
+            assets.map { item in
+                AppMenuItem(title: "\(item.symbol) · \(item.chain.name(testnet: walletManager.isTestnet)) — \(item.formatted())",
+                            selected: item.id == asset.id) {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                         assetID = item.id
                         amountText = ""
                         sendAll = false
                     }
-                } label: {
-                    let title = "\(item.symbol) · \(item.chain.name(testnet: walletManager.isTestnet)) — \(item.formatted())"
-                    if item.id == asset.id { Label(title, systemImage: "checkmark") } else { Text(title) }
                 }
             }
-        } label: {
+        }) {
             HStack(spacing: 8) {
                 EVMAssetIcon(asset: asset, size: 26)
                 VStack(alignment: .leading, spacing: 0) {
@@ -966,7 +964,8 @@ struct EVMAssetIcon: View {
 /// the wallet's networks right under it; shaking the iPhone moves to the next one.
 struct EVMNetworkPill: View {
     @EnvironmentObject var walletManager: WalletManager
-    @State private var expanded = false
+    /// Open list; the home screen closes it on a tap anywhere else.
+    @Binding var expanded: Bool
 
     private var networks: [EVMChain] { walletManager.activeCoin.networks }
     private var current: EVMChain { walletManager.activeNetwork }
@@ -982,7 +981,7 @@ struct EVMNetworkPill: View {
                 Image(current.logoName)
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 20, height: 20)
+                    .frame(width: expanded ? 20 : 26, height: expanded ? 20 : 26)
                     .id(current)
                     .transition(.opacity.combined(with: .scale(scale: 0.6)))
                 if expanded {
@@ -998,25 +997,17 @@ struct EVMNetworkPill: View {
                 }
             }
             .foregroundColor(Color(uiColor: .label))
-            .padding(.horizontal, expanded ? 12 : 7)
+            .padding(.horizontal, expanded ? 12 : 4)
             .frame(minWidth: 34, minHeight: 34)
-            .background(Capsule().fill(SettingsStyle.groupFill))
+            .background(Capsule().fill(SettingsStyle.groupFill).opacity(expanded ? 1 : 0))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text(current.name(testnet: walletManager.isTestnet)))
         .accessibilityHint(Text("Network"))
-        // The list opens over the screen, without moving the balance. While it is open,
-        // a tap anywhere else (or a scroll) closes it.
+        // The list opens over the screen, without moving the balance.
         .overlay(alignment: .top) {
             if expanded {
-                Color.black.opacity(0.001)
-                    .frame(width: 3000, height: 3000)
-                    .offset(y: -1500)
-                    .contentShape(Rectangle())
-                    .onTapGesture { setExpanded(false) }
-                    .gesture(DragGesture(minimumDistance: 8).onChanged { _ in setExpanded(false) })
-                    .accessibilityHidden(true)
                 list
                     .offset(y: 44)
                     .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
@@ -1058,7 +1049,7 @@ struct EVMNetworkPill: View {
                     .padding(.horizontal, 14)
                     .frame(height: 46)
                     .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(chain == current ? Color(uiColor: .systemBackground).opacity(0.7) : Color.clear))
+                        .fill(chain == current ? SettingsStyle.groupFill : Color.clear))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -1066,9 +1057,9 @@ struct EVMNetworkPill: View {
         }
         .padding(6)
         .frame(width: 240)
-        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(.regularMaterial))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color(uiColor: .separator).opacity(0.4), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.25), radius: 18, y: 8)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color(uiColor: .systemBackground)))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color(uiColor: .separator).opacity(0.35), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.18), radius: 22, y: 10)
     }
 
     /// Next network, with a tap of the haptic engine (shake).
@@ -1177,7 +1168,9 @@ struct EVMAssetsCard: View {
                 // Settings › Coins and tokens hides the whole list, gas included.
                 if walletManager.homeShowTokens {
                     VStack(spacing: 10) {
-                        section("Stable", walletManager.orderedTokens())
+                        section("Stable", walletManager.orderedTokens().filter {
+                            !$0.balance.isZero || KnownToken.primarySymbols.contains($0.symbol)
+                        })
                         manageButton
                     }
                     section(t("Gas (pays the fees)", "Gas (paga las comisiones)"), natives,

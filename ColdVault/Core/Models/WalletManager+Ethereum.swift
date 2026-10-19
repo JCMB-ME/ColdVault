@@ -400,11 +400,15 @@ extension WalletManager {
         lastBalanceUpdate = Date()
     }
 
-    /// Stable: USDC + USDT in millionths of a dollar; otherwise the native coins.
+    /// Stable: every stablecoin's value in millionths of a dollar (6 or 18 decimals, EURC at
+    /// the euro's price); otherwise the native coins.
     nonisolated static func balanceUnits(_ assets: [EVMAsset], dollars: Bool) -> UInt64 {
         if dollars {
-            return assets.filter { !$0.isNative && $0.isStablecoin }
-                .reduce(UInt64(0)) { $0 + ($1.balance < UInt256(UInt64.max) ? $1.balance.low64 : 0) }
+            return assets.filter { !$0.isNative && $0.isStablecoin }.reduce(UInt64(0)) { total, asset in
+                let usd = asset.usdValue ?? asset.amount
+                guard usd.isFinite, usd > 0 else { return total }
+                return total + UInt64(min(usd * 1_000_000, 9e15).rounded())
+            }
         }
         return assets.filter { $0.isNative }.reduce(UInt64(0)) { $0 + units($1.balance, chain: $1.chain) }
     }
@@ -429,11 +433,31 @@ extension WalletManager {
             let value = held[token.contract] ?? .zero
             if !value.isZero || kind == .dollars {
                 list.append(EVMAsset(chain: chain, contract: token.contract, symbol: token.symbol, name: token.name,
-                                     decimals: token.decimals, balance: value, usdPrice: 1, iconURL: nil))
+                                     decimals: token.decimals, balance: value, usdPrice: stablePrice(token), iconURL: nil))
             }
         }
         list += await others
         return list
+    }
+
+    /// One coin in dollars: 1, or the euro's price for EURC.
+    func stablePrice(_ token: KnownToken) -> Double? {
+        token.peg == .eur ? nativeUsdPrice("EURC") : 1
+    }
+
+    /// A stablecoin amount in millionths of a dollar (for the history).
+    func stableMicros(_ value: UInt256, token: KnownToken) -> UInt256? {
+        var units = value
+        if token.decimals > 6 {
+            var divisor: UInt64 = 1
+            for _ in 0..<(token.decimals - 6) { divisor *= 10 }
+            units = value.quotientAndRemainder(dividingBy: divisor).quotient
+        }
+        guard units < UInt256(UInt64(Int64.max)) else { return nil }
+        if token.peg == .eur, let rate = nativeUsdPrice("EURC") {
+            return UInt256(UInt64((Double(units.low64) * rate).rounded()))
+        }
+        return units
     }
 
     private func tronAssets(owner: String, testnet: Bool, kind: CoinKind) async throws -> [EVMAsset] {
@@ -444,7 +468,7 @@ extension WalletManager {
             let value = account.tokens[token.contract] ?? .zero
             if !value.isZero || kind == .dollars {
                 list.append(EVMAsset(chain: .tron, contract: token.contract, symbol: token.symbol, name: token.name,
-                                     decimals: token.decimals, balance: value, usdPrice: 1, iconURL: nil))
+                                     decimals: token.decimals, balance: value, usdPrice: stablePrice(token), iconURL: nil))
             }
         }
         return list
@@ -782,10 +806,10 @@ extension WalletManager {
                 guard let hash = (item["transaction_hash"] as? String) ?? (item["tx_hash"] as? String),
                       let token = item["token"] as? [String: Any],
                       let contract = (token["address_hash"] as? String) ?? (token["address"] as? String),
-                      KnownToken.isStablecoin(contract, chain: chain, testnet: record.isTestnet),
+                      let known = KnownToken.find(contract, chain: chain, testnet: record.isTestnet),
                       let total = item["total"] as? [String: Any],
-                      let value = UInt256(decimal: total["value"] as? String ?? "", decimals: 0),
-                      value < UInt256(UInt64(Int64.max)) else { continue }
+                      let raw = UInt256(decimal: total["value"] as? String ?? "", decimals: 0),
+                      let value = stableMicros(raw, token: known) else { continue }
                 let from = ((item["from"] as? [String: Any])?["hash"] as? String)?.lowercased()
                 let to = ((item["to"] as? [String: Any])?["hash"] as? String)?.lowercased()
                 var net = byHash[hash]?.net ?? 0
@@ -824,9 +848,9 @@ extension WalletManager {
             for item in items {
                 guard let id = item["transaction_id"] as? String,
                       let contract = (item["token_info"] as? [String: Any])?["address"] as? String,
-                      KnownToken.isStablecoin(contract, chain: .tron, testnet: record.isTestnet),
-                      let value = UInt256(decimal: (item["value"] as? String) ?? "", decimals: 0),
-                      value < UInt256(UInt64(Int64.max)) else { continue }
+                      let known = KnownToken.find(contract, chain: .tron, testnet: record.isTestnet),
+                      let raw = UInt256(decimal: (item["value"] as? String) ?? "", decimals: 0),
+                      let value = stableMicros(raw, token: known) else { continue }
                 var net = byID[id]?.net ?? 0
                 if (item["to"] as? String) == owner { net += Int64(value.low64) }
                 if (item["from"] as? String) == owner { net -= Int64(value.low64) }
@@ -1015,6 +1039,13 @@ extension WalletManager {
         } else if let price = await EthereumRPC(isTestnet: false).price(currency: fiatCurrency) {
             ethFiatPrice = price
         }
+        // EURC is worth a euro: Kraken's EUR/USD.
+        if activeCoin == .dollars || activeCoin == .ethereum,
+           let result = await fetchKrakenTickers("EURUSD"),
+           let ticker = result.values.first as? [String: Any],
+           let text = (ticker["c"] as? [Any])?.first as? String, let rate = Double(text), rate > 0 {
+            coinUsdPrices["EURC"] = rate
+        }
         let symbols = Set(activeCoin.networks.map { $0.nativeSymbol }).subtracting(["ETH"])
         guard !symbols.isEmpty else { return }
         let pairs = symbols.sorted().map { "\($0)USD" }.joined(separator: ",")
@@ -1027,7 +1058,7 @@ extension WalletManager {
     }
 
     /// Kraken tickers for the other native coins. Through Tor when it is on, like every other connection.
-    private func fetchKrakenTickers(_ pairs: String) async -> [String: Any]? {
+    func fetchKrakenTickers(_ pairs: String) async -> [String: Any]? {
         guard let url = URL(string: "https://api.kraken.com/0/public/Ticker?pair=\(pairs)") else { return nil }
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15

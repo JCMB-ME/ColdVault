@@ -2,10 +2,10 @@
 //  CalculatorView.swift
 //  ColdVault
 //
-//  Live converter between bitcoin (BTC, sats) and the app's four currencies (USD,
-//  MXN, JPY, CNY): two rows, like the iPhone calculator's converter.
-//  Live Coinbase quotes, refreshed every 15 s while open; mempool.space × FX rates
-//  and Kraken as fallbacks.
+//  Live converter between every coin of the app (BTC, sats, ETH, POL, TRX, TON,
+//  USDT, USDC, EURC) and the app's currencies: two rows, like the iPhone
+//  calculator's converter. Live Coinbase quotes for BTC and ETH, Kraken for the
+//  others, refreshed every 15 s while open.
 //
 
 import SwiftUI
@@ -14,8 +14,11 @@ struct CalculatorView: View {
     @EnvironmentObject var walletManager: WalletManager
     @Environment(\.presentationMode) var presentationMode
 
-    static let units = ["BTC", "sats", "ETH", "USD", "MXN", "JPY", "CNY"]
-    private static let crypto: Set<String> = ["BTC", "sats", "ETH"]
+    static let coins = ["BTC", "sats", "ETH", "POL", "TRX", "TON", "USDT", "USDC", "EURC"]
+    static let units = coins + ["USD", "MXN", "JPY", "CNY"]
+    private static let crypto: Set<String> = Set(coins)
+    /// Coins priced from Kraken (in dollars).
+    private static let krakenCoins = ["POL", "TRX", "TON"]
 
     /// Two rows, like the iPhone calculator's converter: type in the top one, the
     /// bottom one shows the result. ↑↓ swaps them; tap a code to pick another unit.
@@ -25,6 +28,8 @@ struct CalculatorView: View {
     /// Price of 1 BTC / 1 ETH in each currency.
     @State private var prices: [String: Double] = [:]
     @State private var ethPrices: [String: Double] = [:]
+    /// POL, TRX, TON and the euro (for EURC) in US dollars.
+    @State private var coinUsd: [String: Double] = [:]
     @State private var updated: Date?
     @State private var isLoading = false
     @State private var failed = false
@@ -54,11 +59,20 @@ struct CalculatorView: View {
                     SheetHeader(title: t("Calculator", "Calculadora"), onClose: { presentationMode.wrappedValue.dismiss() })
                 }
         }
+        .appMenuHost()
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .onAppear {
             target = walletManager.fiatCurrency
-            if walletManager.isEthereum { unit = "ETH" }
+            switch walletManager.activeCoin {
+            case .ethereum: unit = "ETH"
+            case .polygon: unit = "POL"
+            case .tron: unit = "TRX"
+            case .ton: unit = "TON"
+            case .dollars: unit = "USDT"
+            default: break
+            }
+            coinUsd = walletManager.coinUsdPrices
             if let price = walletManager.fiatPrice { prices[walletManager.fiatCurrency] = price }
             if let usd = walletManager.usdPrice { prices["USD"] = usd }
             if let price = walletManager.ethFiatPrice { ethPrices[walletManager.fiatCurrency] = price }
@@ -157,20 +171,12 @@ struct CalculatorView: View {
 
     /// Icon, code and name of a unit; tap to choose another.
     private func unitPicker(selection: String, onPick: @escaping (String) -> Void) -> some View {
-        Menu {
-            ForEach(CalculatorView.units, id: \.self) { item in
-                Button {
-                    onPick(item)
-                } label: {
-                    let title = (flag(item).map { "\($0) " } ?? "") + "\(item) · \(name(item))"
-                    if item == selection {
-                        Label(title, systemImage: "checkmark")
-                    } else {
-                        Text(title)
-                    }
-                }
+        AppMenuButton(items: {
+            CalculatorView.units.map { item in
+                AppMenuItem(title: "\(item) · \(name(item))",
+                            selected: item == selection) { onPick(item) }
             }
-        } label: {
+        }) {
             HStack(spacing: 10) {
                 unitIcon(selection)
                 VStack(alignment: .leading, spacing: 1) {
@@ -202,6 +208,24 @@ struct CalculatorView: View {
             BitcoinLogo(size: 38)
         case "ETH":
             CoinLogo(coin: .ethereum, size: 38)       // the logo is already a full circle
+        case "POL":
+            CoinLogo(coin: .polygon, size: 38)
+        case "TRX":
+            CoinLogo(coin: .tron, size: 38)
+        case "TON":
+            CoinLogo(coin: .ton, size: 38)
+        case "USDT", "USDC":
+            Image(item == "USDT" ? "UsdtLogo" : "UsdcLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 38, height: 38)
+                .clipShape(Circle())
+        case "EURC":
+            Text("€")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .frame(width: 38, height: 38)
+                .background(Circle().fill(Color(red: 0.16, green: 0.46, blue: 0.86)))
         case "sats":
             Text("s")
                 .font(.system(size: 17, weight: .bold, design: .rounded))
@@ -209,28 +233,28 @@ struct CalculatorView: View {
                 .frame(width: 38, height: 38)
                 .background(Circle().fill(Color.orange))
         default:
-            Text(flag(item) ?? item)
-                .font(.system(size: 24))
+            // The country's flag filling the whole circle.
+            Image("Flag\(item)")
+                .resizable()
+                .scaledToFill()
                 .frame(width: 38, height: 38)
-                .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+                .clipShape(Circle())
+                .overlay(Circle().stroke(Color(uiColor: .separator).opacity(0.5), lineWidth: 0.5))
         }
     }
 
-    private func flag(_ item: String) -> String? {
-        switch item {
-        case "USD": return "🇺🇸"
-        case "MXN": return "🇲🇽"
-        case "JPY": return "🇯🇵"
-        case "CNY": return "🇨🇳"
-        default: return nil
-        }
-    }
 
     private func name(_ item: String) -> String {
         switch item {
         case "BTC": return "Bitcoin"
         case "ETH": return "Ethereum"
         case "sats": return "Satoshis"
+        case "POL": return "Polygon"
+        case "TRX": return "Tron"
+        case "TON": return "Toncoin"
+        case "USDT": return "Tether USD"
+        case "USDC": return "USD Coin"
+        case "EURC": return "Euro Coin"
         case "USD": return t("US dollar", "Dólar de EE. UU.")
         case "MXN": return t("Mexican peso", "Peso mexicano")
         case "JPY": return t("Japanese yen", "Yen japonés")
@@ -243,9 +267,9 @@ struct CalculatorView: View {
     @ViewBuilder
     private var priceFooter: some View {
         let code = [target, unit].first { !CalculatorView.crypto.contains($0) } ?? walletManager.fiatCurrency
-        let coin = [unit, target].first { $0 == "ETH" } ?? ([unit, target].contains { $0 == "BTC" || $0 == "sats" }
-                                                            ? "BTC" : (walletManager.isEthereum ? "ETH" : "BTC"))
-        let price = coin == "ETH" ? ethPrices[code] : prices[code]
+        let coin = [unit, target].first { CalculatorView.crypto.contains($0) && $0 != "sats" }
+            ?? ([unit, target].contains("sats") ? "BTC" : (walletManager.isEthereum ? "ETH" : "BTC"))
+        let price = price(of: coin, in: code)
         VStack(spacing: 6) {
             if let price {
                 Text("1 \(coin) = \(format(price, unit: code))")
@@ -274,12 +298,24 @@ struct CalculatorView: View {
         return value
     }
 
+    /// One coin in a currency.
+    private func price(of coin: String, in code: String) -> Double? {
+        if coin == "BTC" { return prices[code] }
+        if coin == "ETH", let price = ethPrices[code] { return price }
+        guard let usd = usdPerUnit(coin), let local = usdPerUnit(code), local > 0 else { return nil }
+        return usd / local
+    }
+
     /// Value of one unit in US dollars (every conversion goes through USD).
     private func usdPerUnit(_ item: String) -> Double? {
         switch item {
         case "BTC": return prices["USD"]
         case "sats": return prices["USD"].map { $0 / 100_000_000 }
         case "ETH": return ethPrices["USD"]
+        case "USDT", "USDC": return 1
+        case "EURC": return coinUsd["EURC"]
+        case "POL", "TRX", "TON": return coinUsd[item]
+        case "USD": return 1
         default:
             guard let usd = prices["USD"], let local = prices[item], local > 0 else { return nil }
             return usd / local
@@ -322,7 +358,14 @@ struct CalculatorView: View {
 
     private func format(_ value: Double, unit item: String) -> String {
         switch item {
-        case "BTC", "ETH": return CalculatorView.btcFormatter.string(from: NSNumber(value: value)) ?? "\(value)"
+        case "USDT", "USDC", "EURC":
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .decimal
+            formatter.minimumFractionDigits = 2
+            formatter.maximumFractionDigits = 2
+            return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
+        case "BTC", "ETH", "POL", "TRX", "TON":
+            return CalculatorView.btcFormatter.string(from: NSNumber(value: value)) ?? "\(value)"
         case "sats": return CalculatorView.satsFormatter.string(from: NSNumber(value: value)) ?? "\(Int64(value))"
         default:
             let formatter = NumberFormatter()
@@ -340,7 +383,7 @@ struct CalculatorView: View {
         let text: String
         switch item {
         case "sats": text = String(Int64(value.rounded()))
-        case "BTC", "ETH":
+        case "BTC", "ETH", "POL", "TRX", "TON":
             text = String(format: "%.8f", value)
                 .replacingOccurrences(of: "0+$", with: "", options: .regularExpression)
                 .replacingOccurrences(of: "\\.$", with: "", options: .regularExpression)
@@ -382,6 +425,17 @@ struct CalculatorView: View {
         async let ethCall = try? BlockchainService.shared.fetchSpotPrices(base: "ETH")
         let (btc, eth) = await (btcCall, ethCall)
         if let eth, !eth.isEmpty { ethPrices = eth }
+        if let tickers = await walletManager.fetchKrakenTickers((CalculatorView.krakenCoins.map { "\($0)USD" } + ["EURUSD"]).joined(separator: ",")) {
+            for (key, value) in tickers {
+                guard let ticker = value as? [String: Any], let text = (ticker["c"] as? [Any])?.first as? String,
+                      let price = Double(text), price > 0 else { continue }
+                if key.contains("EUR") {
+                    coinUsd["EURC"] = price
+                } else if let coin = CalculatorView.krakenCoins.first(where: { key.hasPrefix($0) }) {
+                    coinUsd[coin] = price
+                }
+            }
+        }
         if let btc, !btc.isEmpty {
             prices = btc
             updated = Date()
@@ -414,7 +468,7 @@ struct CalculatorCard: View {
                     Text(lang == .english ? "Calculator" : "Calculadora")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
-                    Text(walletManager.isEthereum ? "ETH · USD · MXN · JPY · CNY" : "BTC · sats · USD · MXN · JPY · CNY")
+                    Text("BTC · ETH · POL · TRX · TON · USDT · USDC · EURC")
                         .font(.system(size: 12))
                         .foregroundColor(Palette.secondary)
                         .lineLimit(1)

@@ -121,20 +121,7 @@ public struct SettingsView: View {
                     }
                     if walletManager.homeShowTransactions {
                         SettingsDivider(inset: 60)
-                        Menu {
-                            ForEach([5, 10], id: \.self) { count in
-                                Button { walletManager.homeTransactionCount = count } label: {
-                                    menuLabel("\(count)", selected: walletManager.homeTransactionCount == count)
-                                }
-                            }
-                            Button { walletManager.homeTransactionCount = 0 } label: {
-                                menuLabel(t("All", "Todas"), selected: walletManager.homeTransactionCount == 0)
-                            }
-                            Button(t("Custom…", "Personalizado…")) {
-                                customTransactionsText = walletManager.homeTransactionCount > 0 ? "\(walletManager.homeTransactionCount)" : ""
-                                showCustomTransactions = true
-                            }
-                        } label: {
+                        AppMenuButton(items: { transactionCountMenu }) {
                             SettingsRow(title: t("How many", "Cuántas"), value: transactionCountName, chevron: true,
                                         icon: "number")
                         }
@@ -222,38 +209,28 @@ public struct SettingsView: View {
                         }
                         SettingsDivider(inset: 60)
                     }
-                    Menu {
-                        Picker("", selection: $walletManager.displayUnit) {
-                            ForEach(DisplayUnit.allCases) { unit in Text(unit.rawValue).tag(unit) }
+                    AppMenuButton(items: {
+                        DisplayUnit.allCases.map { unit in
+                            AppMenuItem(title: unit.rawValue, selected: walletManager.displayUnit == unit) {
+                                walletManager.displayUnit = unit
+                            }
                         }
-                    } label: {
+                    }) {
                         SettingsRow(title: t("Unit", "Unidad"), value: walletManager.displayUnit.rawValue, chevron: true,
                                     icon: "bitcoinsign.circle")
                     }
                     SettingsDivider(inset: 60)
-                    Menu {
-                        Button(t("Automatic", "Automático")) { walletManager.displayDecimals = nil }
-                        ForEach(0...4, id: \.self) { value in
-                            Button("\(value)") { walletManager.displayDecimals = value }
-                        }
-                        Button(t("Custom…", "Personalizado…")) {
-                            customDecimalsText = walletManager.displayDecimals.map { String($0) } ?? ""
-                            showCustomDecimals = true
-                        }
-                    } label: {
+                    AppMenuButton(items: { decimalsMenu }) {
                         SettingsRow(title: t("Decimals", "Decimales"), value: decimalsName, chevron: true, icon: "textformat.123")
                     }
                     SettingsDivider(inset: 60)
-                    Menu {
-                        // Explicit buttons (not a Picker) so every currency is always listed.
-                        ForEach(FiatCurrency.supported, id: \.self) { code in
-                            Button {
+                    AppMenuButton(items: {
+                        FiatCurrency.supported.map { code in
+                            AppMenuItem(title: FiatCurrency.name(code, lang), selected: walletManager.fiatCurrency == code) {
                                 walletManager.fiatCurrency = code
-                            } label: {
-                                menuLabel(FiatCurrency.name(code, lang), selected: walletManager.fiatCurrency == code)
                             }
                         }
-                    } label: {
+                    }) {
                         SettingsRow(title: t("Currency", "Moneda"), value: walletManager.fiatCurrency, chevron: true,
                                     icon: "banknote")
                     }
@@ -323,22 +300,24 @@ public struct SettingsView: View {
 
                 SettingsDisclosureSection(title: t("Appearance", "Apariencia"), icon: "paintpalette",
                                           isExpanded: $openAppearance, footer: nil) {
-                    Menu {
-                        Picker("", selection: $walletManager.appTheme) {
-                            ForEach(AppTheme.allCases) { theme in Text(themeName(theme)).tag(theme) }
+                    AppMenuButton(items: {
+                        AppTheme.allCases.map { theme in
+                            AppMenuItem(title: themeName(theme), selected: walletManager.appTheme == theme) {
+                                walletManager.appTheme = theme
+                            }
                         }
-                    } label: {
+                    }) {
                         SettingsRow(title: t("Theme", "Tema"), value: themeName(walletManager.appTheme), chevron: true,
                                     icon: "circle.lefthalf.filled")
                     }
                     SettingsDivider(inset: 60)
-                    Menu {
-                        ForEach(["system", "es", "en"], id: \.self) { choice in
-                            Button { walletManager.languageChoice = choice } label: {
-                                menuLabel(languageName(choice), selected: walletManager.languageChoice == choice)
+                    AppMenuButton(items: {
+                        ["system", "es", "en"].map { choice in
+                            AppMenuItem(title: languageName(choice), selected: walletManager.languageChoice == choice) {
+                                walletManager.languageChoice = choice
                             }
                         }
-                    } label: {
+                    }) {
                         SettingsRow(title: t("Language", "Idioma"), value: languageName(walletManager.languageChoice),
                                     chevron: true, icon: "globe")
                     }
@@ -346,20 +325,26 @@ public struct SettingsView: View {
 
                 SettingsDisclosureSection(title: t("Advanced", "Avanzado"), icon: "gearshape.2",
                                           isExpanded: $openAdvanced, footer: nil) {
+                    // Lightning is bitcoin only.
+                    if walletManager.activeCoin == .bitcoin {
                     Group {
                         SettingsSubheader(text: "Lightning", first: true)
-                        Menu {
-                            Button { switchLightning(.breez) } label: {
-                                menuLabel("Breez (Spark)", selected: lightning.kind == .breez)
-                            }
-                            Button { switchLightning(.ldk) } label: {
-                                menuLabel(t("LDK (own node)", "LDK (nodo propio)"), selected: lightning.kind == .ldk)
-                            }
-                        } label: {
+                        SettingsRow(title: "Lightning", icon: "bolt.fill") {
+                            Toggle("", isOn: Binding(get: { lightning.enabled },
+                                                     set: { on in withAnimation { lightning.setEnabled(on) } }))
+                                .labelsHidden()
+                        }
+                        if lightning.enabled {
+                        SettingsDivider(inset: 60)
+                        AppMenuButton(items: {
+                            [AppMenuItem(title: "Breez (Spark)", selected: lightning.kind == .breez) { switchLightning(.breez) },
+                             AppMenuItem(title: t("LDK (own node)", "LDK (nodo propio)"), selected: lightning.kind == .ldk) { switchLightning(.ldk) }]
+                        }) {
                             SettingsRow(title: t("Engine", "Motor"), value: lightning.kind == .breez ? "Breez" : "LDK",
                                         chevron: true, icon: "bolt")
                         }
-                        if lightning.kind == .breez {
+                        }
+                        if lightning.enabled && lightning.kind == .breez {
                             SettingsDivider(inset: 60)
                             Button {
                                 breezKeyDraft = lightning.breezAPIKey
@@ -370,11 +355,14 @@ public struct SettingsView: View {
                                             chevron: true, icon: "key.horizontal")
                             }
                         }
-                        SettingsNote(text: t("Breez: instant, no channels, needs a free API key (breez.technology). LDK: your own node in this iPhone; you open channels. Mainnet only.",
-                                          "Breez: instantáneo, sin canales, necesita una API key gratuita (breez.technology). LDK: tu propio nodo en este iPhone; tú abres los canales. Solo mainnet."))
+                        SettingsNote(text: lightning.enabled
+                                     ? t("Breez: instant, no channels, needs a free API key (breez.technology). LDK: your own node in this iPhone; you open channels. Mainnet only.",
+                                         "Breez: instantáneo, sin canales, necesita una API key gratuita (breez.technology). LDK: tu propio nodo en este iPhone; tú abres los canales. Solo mainnet.")
+                                     : t("Off: Lightning is hidden and uses no data.", "Desactivado: Lightning se oculta y no usa datos."))
+                    }
                     }
                     Group {
-                        SettingsSubheader(text: t("Export", "Exportar"))
+                        SettingsSubheader(text: t("Export", "Exportar"), first: walletManager.activeCoin != .bitcoin)
                         Button {
                             exportItem = walletManager.exportFile(name: "ColdVault-history.csv", contents: walletManager.historyCSV())
                                 .map { ExportItem(url: $0) }
@@ -479,6 +467,7 @@ public struct SettingsView: View {
             .buttonStyle(.plain)
             .toggleStyle(AppToggleStyle())
         }
+        .appMenuHost()
         .sheet(isPresented: $showCalculator) {
             CalculatorView().environmentObject(walletManager)
         }
@@ -524,6 +513,39 @@ public struct SettingsView: View {
         case .toncenter: toncenterKey = key
         case .tonapi: tonapiKey = key
         }
+    }
+
+    private var transactionCountMenu: [AppMenuItem] {
+        var items = [AppMenuItem]()
+        for count in [5, 10] {
+            items.append(AppMenuItem(title: "\(count)", selected: walletManager.homeTransactionCount == count) {
+                walletManager.homeTransactionCount = count
+            })
+        }
+        items.append(AppMenuItem(title: t("All", "Todas"), selected: walletManager.homeTransactionCount == 0) {
+            walletManager.homeTransactionCount = 0
+        })
+        items.append(AppMenuItem(title: t("Custom…", "Personalizado…"), icon: "pencil") {
+            customTransactionsText = walletManager.homeTransactionCount > 0 ? "\(walletManager.homeTransactionCount)" : ""
+            showCustomTransactions = true
+        })
+        return items
+    }
+
+    private var decimalsMenu: [AppMenuItem] {
+        var items = [AppMenuItem(title: t("Automatic", "Automático"), selected: walletManager.displayDecimals == nil) {
+            walletManager.displayDecimals = nil
+        }]
+        for value in 0...4 {
+            items.append(AppMenuItem(title: "\(value)", selected: walletManager.displayDecimals == value) {
+                walletManager.displayDecimals = value
+            })
+        }
+        items.append(AppMenuItem(title: t("Custom…", "Personalizado…"), icon: "pencil") {
+            customDecimalsText = walletManager.displayDecimals.map { String($0) } ?? ""
+            showCustomDecimals = true
+        })
+        return items
     }
 
     private var transactionCountName: String {

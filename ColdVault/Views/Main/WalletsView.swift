@@ -61,6 +61,10 @@ struct WalletsView: View {
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
     var body: some View {
+        walletsPage.appMenuHost()
+    }
+
+    private var walletsPage: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
                 SettingsTitle(text: t("Wallets", "Billeteras"))
@@ -467,18 +471,14 @@ struct WalletsView: View {
                 }
                 .contentShape(Rectangle())
             }
-            Menu {
-                Button {
+            AppMenuButton(items: {
+                [AppMenuItem(title: t("Rename", "Renombrar"), icon: "pencil") {
                     renameText = wallet.bundle.name
                     renameTarget = RenameTarget(slot: wallet.slot, account: nil)
-                } label: { Label(t("Rename", "Renombrar"), systemImage: "pencil") }
-                Button { iconSlot = IconTarget(slot: wallet.slot) } label: {
-                    Label(t("Picture or icon", "Imagen o icono"), systemImage: "photo")
-                }
-                Button(role: .destructive) {
-                    deleteSlot = wallet.slot
-                } label: { Label(t("Delete wallet", "Eliminar billetera"), systemImage: "trash") }
-            } label: {
+                 },
+                 AppMenuItem(title: t("Picture or icon", "Imagen o icono"), icon: "photo") { iconSlot = IconTarget(slot: wallet.slot) },
+                 AppMenuItem(title: t("Delete wallet", "Eliminar billetera"), icon: "trash", destructive: true) { deleteSlot = wallet.slot }]
+            }) {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Palette.secondary)
@@ -589,47 +589,7 @@ struct WalletsView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { toggleCollapsed(wallet.slot) }
                 collapseButton(collapsed) { toggleCollapsed(wallet.slot) }
-                Menu {
-                    Button {
-                        renameText = wallet.bundle.name
-                        renameTarget = RenameTarget(slot: wallet.slot, account: nil)
-                    } label: { Label(t("Rename wallet", "Renombrar billetera"), systemImage: "pencil") }
-                    Button { iconSlot = IconTarget(slot: wallet.slot) } label: {
-                        Label(t("Picture or icon", "Imagen o icono"), systemImage: "photo")
-                    }
-                    if wallet.bundle.accounts.count > 1 {
-                        Menu {
-                            ForEach(Array(wallet.bundle.accounts.enumerated()), id: \.element.id) { index, account in
-                                Button(account.name) {
-                                    renameText = account.name
-                                    renameTarget = RenameTarget(slot: wallet.slot, account: index)
-                                }
-                            }
-                        } label: { Label(t("Rename account", "Renombrar cuenta"), systemImage: "character.cursor.ibeam") }
-                    } else if let account = wallet.bundle.accounts.first {
-                        Button {
-                            renameText = account.name
-                            renameTarget = RenameTarget(slot: wallet.slot, account: 0)
-                        } label: { Label(t("Rename account", "Renombrar cuenta"), systemImage: "character.cursor.ibeam") }
-                    }
-                    if isSeedWallet(wallet) {
-                        Button { addAccount(to: wallet.slot) } label: {
-                            Label(t("New account", "Nueva cuenta"), systemImage: "plus")
-                        }
-                    }
-                    if isSeedWallet(wallet) && wallet.bundle.accounts.count > 1 {
-                        Menu {
-                            ForEach(Array(wallet.bundle.accounts.enumerated()), id: \.element.id) { index, account in
-                                Button(role: .destructive) {
-                                    deleteAccountTarget = AccountTarget(slot: wallet.slot, account: index, name: account.name)
-                                } label: { Text(account.name) }
-                            }
-                        } label: { Label(t("Delete account", "Eliminar cuenta"), systemImage: "minus.circle") }
-                    }
-                    Button(role: .destructive) {
-                        deleteSlot = wallet.slot
-                    } label: { Label(t("Delete wallet", "Eliminar billetera"), systemImage: "trash") }
-                } label: {
+                AppMenuButton(items: { walletMenu(wallet) }) {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
@@ -676,7 +636,7 @@ struct WalletsView: View {
                     .disabled(addingAccountTo != nil)
                 }
 
-                if isSeedWallet(wallet) && coin == .bitcoin {
+                if isSeedWallet(wallet) && coin == .bitcoin && LightningManager.shared.enabled {
                     lightningRow(wallet)
                 }
             }
@@ -731,6 +691,47 @@ struct WalletsView: View {
                 } label: { Label(t("Delete account", "Eliminar cuenta"), systemImage: "trash") }
             }
         }
+    }
+
+    /// The ••• menu of a wallet.
+    private func walletMenu(_ wallet: LibraryWallet) -> [AppMenuItem] {
+        let accounts = Array(wallet.bundle.accounts.enumerated())
+        var items = [
+            AppMenuItem(title: t("Rename wallet", "Renombrar billetera"), icon: "pencil") {
+                renameText = wallet.bundle.name
+                renameTarget = RenameTarget(slot: wallet.slot, account: nil)
+            },
+            AppMenuItem(title: t("Picture or icon", "Imagen o icono"), icon: "photo") { iconSlot = IconTarget(slot: wallet.slot) }
+        ]
+        if accounts.count > 1 {
+            items.append(AppMenuItem(title: t("Rename account", "Renombrar cuenta"), icon: "character.cursor.ibeam",
+                                     children: accounts.map { index, account in
+                AppMenuItem(title: account.name) {
+                    renameText = account.name
+                    renameTarget = RenameTarget(slot: wallet.slot, account: index)
+                }
+            }))
+        } else if let account = wallet.bundle.accounts.first {
+            items.append(AppMenuItem(title: t("Rename account", "Renombrar cuenta"), icon: "character.cursor.ibeam") {
+                renameText = account.name
+                renameTarget = RenameTarget(slot: wallet.slot, account: 0)
+            })
+        }
+        if isSeedWallet(wallet) {
+            items.append(AppMenuItem(title: t("New account", "Nueva cuenta"), icon: "plus") { addAccount(to: wallet.slot) })
+        }
+        if isSeedWallet(wallet) && accounts.count > 1 {
+            items.append(AppMenuItem(title: t("Delete account", "Eliminar cuenta"), icon: "minus.circle", destructive: true,
+                                     children: accounts.map { index, account in
+                AppMenuItem(title: account.name, destructive: true) {
+                    deleteAccountTarget = AccountTarget(slot: wallet.slot, account: index, name: account.name)
+                }
+            }))
+        }
+        items.append(AppMenuItem(title: t("Delete wallet", "Eliminar billetera"), icon: "trash", destructive: true) {
+            deleteSlot = wallet.slot
+        })
+        return items
     }
 
     /// Lightning for this wallet (mainnet).

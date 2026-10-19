@@ -24,6 +24,15 @@ final class LightningManager: ObservableObject {
         didSet { UserDefaults.standard.set(ldkLSP.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "ldkLsp") }
     }
 
+    /// Settings › Advanced › Lightning: off hides it and stops the engine.
+    @Published private(set) var enabled: Bool
+
+    func setEnabled(_ on: Bool) {
+        enabled = on
+        UserDefaults.standard.set(on, forKey: "lightningEnabled")
+        if !on { Task { await stop() } }
+    }
+
     @Published private(set) var runningSlot: String?
     @Published private(set) var runningKind: LightningEngineKind?
     @Published private(set) var isStarting = false
@@ -34,6 +43,7 @@ final class LightningManager: ObservableObject {
         kind = LightningEngineKind(rawValue: defaults.string(forKey: "lightningEngine") ?? "") ?? .breez
         breezAPIKey = defaults.string(forKey: "breezApiKey") ?? ""
         ldkLSP = defaults.string(forKey: "ldkLsp") ?? ""
+        enabled = defaults.object(forKey: "lightningEnabled") as? Bool ?? true
     }
 
     func isRunning(for slot: String) -> Bool {
@@ -43,6 +53,7 @@ final class LightningManager: ObservableObject {
     var ldk: LDKEngine? { engine as? LDKEngine }
 
     func start(_ walletManager: WalletManager) async throws {
+        guard enabled else { throw LightningError.notStarted }
         guard !walletManager.isTestnet else { throw LightningError.mainnetOnly }
         let slot = walletManager.activeSlot
         if isRunning(for: slot) { return }

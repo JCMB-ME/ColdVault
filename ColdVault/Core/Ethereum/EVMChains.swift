@@ -218,23 +218,59 @@ public struct KnownToken {
     public let symbol: String
     public let name: String
     public let decimals: Int
+    /// What one coin is worth: a US dollar, or a euro (EURC).
+    public var peg: Peg = .usd
 
-    /// USDC and USDT: the coins of a Stable wallet (both have 6 decimals).
+    public enum Peg { case usd, eur }
+
+    /// The coins of a Stable wallet: the stablecoins issued natively on each network by
+    /// their own issuer (no bridged copies). Contracts checked on chain (symbol, decimals).
     public static let stablecoins: [KnownToken] = [
-        KnownToken(chain: .ethereum, testnet: false, contract: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-                   symbol: "USDC", name: "USD Coin", decimals: 6),
+        // Ethereum
         KnownToken(chain: .ethereum, testnet: false, contract: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
                    symbol: "USDT", name: "Tether USD", decimals: 6),
+        KnownToken(chain: .ethereum, testnet: false, contract: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                   symbol: "USDC", name: "USD Coin", decimals: 6),
+        KnownToken(chain: .ethereum, testnet: false, contract: "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+                   symbol: "USDS", name: "Sky Dollar", decimals: 18),
+        KnownToken(chain: .ethereum, testnet: false, contract: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                   symbol: "DAI", name: "Dai", decimals: 18),
+        KnownToken(chain: .ethereum, testnet: false, contract: "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3",
+                   symbol: "USDe", name: "Ethena USDe", decimals: 18),
+        KnownToken(chain: .ethereum, testnet: false, contract: "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8",
+                   symbol: "PYUSD", name: "PayPal USD", decimals: 6),
+        KnownToken(chain: .ethereum, testnet: false, contract: "0x8d0D000Ee44948FC98c9B98A4FA4921476f08B0d",
+                   symbol: "USD1", name: "World Liberty USD", decimals: 18),
+        KnownToken(chain: .ethereum, testnet: false, contract: "0xc5f0f7b66764F6ec8C8Dff7BA683102295E16409",
+                   symbol: "FDUSD", name: "First Digital USD", decimals: 18),
+        KnownToken(chain: .ethereum, testnet: false, contract: "0x8292Bb45bf1Ee4d140127049757C2E0fF06317eD",
+                   symbol: "RLUSD", name: "Ripple USD", decimals: 18),
+        KnownToken(chain: .ethereum, testnet: false, contract: "0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f",
+                   symbol: "GHO", name: "Aave GHO", decimals: 18),
+        KnownToken(chain: .ethereum, testnet: false, contract: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
+                   symbol: "crvUSD", name: "Curve USD", decimals: 18),
+        KnownToken(chain: .ethereum, testnet: false, contract: "0x0000000000085d4780B73119b644AE5ecd22b376",
+                   symbol: "TUSD", name: "TrueUSD", decimals: 18),
+        KnownToken(chain: .ethereum, testnet: false, contract: "0x8E870D67F660D95d5be530380D0eC0bd388289E1",
+                   symbol: "USDP", name: "Pax Dollar", decimals: 18),
+        KnownToken(chain: .ethereum, testnet: false, contract: "0x1aBaEA1f7C830bD89Acc67eC4af516284b1bC33c",
+                   symbol: "EURC", name: "Euro Coin", decimals: 6, peg: .eur),
+        // Base (Circle issues USDC and EURC natively; USDT there is a bridged copy)
         KnownToken(chain: .base, testnet: false, contract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
                    symbol: "USDC", name: "USD Coin", decimals: 6),
-        KnownToken(chain: .base, testnet: false, contract: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
+        KnownToken(chain: .base, testnet: false, contract: "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42",
+                   symbol: "EURC", name: "Euro Coin", decimals: 6, peg: .eur),
+        // Polygon (native USDC; USDT0 is Tether's own USDT on Polygon)
+        KnownToken(chain: .polygon, testnet: false, contract: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
                    symbol: "USDT", name: "Tether USD", decimals: 6),
         KnownToken(chain: .polygon, testnet: false, contract: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
                    symbol: "USDC", name: "USD Coin", decimals: 6),
-        KnownToken(chain: .polygon, testnet: false, contract: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
-                   symbol: "USDT", name: "Tether USD", decimals: 6),
+        // Tron
         KnownToken(chain: .tron, testnet: false, contract: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
                    symbol: "USDT", name: "Tether USD", decimals: 6),
+        KnownToken(chain: .tron, testnet: false, contract: "TPYmHEhy5n8TCEfYGqW2rPxsghSfzghPDn",
+                   symbol: "USDD", name: "Decentralized USD", decimals: 18),
+        // TON
         KnownToken(chain: .ton, testnet: false, contract: "0:b113a994b5024a16719f69139328eb759596c38a25f59028b146fecdc3621dfe",
                    symbol: "USDT", name: "Tether USD", decimals: 6),
         // Test coins: Circle's USDC (faucet.circle.com) and Nile's USDT (nileex.io).
@@ -247,6 +283,14 @@ public struct KnownToken {
         KnownToken(chain: .tron, testnet: true, contract: "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf",
                    symbol: "USDT", name: "Tether USD", decimals: 6),
     ]
+
+    /// Always listed in a Stable wallet; the others appear once held.
+    public static let primarySymbols: Set<String> = ["USDT", "USDC"]
+    public static let stableSymbols: Set<String> = Set(stablecoins.map { $0.symbol })
+
+    public static func find(_ contract: String, chain: EVMChain, testnet: Bool) -> KnownToken? {
+        stablecoins.first { $0.chain == chain && $0.testnet == testnet && $0.contract.lowercased() == contract.lowercased() }
+    }
 
     public static func stablecoins(testnet: Bool) -> [KnownToken] { stablecoins.filter { $0.testnet == testnet } }
 
@@ -272,7 +316,7 @@ public struct EVMAsset: Identifiable, Equatable, @unchecked Sendable {
     public var tokenWallet: String? = nil
 
     public var isNative: Bool { contract == nil }
-    public var isStablecoin: Bool { symbol == "USDC" || symbol == "USDT" }
+    public var isStablecoin: Bool { KnownToken.stableSymbols.contains(symbol) }
 
     /// Logo bundled with the app: the native coins, USDC, USDT.
     public var logoName: String? {
