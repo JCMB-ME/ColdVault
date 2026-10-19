@@ -499,8 +499,11 @@ public final class TonAPI {
     }
 
     /// Without an API key both services allow about one call per second: a busy
-    /// answer (429) is retried once a moment later.
-    private func data(_ request: URLRequest) async throws -> Data {
+    /// answer (429) is retried once a moment later. The optional keys (Settings ›
+    /// Advanced) raise that limit.
+    private func data(_ original: URLRequest) async throws -> Data {
+        var request = original
+        ServiceKeys.authorize(&request)
         for attempt in 0..<3 {
             let (data, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -526,15 +529,37 @@ public final class TonAPI {
         return object
     }
 
-    /// Balance (nanotons), seqno and whether the wallet contract is deployed.
+    /// Balance (nanotons), seqno and whether the wallet contract is deployed: toncenter,
+    /// or tonapi when toncenter is busy or down.
     public func wallet(_ address: String) async throws -> (balance: UInt256, seqno: UInt32, active: Bool) {
-        let object = try await json("\(toncenter)/getWalletInformation?address=\(address)")
-        guard (object["ok"] as? Bool) == true, let result = object["result"] as? [String: Any] else { throw TonError.unavailable }
-        let balance = UInt256(decimal: (result["balance"] as? String) ?? "\((result["balance"] as? NSNumber)?.int64Value ?? 0)",
-                              decimals: 0) ?? .zero
-        let active = (result["account_state"] as? String) == "active"
-        let seqno = (result["seqno"] as? NSNumber)?.uint32Value ?? 0
-        return (balance, active ? seqno : 0, active)
+        do {
+            let object = try await json("\(toncenter)/getWalletInformation?address=\(address)")
+            guard (object["ok"] as? Bool) == true, let result = object["result"] as? [String: Any] else { throw TonError.unavailable }
+            let balance = UInt256(decimal: (result["balance"] as? String) ?? "\((result["balance"] as? NSNumber)?.int64Value ?? 0)",
+                                  decimals: 0) ?? .zero
+            let active = (result["account_state"] as? String) == "active"
+            let seqno = (result["seqno"] as? NSNumber)?.uint32Value ?? 0
+            return (balance, active ? seqno : 0, active)
+        } catch {
+            let account = try await json("\(tonapi)/v2/accounts/\(address)")
+            guard let nanotons = (account["balance"] as? NSNumber)?.int64Value, nanotons >= 0 else { throw error }
+            let active = (account["status"] as? String) == "active"
+            var seqno: UInt32 = 0
+            if active {
+                // A wrong seqno would make a send fail, so no seqno means no answer.
+                let answer = try await json("\(tonapi)/v2/wallet/\(address)/seqno")
+                guard let value = (answer["seqno"] as? NSNumber)?.uint32Value else { throw error }
+                seqno = value
+            }
+            return (UInt256(UInt64(nanotons)), seqno, active)
+        }
+    }
+
+    /// Id of the account's latest event (TON or jetton moves): changes when anything arrives or leaves.
+    public func latestEventID(_ address: String) async throws -> String {
+        let object = try await json("\(tonapi)/v2/accounts/\(address)/events?limit=1")
+        let first = (object["events"] as? [[String: Any]])?.first
+        return (first?["event_id"] as? String) ?? "none"
     }
 
     /// Jettons held, with their price and whether tonapi lists them as genuine.

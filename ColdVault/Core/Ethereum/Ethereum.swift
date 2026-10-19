@@ -404,6 +404,49 @@ public enum EthereumError: LocalizedError {
     }
 }
 
+/// Which public node of each network works and how fast it answers, shared by every
+/// request of the app: the fastest one is asked first, a failing one rests a minute,
+/// and each node's chain id is checked once per launch instead of before every call.
+final class EndpointBook: @unchecked Sendable {
+    static let shared = EndpointBook()
+    private let lock = NSLock()
+    private var verified = Set<String>()
+    private var latency = [String: Double]()
+    private var restingUntil = [String: Date]()
+
+    func ordered(_ urls: [String], key: String) -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        let now = Date()
+        func score(_ index: Int, _ url: String) -> Double {
+            let resting = (restingUntil[key + url] ?? .distantPast) > now
+            // Unknown nodes keep the order of the list (the usual fastest first).
+            return (resting ? 100 : 0) + (latency[key + url] ?? 0.6 + Double(index) * 0.05)
+        }
+        return urls.enumerated().sorted { score($0.offset, $0.element) < score($1.offset, $1.element) }.map { $0.element }
+    }
+
+    func isVerified(_ id: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return verified.contains(id)
+    }
+
+    func markVerified(_ id: String) {
+        lock.lock(); defer { lock.unlock() }
+        verified.insert(id)
+    }
+
+    func answered(_ id: String, seconds: Double) {
+        lock.lock(); defer { lock.unlock() }
+        latency[id] = latency[id].map { $0 * 0.7 + seconds * 0.3 } ?? seconds
+        restingUntil[id] = nil
+    }
+
+    func failed(_ id: String) {
+        lock.lock(); defer { lock.unlock() }
+        restingUntil[id] = Date().addingTimeInterval(60)
+    }
+}
+
 public final class EthereumRPC {
     public let isTestnet: Bool
     /// Ethereum or Base (same addresses and transactions, another chain id).
@@ -438,14 +481,85 @@ public final class EthereumRPC {
         return result
     }
 
-    /// First node that answers on the right chain.
-    public func call(_ method: String, _ params: [Any]) async throws -> Any {
+    private var bookKey: String { "\(chain.rawValue)|\(isTestnet)|" }
+
+    /// A node serves this chain (checked once per launch).
+    private func verify(_ url: String) async throws {
+        let id = bookKey + url
+        guard !EndpointBook.shared.isVerified(id) else { return }
+        guard let answer = try await post(url, "eth_chainId", []) as? String,
+              UInt256(hex: answer) == UInt256(chainId) else { throw EthereumError.unavailable }
+        EndpointBook.shared.markVerified(id)
+    }
+
+    /// One node, timed for the ranking.
+    private func ask(_ url: String, _ method: String, _ params: [Any]) async throws -> Any {
+        let id = bookKey + url
+        let start = Date()
+        do {
+            try await verify(url)
+            let result = try await post(url, method, params)
+            EndpointBook.shared.answered(id, seconds: Date().timeIntervalSince(start))
+            return result
+        } catch let error as EthereumError {
+            if case .server = error {
+                EndpointBook.shared.answered(id, seconds: Date().timeIntervalSince(start))
+            } else {
+                EndpointBook.shared.failed(id)
+            }
+            throw error
+        } catch {
+            EndpointBook.shared.failed(id)
+            throw error
+        }
+    }
+
+    private struct Answer: @unchecked Sendable {
+        let value: Any?
+        let error: Error?
+    }
+
+    private func answer(_ url: String, _ method: String, _ params: [Any]) async -> Answer {
+        do { return Answer(value: try await ask(url, method, params), error: nil) } catch { return Answer(value: nil, error: error) }
+    }
+
+    /// The fastest node, and the second one too if the first has not answered in 0.7 s:
+    /// the first answer wins (nil when both failed).
+    private func race(_ first: String, _ second: String, _ method: String, _ params: [Any]) async throws -> Any? {
+        let box = UncheckedBox(value: (self, params))
+        return try await withThrowingTaskGroup(of: Answer.self) { group -> Any? in
+            group.addTask { await box.value.0.answer(first, method, box.value.1) }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                if Task.isCancelled { return Answer(value: nil, error: CancellationError()) }
+                return await box.value.0.answer(second, method, box.value.1)
+            }
+            for try await reply in group {
+                if let value = reply.value {
+                    group.cancelAll()
+                    return value
+                }
+                if let error = reply.error as? EthereumError, case .server = error {
+                    group.cancelAll()                 // the node answered: the request itself is wrong
+                    throw error
+                }
+            }
+            return nil
+        }
+    }
+
+    /// Reads race the two fastest nodes; a send goes to one node at a time.
+    public func call(_ method: String, _ params: [Any], hedged: Bool = true) async throws -> Any {
+        let urls = EndpointBook.shared.ordered(endpoints, key: bookKey)
+        var rest = urls[...]
+        if hedged && urls.count > 1 {
+            if let value = try await race(urls[0], urls[1], method, params) { return value }
+            rest = urls.dropFirst(2)
+        }
         var lastError: Error = EthereumError.unavailable
-        for url in endpoints {
+        for url in rest {
             do {
-                guard let chain = try await post(url, "eth_chainId", []) as? String,
-                      UInt256(hex: chain) == UInt256(chainId) else { continue }
-                return try await post(url, method, params)
+                return try await ask(url, method, params)
             } catch let error as EthereumError {
                 if case .server = error { throw error }        // the node answered: don't retry elsewhere
                 lastError = error
@@ -454,6 +568,70 @@ public final class EthereumRPC {
             }
         }
         throw lastError
+    }
+
+    /// Several reads in one request (JSON-RPC batch) to the fastest node that accepts it:
+    /// the answers in order, nil where one call failed.
+    public func batch(_ calls: [(method: String, params: [Any])]) async throws -> [Any?] {
+        guard !calls.isEmpty else { return [] }
+        var lastError: Error = EthereumError.unavailable
+        for url in EndpointBook.shared.ordered(endpoints, key: bookKey).prefix(3) {
+            let id = bookKey + url
+            let start = Date()
+            do {
+                try await verify(url)
+                guard let endpoint = URL(string: url) else { continue }
+                var request = URLRequest(url: endpoint)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                let body: [[String: Any]] = calls.enumerated().map { index, call in
+                    ["jsonrpc": "2.0", "id": index + 1, "method": call.method, "params": call.params]
+                }
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                let (data, response) = try await session.data(for: request)
+                // A node without batch support answers with one object (or an error): next node.
+                guard (response as? HTTPURLResponse)?.statusCode == 200,
+                      let items = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                    throw EthereumError.unavailable
+                }
+                var answers = [Any?](repeating: nil, count: calls.count)
+                for item in items {
+                    guard let number = (item["id"] as? NSNumber)?.intValue, (1...calls.count).contains(number) else { continue }
+                    answers[number - 1] = item["result"]
+                }
+                EndpointBook.shared.answered(id, seconds: Date().timeIntervalSince(start))
+                return answers
+            } catch {
+                EndpointBook.shared.failed(id)
+                lastError = error
+            }
+        }
+        throw lastError
+    }
+
+    /// The native coin and some ERC-20 balances of an address in one request (one by one
+    /// when no node takes batches).
+    public func balances(owner: String, contracts: [String]) async throws -> (native: UInt256, tokens: [String: UInt256]) {
+        guard let ownerBytes = EthereumAddress.parse(owner) else { throw EthereumError.invalidAddress }
+        let data = "0x" + ERC20.balanceOfData(ownerBytes).hexEncodedString
+        var calls: [(method: String, params: [Any])] = [("eth_getBalance", [owner, "latest"])]
+        for contract in contracts {
+            calls.append(("eth_call", [["to": contract, "data": data], "latest"]))
+        }
+        var tokens = [String: UInt256]()
+        if let answers = try? await batch(calls),
+           let nativeHex = answers.first as? String, let native = UInt256(hex: nativeHex) {
+            for (index, contract) in contracts.enumerated() {
+                let hex = answers[index + 1] as? String
+                tokens[contract] = hex.flatMap { $0 == "0x" ? UInt256.zero : UInt256(hex: $0) } ?? .zero
+            }
+            return (native, tokens)
+        }
+        let native = try await balance(owner)
+        for contract in contracts {
+            tokens[contract] = (try? await tokenBalance(contract: contract, owner: owner)) ?? .zero
+        }
+        return (native, tokens)
     }
 
     public func balance(_ address: String) async throws -> UInt256 {
@@ -494,7 +672,7 @@ public final class EthereumRPC {
     public func send(_ raw: Data) async throws -> String {
         let hash: String
         do {
-            guard let answer = try await call("eth_sendRawTransaction", ["0x" + raw.hexEncodedString]) as? String else {
+            guard let answer = try await call("eth_sendRawTransaction", ["0x" + raw.hexEncodedString], hedged: false) as? String else {
                 throw EthereumError.unavailable
             }
             hash = answer

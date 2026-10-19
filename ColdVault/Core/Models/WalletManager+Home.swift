@@ -634,6 +634,39 @@ private struct WalletCacheFile: Codable {
     var fiatPrice: Double?
     var usdPrice: Double?
     var fiatCurrency: String?
+    /// ETH, Stable, Tron, TON: coins and tokens of every network (shown at once at launch).
+    var assets: [CachedAsset]?
+}
+
+private struct CachedAsset: Codable {
+    var chain: String
+    var contract: String?
+    var symbol: String
+    var name: String
+    var decimals: Int
+    var balance: String
+    var usdPrice: Double?
+    var icon: String?
+    var tokenWallet: String?
+
+    init(_ asset: EVMAsset) {
+        chain = asset.chain.rawValue
+        contract = asset.contract
+        symbol = asset.symbol
+        name = asset.name
+        decimals = asset.decimals
+        balance = asset.balance.isZero ? "0" : asset.balance.minimalBytes.hexEncodedString
+        usdPrice = asset.usdPrice
+        icon = asset.iconURL?.absoluteString
+        tokenWallet = asset.tokenWallet
+    }
+
+    var asset: EVMAsset? {
+        guard let chain = EVMChain(rawValue: chain), let value = UInt256(hex: balance) else { return nil }
+        return EVMAsset(chain: chain, contract: contract, symbol: symbol, name: name, decimals: decimals,
+                        balance: value, usdPrice: usdPrice, iconURL: icon.flatMap { URL(string: $0) },
+                        tokenWallet: tokenWallet)
+    }
 }
 
 private struct PriceHistoryFile: Codable {
@@ -668,6 +701,7 @@ extension WalletManager {
         transactions = cache.transactions
         usdPrice = cache.usdPrice
         if cache.fiatCurrency == fiatCurrency { fiatPrice = cache.fiatPrice }
+        if isEthereum, let assets = cache.assets { evmAssets = assets.compactMap { $0.asset } }
     }
 
     /// Balance stored in an account's cache file (for the wallet list).
@@ -689,7 +723,8 @@ extension WalletManager {
         guard let url = walletCacheURL, lastBalanceUpdate != nil else { return }
         let cache = WalletCacheFile(balanceSats: balanceSats, lastUpdate: lastBalanceUpdate,
                                     transactions: Array(transactions.prefix(500)),
-                                    fiatPrice: fiatPrice, usdPrice: usdPrice, fiatCurrency: fiatCurrency)
+                                    fiatPrice: fiatPrice, usdPrice: usdPrice, fiatCurrency: fiatCurrency,
+                                    assets: isEthereum ? evmAssets.map(CachedAsset.init) : nil)
         WalletManager.balanceMemo[url.lastPathComponent] = balanceSats
         if let data = try? JSONEncoder().encode(cache) {
             try? LocalOnlyFiles.write(data, to: url)

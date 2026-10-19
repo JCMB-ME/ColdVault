@@ -257,7 +257,7 @@ public struct KnownToken {
 
 /// Something a wallet holds on one network: its native coin (`contract == nil`: ETH,
 /// POL, TRX, TON) or a token (ERC-20, TRC-20 "T…" contract, jetton master "0:…").
-public struct EVMAsset: Identifiable, Equatable {
+public struct EVMAsset: Identifiable, Equatable, @unchecked Sendable {
     public var id: String { "\(chain.rawValue):\(contract?.lowercased() ?? "native")" }
     public let chain: EVMChain
     public let contract: String?

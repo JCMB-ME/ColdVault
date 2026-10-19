@@ -64,6 +64,13 @@ public struct SettingsView: View {
     @AppStorage("settingsOpenTools") private var openTools = false
     @AppStorage("settingsOpenAppearance") private var openAppearance = false
     @AppStorage("settingsOpenAdvanced") private var openAdvanced = false
+    /// Optional API keys of the Tron and TON services (Advanced).
+    @AppStorage(ServiceKeys.Service.tronGrid.rawValue) private var tronGridKey = ""
+    @AppStorage(ServiceKeys.Service.toncenter.rawValue) private var toncenterKey = ""
+    @AppStorage(ServiceKeys.Service.tonapi.rawValue) private var tonapiKey = ""
+    @State private var editingServiceKey: ServiceKeys.Service?
+    @State private var serviceKeyTarget: ServiceKeys.Service = .tronGrid
+    @State private var serviceKeyDraft = ""
 
     public init(route: Binding<SettingsRoute?>) {
         self._route = route
@@ -386,6 +393,23 @@ public struct SettingsView: View {
                                           "Historial de la cuenta en pantalla. Etiquetas en BIP-329, que leen Sparrow y otras billeteras."))
                     }
                     Group {
+                        SettingsSubheader(text: t("API keys (optional)", "API keys (opcional)"))
+                        ForEach(ServiceKeys.Service.allCases) { service in
+                            if service != .tronGrid { SettingsDivider(inset: 60) }
+                            Button {
+                                serviceKeyTarget = service
+                                serviceKeyDraft = serviceKey(service)
+                                editingServiceKey = service
+                            } label: {
+                                SettingsRow(title: service.title,
+                                            value: serviceKey(service).isEmpty ? t("None", "Ninguna") : "••••" + String(serviceKey(service).suffix(4)),
+                                            chevron: true, icon: "key.horizontal")
+                            }
+                        }
+                        SettingsNote(text: t("Free keys that raise the request limits of Tron and TON (fewer \"busy\" errors). They identify the app to the service, not your wallet.",
+                                             "Claves gratuitas que suben el límite de peticiones de Tron y TON (menos errores de \"ocupado\"). Identifican a la app ante el servicio, no a tu billetera."))
+                    }
+                    Group {
                         SettingsSubheader(text: "Cold wallet")
                         Button { route = .server } label: {
                             SettingsRow(title: t("Server", "Servidor"),
@@ -417,6 +441,15 @@ public struct SettingsView: View {
                         SettingsNote(text: t("Testnet re-derives your addresses (Face ID). Server: use your own node so public servers never see your addresses.",
                                           "Testnet vuelve a derivar tus direcciones (Face ID). Servidor: usa tu propio nodo para que los servidores públicos nunca vean tus direcciones."))
                     }
+                }
+                .alert(serviceKeyTarget.title + " API key",
+                       isPresented: Binding(get: { editingServiceKey != nil }, set: { if !$0 { editingServiceKey = nil } })) {
+                    TextField("API key", text: $serviceKeyDraft)
+                    Button(t("Save", "Guardar")) { setServiceKey(serviceKeyTarget, serviceKeyDraft) }
+                    Button(t("Cancel", "Cancelar"), role: .cancel) {}
+                } message: {
+                    Text(t("Request it free at \(serviceKeyTarget.site). Leave it empty to remove it.",
+                           "Pídela gratis en \(serviceKeyTarget.site). Déjala vacía para quitarla."))
                 }
                 .alert(t("Breez API key", "API key de Breez"), isPresented: $showBreezKey) {
                     TextField("API key", text: $breezKeyDraft)
@@ -464,6 +497,23 @@ public struct SettingsView: View {
         } message: {
             Text(t("How many recent transactions to show on the home screen.",
                    "Cuántas transacciones recientes mostrar en la pantalla principal."))
+        }
+    }
+
+    private func serviceKey(_ service: ServiceKeys.Service) -> String {
+        switch service {
+        case .tronGrid: return tronGridKey
+        case .toncenter: return toncenterKey
+        case .tonapi: return tonapiKey
+        }
+    }
+
+    private func setServiceKey(_ service: ServiceKeys.Service, _ value: String) {
+        let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch service {
+        case .tronGrid: tronGridKey = key
+        case .toncenter: toncenterKey = key
+        case .tonapi: tonapiKey = key
         }
     }
 

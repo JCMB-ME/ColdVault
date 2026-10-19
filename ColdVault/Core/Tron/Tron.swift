@@ -203,11 +203,26 @@ public final class TronAPI {
         session = URLSession(configuration: config)
     }
 
+    /// With the optional TronGrid key; a busy answer (429) is retried twice, a moment later.
+    private func data(_ original: URLRequest) async throws -> Data {
+        var request = original
+        ServiceKeys.authorize(&request)
+        for attempt in 0..<3 {
+            let (data, response) = try await session.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 200 { return data }
+            if status == 429 && attempt < 2 {
+                try await Task.sleep(nanoseconds: 1_200_000_000)
+                continue
+            }
+            throw TronError.unavailable
+        }
+        throw TronError.unavailable
+    }
+
     private func get(_ path: String) async throws -> Any {
         guard let url = URL(string: base + path) else { throw TronError.unavailable }
-        let (data, response) = try await session.data(from: url)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw TronError.unavailable }
-        return try JSONSerialization.jsonObject(with: data)
+        return try JSONSerialization.jsonObject(with: try await data(URLRequest(url: url)))
     }
 
     private func post(_ path: String, _ body: [String: Any]) async throws -> [String: Any] {
@@ -216,9 +231,9 @@ public final class TronAPI {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await session.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200,
-              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw TronError.unavailable }
+        guard let object = try JSONSerialization.jsonObject(with: try await data(request)) as? [String: Any] else {
+            throw TronError.unavailable
+        }
         return object
     }
 

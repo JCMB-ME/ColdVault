@@ -14,6 +14,7 @@
 //
 
 import Foundation
+import UIKit
 
 /// A payment ready to be signed, on one network.
 public enum ChainTransaction {
@@ -369,21 +370,24 @@ extension WalletManager {
         defer { isLoadingBalance = false }
         let testnet = record.isTestnet
         let kind = record.coinKind
+        // Every network at the same time (not one after another).
+        let jobs = kind.networks.compactMap { chain in address(on: chain, record: record).map { (chain, $0) } }
+        let tried = jobs.count
+        let results = await withTaskGroup(of: (Int, [EVMAsset]?).self) { group -> [(Int, [EVMAsset]?)] in
+            for (index, job) in jobs.enumerated() {
+                group.addTask { [weak self] in
+                    guard let self else { return (index, nil) }
+                    return (index, try? await self.assets(on: job.0, owner: job.1, testnet: testnet, kind: kind))
+                }
+            }
+            var all = [(Int, [EVMAsset]?)]()
+            for await result in group { all.append(result) }
+            return all
+        }
         var assets = [EVMAsset]()
         var failed = [EVMChain]()
-        var tried = 0
-        for chain in kind.networks {
-            guard let owner = address(on: chain, record: record) else { continue }
-            tried += 1
-            do {
-                switch chain {
-                case .tron: assets += try await tronAssets(owner: owner, testnet: testnet, kind: kind)
-                case .ton: assets += try await tonAssets(owner: owner, testnet: testnet, kind: kind)
-                default: assets += try await evmAssets(chain: chain, owner: owner, testnet: testnet, kind: kind)
-                }
-            } catch {
-                failed.append(chain)
-            }
+        for (index, found) in results.sorted(by: { $0.0 < $1.0 }) {
+            if let found { assets += found } else { failed.append(jobs[index].0) }
         }
         guard activeRecord?.primaryAddress == record.primaryAddress, activeRecord?.coinKind == kind else { return }
         if tried > 0 && failed.count == tried {
@@ -405,21 +409,30 @@ extension WalletManager {
         return assets.filter { $0.isNative }.reduce(UInt64(0)) { $0 + units($1.balance, chain: $1.chain) }
     }
 
+    private func assets(on chain: EVMChain, owner: String, testnet: Bool, kind: CoinKind) async throws -> [EVMAsset] {
+        switch chain {
+        case .tron: return try await tronAssets(owner: owner, testnet: testnet, kind: kind)
+        case .ton: return try await tonAssets(owner: owner, testnet: testnet, kind: kind)
+        default: return try await evmAssets(chain: chain, owner: owner, testnet: testnet, kind: kind)
+        }
+    }
+
+    /// The coin and USDC / USDT in one batched request; the other tokens (Blockscout) at the same time.
     private func evmAssets(chain: EVMChain, owner: String, testnet: Bool, kind: CoinKind) async throws -> [EVMAsset] {
         let rpc = EthereumRPC(isTestnet: testnet, chain: chain)
-        let wei = try await rpc.balance(owner)
+        let stablecoins = KnownToken.stablecoins(testnet: testnet).filter { $0.chain == chain }
+        async let others = kind == .dollars ? [] : otherTokens(chain: chain, owner: owner, testnet: testnet)
+        let (wei, held) = try await rpc.balances(owner: owner, contracts: stablecoins.map { $0.contract })
         var list = [EVMAsset(chain: chain, contract: nil, symbol: chain.nativeSymbol, name: chain.nativeName, decimals: 18,
                              balance: wei, usdPrice: nativeUsdPrice(chain.nativeSymbol), iconURL: nil)]
-        for token in KnownToken.stablecoins(testnet: testnet) where token.chain == chain {
-            let value = (try? await rpc.tokenBalance(contract: token.contract, owner: owner)) ?? .zero
+        for token in stablecoins {
+            let value = held[token.contract] ?? .zero
             if !value.isZero || kind == .dollars {
                 list.append(EVMAsset(chain: chain, contract: token.contract, symbol: token.symbol, name: token.name,
                                      decimals: token.decimals, balance: value, usdPrice: 1, iconURL: nil))
             }
         }
-        if kind != .dollars {
-            list += await otherTokens(chain: chain, owner: owner, testnet: testnet)
-        }
+        list += await others
         return list
     }
 
@@ -441,10 +454,12 @@ extension WalletManager {
     /// listed, which hides the scam airdrops; Stable lists USDT only.
     private func tonAssets(owner: String, testnet: Bool, kind: CoinKind) async throws -> [EVMAsset] {
         let api = TonAPI(isTestnet: testnet)
+        // toncenter (TON) and tonapi (jettons) are different services: both at once.
+        async let jettonList = UncheckedBox(value: try? await api.jettons(owner))
         let wallet = try await api.wallet(owner)
         var list = [EVMAsset(chain: .ton, contract: nil, symbol: "TON", name: "Toncoin", decimals: 9,
                              balance: wallet.balance, usdPrice: nativeUsdPrice("TON"), iconURL: nil)]
-        let jettons = (try? await api.jettons(owner)) ?? []
+        let jettons = (await jettonList).value ?? []
         var hasStable = false
         for jetton in jettons {
             let master = jetton.master.lowercased()
@@ -466,6 +481,54 @@ extension WalletManager {
                                  balance: .zero, usdPrice: 1, iconURL: nil))
         }
         return list
+    }
+
+    // MARK: - Live updates
+
+    /// ETH, Stable, Tron and TON have no server push like Electrum. While the app is open,
+    /// one light request checks the network on screen every few seconds; when anything
+    /// changed (a payment arrived or left), the whole wallet is refreshed.
+    func startAccountWatch() {
+        accountWatch?.cancel()
+        accountWatch = nil
+        guard let record = activeRecord, record.coinKind.isAccountBased else { return }
+        let watched = record.primaryAddress
+        accountWatch = Task { [weak self] in
+            var last: String?
+            var lastNetwork: EVMChain?
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 12_000_000_000)
+                guard !Task.isCancelled, let self else { return }
+                guard self.activeRecord?.primaryAddress == watched else { return }
+                guard UIApplication.shared.applicationState == .active, !self.isLoadingBalance else { continue }
+                let network = self.activeNetwork
+                guard let snapshot = await self.activityFingerprint(network) else { continue }
+                if let last, last != snapshot, lastNetwork == network {
+                    await self.refreshAll()
+                }
+                last = snapshot
+                lastNetwork = network
+            }
+        }
+    }
+
+    /// A short summary of the account on one network that changes with any movement.
+    private func activityFingerprint(_ chain: EVMChain) async -> String? {
+        guard let record = activeRecord, let owner = address(on: chain, record: record) else { return nil }
+        let testnet = record.isTestnet
+        switch chain {
+        case .tron:
+            guard let account = try? await TronAPI(isTestnet: testnet).account(owner) else { return nil }
+            return "\(account.sun)|" + account.tokens.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+        case .ton:
+            return try? await TonAPI(isTestnet: testnet).latestEventID(owner)
+        default:
+            let contracts = KnownToken.stablecoins(testnet: testnet).filter { $0.chain == chain }.map { $0.contract }
+            guard let found = try? await EthereumRPC(isTestnet: testnet, chain: chain).balances(owner: owner, contracts: contracts) else {
+                return nil
+            }
+            return "\(found.native)|" + contracts.map { "\(found.tokens[$0] ?? .zero)" }.joined(separator: ",")
+        }
     }
 
     // MARK: - Network on screen
@@ -655,14 +718,21 @@ extension WalletManager {
         defer { isLoadingTransactions = false }
         var list = [WalletTransaction]()
         var answered = false
-        for chain in record.coinKind.networks {
-            guard let owner = address(on: chain, record: record) else { continue }
-            let found: [WalletTransaction]?
-            switch chain {
-            case .tron: found = await tronHistory(owner: owner, record: record)
-            case .ton: found = await tonHistory(owner: owner, record: record)
-            default: found = await evmHistory(chain: chain, owner: owner, record: record)
+        // Every network at the same time.
+        let jobs = record.coinKind.networks.compactMap { chain in address(on: chain, record: record).map { (chain, $0) } }
+        let recordBox = UncheckedBox(value: record)
+        let results = await withTaskGroup(of: UncheckedBox<[WalletTransaction]?>.self) { group -> [[WalletTransaction]?] in
+            for job in jobs {
+                group.addTask { [weak self] in
+                    guard let self else { return UncheckedBox(value: nil) }
+                    return UncheckedBox(value: await self.history(on: job.0, owner: job.1, record: recordBox.value))
+                }
             }
+            var all = [[WalletTransaction]?]()
+            for await result in group { all.append(result.value) }
+            return all
+        }
+        for found in results {
             if let found {
                 answered = true
                 list += found
@@ -672,6 +742,14 @@ extension WalletManager {
         guard answered, activeRecord?.primaryAddress == record.primaryAddress,
               activeRecord?.coinKind == record.coinKind else { return }
         transactions = WalletManager.sorted(list)
+    }
+
+    private func history(on chain: EVMChain, owner: String, record: StoredWalletRecord) async -> [WalletTransaction]? {
+        switch chain {
+        case .tron: return await tronHistory(owner: owner, record: record)
+        case .ton: return await tonHistory(owner: owner, record: record)
+        default: return await evmHistory(chain: chain, owner: owner, record: record)
+        }
     }
 
     private func evmHistory(chain: EVMChain, owner: String, record: StoredWalletRecord) async -> [WalletTransaction]? {

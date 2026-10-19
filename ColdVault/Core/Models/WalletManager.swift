@@ -170,6 +170,8 @@ public final class WalletManager: ObservableObject {
     @Published public internal(set) var priceHistory: [PricePoint] = []
     var usdPrice: Double?
     var pushRefreshPending = false
+    /// ETH / Stable / Tron / TON: the light check that spots new payments (startAccountWatch).
+    var accountWatch: Task<Void, Never>?
     /// Coins from the last spendableCoins() that ordinals.com could not confirm (no answer).
     var unverifiedOrdinalCount = 0
     @Published public internal(set) var transactions: [WalletTransaction] = []
@@ -378,6 +380,7 @@ public final class WalletManager: ObservableObject {
         self.homeInscriptions = nil
         self.homeCollectiblesKey = nil
         loadCache()
+        startAccountWatch()
         Task {
             await refreshAll()
         }
