@@ -20,7 +20,6 @@ struct WalletsView: View {
     /// A finger is on the coin switch (the dashboard stops paging meanwhile).
     var onSwitchDrag: (Bool) -> Void = { _ in }
 
-    @State private var showAddWallet = false
     @State private var showCreate = false
     @State private var showImport = false
     @State private var renameTarget: RenameTarget?
@@ -151,7 +150,11 @@ struct WalletsView: View {
                         .multilineTextAlignment(.center)
                 }
 
-                Button { showAddWallet = true } label: {
+                // New phrase, or one you already have (or a private key / watch-only address).
+                AppMenuButton(items: {
+                    [AppMenuItem(title: L10n.createNewWallet(lang), icon: "plus.circle") { showCreate = true },
+                     AppMenuItem(title: L10n.importWallet(lang), icon: "square.and.arrow.down") { showImport = true }]
+                }) {
                     ActionPillLabel(icon: "plus", title: t("Add wallet", "Añadir billetera"), minWidth: 128)
                 }
                 .frame(maxWidth: .infinity)
@@ -187,14 +190,6 @@ struct WalletsView: View {
         }
         .sheet(item: $iconSlot) { target in
             WalletIconPicker(slot: target.slot).environmentObject(walletManager)
-        }
-        .confirmationDialog(t("Add a wallet", "Añadir una billetera"), isPresented: $showAddWallet, titleVisibility: .visible) {
-            Button(L10n.createNewWallet(lang)) { showCreate = true }
-            Button(L10n.importWallet(lang)) { showImport = true }
-            Button(L10n.cancel(lang), role: .cancel) {}
-        } message: {
-            Text(t("A new seed phrase, or one you already have (or a private key / watch-only address).",
-                   "Una frase semilla nueva, o una que ya tengas (o una clave privada / dirección de observación)."))
         }
         .sheet(isPresented: $showCreate) {
             CreateWalletView(coin: coin).environmentObject(walletManager)
