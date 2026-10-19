@@ -638,6 +638,81 @@ private struct WalletCacheFile: Codable {
     var assets: [CachedAsset]?
 }
 
+/// A list of NFTs or inscriptions saved with the time it was fetched.
+private struct CollectiblesFile<Item: Codable>: Codable {
+    var savedAt: Date
+    var items: [Item]
+}
+
+struct CachedNFT: Codable {
+    var chain: String
+    var contract: String
+    var tokenId: String
+    var name: String
+    var collection: String
+    var details: String
+    var image: String?
+    var standard: String
+
+    init(_ nft: EVMNFT) {
+        chain = nft.chain.rawValue
+        contract = nft.contract
+        tokenId = nft.tokenId
+        name = nft.name
+        collection = nft.collection
+        details = nft.details
+        image = nft.imageURL?.absoluteString
+        standard = nft.standard
+    }
+
+    var nft: EVMNFT? {
+        guard let chain = EVMChain(rawValue: chain) else { return nil }
+        return EVMNFT(chain: chain, contract: contract, tokenId: tokenId, name: name, collection: collection,
+                      details: details, imageURL: image.flatMap { URL(string: $0) }, standard: standard)
+    }
+}
+
+struct CachedInscription: Codable {
+    var id: String
+    var number: Int?
+    var contentType: String
+    var output: String?
+    var value: UInt64?
+
+    init(_ inscription: Inscription) {
+        id = inscription.id
+        number = inscription.number
+        contentType = inscription.contentType
+        output = inscription.output
+        value = inscription.value
+    }
+
+    var inscription: Inscription {
+        Inscription(id: id, number: number, contentType: contentType, output: output, value: value)
+    }
+}
+
+extension WalletManager {
+    /// File name of an account's NFT / inscription list (a hash, not the address).
+    static func collectiblesFile(_ record: StoredWalletRecord, kind: String) -> String {
+        let key = BitcoinHash.sha256(Data("\(record.primaryAddress)|\(record.isTestnet)|\(kind)".utf8)).hexEncodedString
+        return "collectibles-\(key.prefix(16)).json"
+    }
+
+    static func readCollectibles<Item: Codable>(_ name: String, maxAge: TimeInterval) -> [Item]? {
+        guard let url = cacheFolder?.appendingPathComponent(name), let data = try? Data(contentsOf: url),
+              let file = try? JSONDecoder().decode(CollectiblesFile<Item>.self, from: data),
+              Date().timeIntervalSince(file.savedAt) < maxAge else { return nil }
+        return file.items
+    }
+
+    static func writeCollectibles<Item: Codable>(_ items: [Item], name: String) {
+        guard let url = cacheFolder?.appendingPathComponent(name),
+              let data = try? JSONEncoder().encode(CollectiblesFile(savedAt: Date(), items: items)) else { return }
+        try? LocalOnlyFiles.write(data, to: url)
+    }
+}
+
 private struct CachedAsset: Codable {
     var chain: String
     var contract: String?

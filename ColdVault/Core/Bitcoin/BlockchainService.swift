@@ -182,26 +182,81 @@ public final class BlockchainService {
         }
     }
 
-    // Confirmed transactions and block times never change: cache them.
+    // Confirmed transactions and block times never change: cache them, in memory and on
+    // the phone (so the history is not downloaded again at every launch).
     private var rawTxCache = [String: Transaction]()
+    private var rawTxHex = [String: String]()
     private var blockTimeCache = [Int: Date]()
+    private var diskLoaded = false
+    private var diskDirty = false
+
+    private struct DiskHistory: Codable {
+        var transactions: [String: String]       // txid → raw hex
+        var blockTimes: [String: Double]          // height (negative: testnet) → unix time
+    }
+
+    private static var diskURL: URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("bitcoin-history.json")
+    }
+
+    /// Called with the lock held.
+    private func loadDiskIfNeeded() {
+        guard !diskLoaded else { return }
+        diskLoaded = true
+        guard let url = BlockchainService.diskURL, let data = try? Data(contentsOf: url),
+              let disk = try? JSONDecoder().decode(DiskHistory.self, from: data) else { return }
+        rawTxHex = disk.transactions
+        for (key, time) in disk.blockTimes {
+            if let height = Int(key) { blockTimeCache[height] = Date(timeIntervalSince1970: time) }
+        }
+    }
 
     private func cachedTx(_ txid: String) -> Transaction? {
         lock.lock(); defer { lock.unlock() }
-        return rawTxCache[txid]
+        loadDiskIfNeeded()
+        if let tx = rawTxCache[txid] { return tx }
+        guard let hex = rawTxHex[txid], let bytes = hex.hexDecoded,
+              let tx = try? Transaction.parse(bytes), tx.txid == txid else { return nil }
+        rawTxCache[txid] = tx
+        return tx
     }
 
-    private func cache(_ tx: Transaction) {
-        lock.lock(); rawTxCache[tx.txid] = tx; lock.unlock()
+    private func cache(_ tx: Transaction, hex: String) {
+        lock.lock()
+        rawTxCache[tx.txid] = tx
+        rawTxHex[tx.txid] = hex
+        diskDirty = true
+        lock.unlock()
     }
 
     private func cachedTime(_ height: Int) -> Date? {
         lock.lock(); defer { lock.unlock() }
+        loadDiskIfNeeded()
         return blockTimeCache[height]
     }
 
     private func cache(time: Date, height: Int) {
-        lock.lock(); blockTimeCache[height] = time; lock.unlock()
+        lock.lock()
+        blockTimeCache[height] = time
+        diskDirty = true
+        lock.unlock()
+    }
+
+    /// Writes what is new (at most 4 000 transactions are kept).
+    private func saveDiskHistory() {
+        lock.lock()
+        guard diskDirty, let url = BlockchainService.diskURL else { lock.unlock(); return }
+        diskDirty = false
+        if rawTxHex.count > 4000 {
+            for key in rawTxHex.keys.prefix(rawTxHex.count - 3000) { rawTxHex[key] = nil }
+        }
+        let disk = DiskHistory(transactions: rawTxHex,
+                               blockTimes: Dictionary(uniqueKeysWithValues: blockTimeCache.map { ("\($0.key)", $0.value.timeIntervalSince1970) }))
+        lock.unlock()
+        if let data = try? JSONEncoder().encode(disk) {
+            try? LocalOnlyFiles.write(data, to: url)
+        }
     }
 
     /// Full history of a set of scripts through Electrum: histories, raw transactions and
@@ -247,7 +302,7 @@ public final class BlockchainService {
                 guard let hex = raw as? String, let bytes = hex.hexDecoded,
                       let tx = try? Transaction.parse(bytes), tx.txid == txid else { throw ElectrumError.invalidResponse }
                 transactions[txid] = tx
-                if (heights[txid] ?? 0) > 0 { cache(tx) }
+                if (heights[txid] ?? 0) > 0 { cache(tx, hex: hex) }
             }
         }
 
@@ -268,6 +323,7 @@ public final class BlockchainService {
                 cache(time: date, height: timeKey(height))
             }
         }
+        saveDiskHistory()
 
         var ourOutputs = [String: UInt64]()       // "txid:vout" → value
         for (txid, tx) in transactions {

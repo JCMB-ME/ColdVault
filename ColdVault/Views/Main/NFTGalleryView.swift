@@ -67,7 +67,7 @@ struct NFTGalleryView: View {
                 .padding(.top, 12)
                 .padding(.bottom, 32)
             }
-            .refreshable { await load() }
+            .refreshable { await load(force: true) }
             .safeAreaInset(edge: .top, spacing: 0) {
                 SheetHeader(title: "NFTs · \(networkName)")
             }
@@ -101,8 +101,8 @@ struct NFTGalleryView: View {
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
     }
 
-    private func load() async {
-        let all = await walletManager.loadNFTs()
+    private func load(force: Bool = false) async {
+        let all = await walletManager.loadNFTs(force: force)
         items = all.filter { $0.chain == walletManager.activeNetwork }
         isLoading = false
     }
@@ -146,7 +146,9 @@ struct NFTImage: View {
     }
 }
 
-/// Downloads NFT pictures a few at a time, keeps them in memory (reduced to 600 px).
+/// Downloads NFT and ordinal pictures a few at a time, reduced to 600 px, and keeps them
+/// in memory and on the phone (excluded from backups, readable only while unlocked), so
+/// each picture is downloaded once.
 final class NFTImageLoader {
     static let shared = NFTImageLoader()
     private let cache = NSCache<NSURL, UIImage>()
@@ -154,8 +156,8 @@ final class NFTImageLoader {
     private var waiting: [CheckedContinuation<Void, Never>] = []
     private let lock = NSLock()
     private var sessionCache: (tor: Bool, session: URLSession)?
-    /// Rebuilt when Tor is switched on or off, so the proxy is always the current setting. No disk
-    /// cache: the pictures looked at are not recorded on the phone.
+    /// Rebuilt when Tor is switched on or off, so the proxy is always the current setting. No HTTP
+    /// cache: only the small thumbnails are saved (below).
     private var session: URLSession {
         lock.lock()
         defer { lock.unlock() }
@@ -171,7 +173,36 @@ final class NFTImageLoader {
     static let gateways = ["https://ipfs.filebase.io/ipfs/", "https://gateway.pinata.cloud/ipfs/",
                            "https://ipfs.io/ipfs/", "https://dweb.link/ipfs/"]
 
-    func cached(_ url: URL) -> UIImage? { cache.object(forKey: url as NSURL) }
+    /// Saved thumbnails, named by a hash of their address.
+    private static let folder: URL? = {
+        guard let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
+        let folder = base.appendingPathComponent("collectible-thumbs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        LocalOnlyFiles.exclude(folder)
+        return folder
+    }()
+
+    private static func file(_ url: URL) -> URL? {
+        let name = BitcoinHash.sha256(Data(url.absoluteString.utf8)).hexEncodedString.prefix(32)
+        return folder?.appendingPathComponent(String(name))
+    }
+
+    /// In memory, or saved on the phone.
+    func cached(_ url: URL) -> UIImage? {
+        if let image = cache.object(forKey: url as NSURL) { return image }
+        guard let file = NFTImageLoader.file(url), let data = try? Data(contentsOf: file),
+              let image = UIImage(data: data) else { return nil }
+        cache.setObject(image, forKey: url as NSURL)
+        return image
+    }
+
+    private func save(_ image: UIImage, for url: URL) {
+        guard let file = NFTImageLoader.file(url) else { return }
+        let alpha = image.cgImage?.alphaInfo ?? .none
+        let opaque = alpha == .none || alpha == .noneSkipFirst || alpha == .noneSkipLast
+        guard let data = opaque ? image.jpegData(compressionQuality: 0.82) : image.pngData() else { return }
+        try? LocalOnlyFiles.write(data, to: file)
+    }
 
     /// The URL itself, or for IPFS content the same path on each gateway.
     static func candidates(_ url: URL) -> [URL] {
@@ -215,6 +246,9 @@ final class NFTImageLoader {
     static let maxImagePixels = 40_000_000
 
     func load(_ url: URL) async -> UIImage? {
+        if let saved = cached(url) { return saved }
+        // Data saver: only the pictures already on the phone.
+        guard !DataSaver.isActive else { return nil }
         await acquire()
         defer { release() }
         for candidate in NFTImageLoader.candidates(url) {
@@ -223,6 +257,7 @@ final class NFTImageLoader {
             guard let data = try? await download(request),
                   let image = NFTImageLoader.thumbnail(data, maxSide: 600) else { continue }
             cache.setObject(image, forKey: url as NSURL)
+            save(image, for: url)
             return image
         }
         return nil

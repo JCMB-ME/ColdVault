@@ -62,7 +62,7 @@ struct OrdinalsView: View {
                 .padding(.top, 12)
                 .padding(.bottom, 32)
             }
-            .refreshable { await load() }
+            .refreshable { await load(force: true) }
             .safeAreaInset(edge: .top, spacing: 0) {
                 SheetHeader(title: "Ordinals")
             }
@@ -129,10 +129,10 @@ struct OrdinalsView: View {
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
     }
 
-    private func load() async {
+    private func load(force: Bool = false) async {
         guard !walletManager.isTestnet else { isLoading = false; return }
         do {
-            items = try await walletManager.loadInscriptions()
+            items = try await walletManager.loadInscriptions(force: force)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

@@ -71,6 +71,7 @@ public struct SettingsView: View {
     @State private var editingServiceKey: ServiceKeys.Service?
     @State private var serviceKeyTarget: ServiceKeys.Service = .tronGrid
     @State private var serviceKeyDraft = ""
+    @AppStorage(DataSaver.cellularKey) private var dataSaverCellular = false
 
     public init(route: Binding<SettingsRoute?>) {
         self._route = route
@@ -391,6 +392,14 @@ public struct SettingsView: View {
                         }
                         SettingsNote(text: t("History of the account on screen. Labels in BIP-329, readable by Sparrow and other wallets.",
                                           "Historial de la cuenta en pantalla. Etiquetas en BIP-329, que leen Sparrow y otras billeteras."))
+                    }
+                    Group {
+                        SettingsSubheader(text: t("Data", "Datos"))
+                        SettingsRow(title: t("Data saver on mobile data", "Ahorro de datos móviles"), icon: "antenna.radiowaves.left.and.right") {
+                            Toggle("", isOn: $dataSaverCellular).labelsHidden()
+                        }
+                        SettingsNote(text: t("On mobile data: no live check for new payments (pull to refresh) and no new NFT or ordinal pictures (the ones saved still show). iOS Low Data Mode does the same on any connection.",
+                                             "Con datos móviles: sin revisión automática de pagos nuevos (desliza para actualizar) y sin descargar imágenes nuevas de NFTs u ordinals (las guardadas se siguen viendo). El modo de datos reducidos de iOS hace lo mismo en cualquier conexión."))
                     }
                     Group {
                         SettingsSubheader(text: t("API keys (optional)", "API keys (opcional)"))

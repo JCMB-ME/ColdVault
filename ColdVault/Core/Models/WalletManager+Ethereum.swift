@@ -500,7 +500,8 @@ extension WalletManager {
                 try? await Task.sleep(nanoseconds: 12_000_000_000)
                 guard !Task.isCancelled, let self else { return }
                 guard self.activeRecord?.primaryAddress == watched else { return }
-                guard UIApplication.shared.applicationState == .active, !self.isLoadingBalance else { continue }
+                guard UIApplication.shared.applicationState == .active, !self.isLoadingBalance,
+                      !DataSaver.isActive else { continue }
                 let network = self.activeNetwork
                 guard let snapshot = await self.activityFingerprint(network) else { continue }
                 if let last, last != snapshot, lastNetwork == network {
@@ -635,7 +636,21 @@ extension WalletManager {
 
     /// NFTs on every network of the wallet: Blockscout (every page, up to 300) on EVM
     /// chains, tonapi on TON.
-    public func loadNFTs() async -> [EVMNFT] {
+    /// The NFT list of the account, from the phone when it is less than two hours old
+    /// (`force`: pull to refresh).
+    public func loadNFTs(force: Bool = false) async -> [EVMNFT] {
+        guard let record = activeRecord, record.coinKind.isAccountBased else { return [] }
+        let name = WalletManager.collectiblesFile(record, kind: "nfts")
+        if !force, let saved: [CachedNFT] = WalletManager.readCollectibles(name, maxAge: 2 * 3600) {
+            return saved.compactMap { $0.nft }
+        }
+        let list = await fetchNFTs()
+        guard activeRecord?.primaryAddress == record.primaryAddress else { return list }
+        WalletManager.writeCollectibles(list.map(CachedNFT.init), name: name)
+        return list
+    }
+
+    private func fetchNFTs() async -> [EVMNFT] {
         guard let record = activeRecord, record.coinKind.isAccountBased else { return [] }
         var result = [EVMNFT]()
         for chain in record.coinKind.networks {

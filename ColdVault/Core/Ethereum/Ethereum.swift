@@ -552,7 +552,7 @@ public final class EthereumRPC {
     public func call(_ method: String, _ params: [Any], hedged: Bool = true) async throws -> Any {
         let urls = EndpointBook.shared.ordered(endpoints, key: bookKey)
         var rest = urls[...]
-        if hedged && urls.count > 1 {
+        if hedged && urls.count > 1 && !DataSaver.isActive {
             if let value = try await race(urls[0], urls[1], method, params) { return value }
             rest = urls.dropFirst(2)
         }

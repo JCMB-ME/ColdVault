@@ -223,6 +223,7 @@ public final class WalletManager: ObservableObject {
         self.displayDecimals = savedDecimals >= 0 ? savedDecimals : nil
         // Liquid Glass was removed: forget the old switch.
         defaults.removeObject(forKey: "liquidGlass")
+        DataSaver.start()
         self.homeShowTransactions = defaults.bool(forKey: "homeShowTransactions")
         self.homeShowFiat = defaults.bool(forKey: "homeShowFiat")
         self.homeShowPriceChart = defaults.bool(forKey: "homeShowPriceChart")
