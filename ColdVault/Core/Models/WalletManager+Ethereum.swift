@@ -1073,6 +1073,8 @@ extension WalletManager {
 
     /// An asset's value in the chosen currency.
     public func fiatValue(of asset: EVMAsset) -> String? {
+        // Settings › Home screen › Fiat value off: no amounts in money anywhere in the lists.
+        guard homeShowFiat else { return nil }
         let value: Double
         if asset.isNative {
             guard let price = nativeFiatPrice(asset.symbol) else { return nil }
