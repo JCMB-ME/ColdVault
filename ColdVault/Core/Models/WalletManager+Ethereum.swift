@@ -834,7 +834,7 @@ extension WalletManager {
         // Nothing answered: keep the list on screen.
         guard answered, activeRecord?.primaryAddress == record.primaryAddress,
               activeRecord?.coinKind == record.coinKind else { return }
-        transactions = WalletManager.sorted(list)
+        transactions = WalletManager.sorted(mergeLocalPending(into: list))
     }
 
     private func history(on chain: EVMChain, owner: String, record: StoredWalletRecord) async -> [WalletTransaction]? {
@@ -1445,7 +1445,46 @@ extension WalletManager {
             unconfirmedSends[sendKey] = nil
             hash = messageHash
         }
+        addLocalPending(hash: hash, plan: plan)
         Task { await refreshAll() }
         return hash
+    }
+
+    /// A payment just sent shows at once as pending (amount + fee in the coin's units; for
+    /// Stable the dollars sent), until the history has it.
+    private func addLocalPending(hash: String, plan: EthereumSendPlan) {
+        let chain = plan.asset.chain
+        var units: UInt64
+        if plan.asset.isNative {
+            units = WalletManager.units(plan.amount, chain: chain) + WalletManager.units(plan.maxFee, chain: chain)
+        } else if isDollars, let token = KnownToken.find(plan.asset.contract ?? "", chain: chain, testnet: isTestnet),
+                  let micros = stableMicros(plan.amount, token: token) {
+            units = micros.low64
+        } else {
+            units = WalletManager.units(plan.maxFee, chain: chain)
+        }
+        units = min(units, UInt64(Int64.max))
+        let transaction = WalletTransaction(txid: hash, net: -Int64(units), date: Date(), confirmed: false, chain: chain.rawValue)
+        localPendingSends.append((transaction, Date(), activeRecord?.primaryAddress ?? ""))
+        transactions = WalletManager.sorted(transactions.filter { $0.txid != hash } + [transaction])
+    }
+
+    /// Keeps the payments sent from this iPhone that the network's history does not list yet.
+    /// One is dropped once its id shows up, or (TON, whose ids differ) once an outgoing
+    /// payment on its network appears from about the time it was sent; after an hour anyway.
+    private func mergeLocalPending(into list: [WalletTransaction]) -> [WalletTransaction] {
+        let now = Date()
+        let owner = activeRecord?.primaryAddress ?? ""
+        localPendingSends.removeAll { entry in
+            if now.timeIntervalSince(entry.sentAt) > 3600 { return true }
+            guard entry.owner == owner else { return false }       // another wallet's payment
+            if list.contains(where: { $0.txid.lowercased() == entry.transaction.txid.lowercased() }) { return true }
+            guard entry.transaction.chain == EVMChain.ton.rawValue else { return false }
+            return list.contains { tx in
+                tx.chain == entry.transaction.chain && tx.net < 0
+                    && (tx.date ?? .distantPast) >= entry.sentAt.addingTimeInterval(-120)
+            }
+        }
+        return list + localPendingSends.filter { $0.owner == owner }.map { $0.transaction }
     }
 }

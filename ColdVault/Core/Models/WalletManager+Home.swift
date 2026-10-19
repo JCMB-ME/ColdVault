@@ -188,7 +188,12 @@ extension WalletManager {
     /// Bitcoin received by this wallet but not confirmed yet (your own change is not
     /// counted: it is part of a transaction you sent).
     public var pendingIncomingSats: UInt64 {
-        guard !isEthereum else { return 0 }
+        if isEthereum {
+            // Received on the network on screen and not confirmed yet (not in the balance).
+            return visibleTransactions.reduce(UInt64(0)) { total, tx in
+                tx.confirmed || tx.net <= 0 ? total : total + UInt64(tx.net)
+            }
+        }
         let pending = transactions.reduce(UInt64(0)) { total, tx in
             tx.confirmed || tx.net <= 0 ? total : total + UInt64(tx.net)
         }

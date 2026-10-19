@@ -170,6 +170,9 @@ public final class WalletManager: ObservableObject {
     @Published public internal(set) var priceHistory: [PricePoint] = []
     var usdPrice: Double?
     var pushRefreshPending = false
+    /// ETH / Stable / Tron / TON payments just sent, shown as pending until the network's
+    /// history lists them (with the time they were sent).
+    var localPendingSends: [(transaction: WalletTransaction, sentAt: Date, owner: String)] = []
     /// ETH / Stable / Tron / TON: the light check that spots new payments (startAccountWatch).
     var accountWatch: Task<Void, Never>?
     /// Coins from the last spendableCoins() that ordinals.com could not confirm (no answer).
