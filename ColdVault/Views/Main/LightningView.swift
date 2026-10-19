@@ -263,7 +263,13 @@ struct LightningView: View {
                     .font(.system(size: 13))
                     .foregroundColor(Palette.secondary)
                 SlideToConfirm(title: t("Slide to pay", "Desliza para pagar"), icon: "bolt.fill", isLoading: isWorking) {
-                    run { self.paidId = try await $0.pay(quote) }
+                    let sats = SendView.satsText(quote.amountSats)
+                    let reason = t("Authorize paying \(sats) sats", "Autoriza el pago de \(sats) sats")
+                    run { engine in
+                        // A payment moves funds: Face ID first, as for every other send.
+                        _ = try await SecureKeyStore.shared.authenticateWithBiometrics(reason: reason)
+                        self.paidId = try await engine.pay(quote)
+                    }
                 }
                 Button(t("Edit", "Editar")) { self.quote = nil }
                     .font(.system(size: 14, weight: .semibold))
@@ -333,11 +339,21 @@ struct LightningView: View {
                                      enabled: (UInt64(channelAmount) ?? 0) >= 20_000) {
                     let peer = channelPeer.trimmingCharacters(in: .whitespacesAndNewlines)
                     let amount = UInt64(channelAmount) ?? 0
+                    let reason = t("Authorize opening a \(SendView.satsText(amount)) sats channel",
+                                   "Autoriza abrir un canal de \(SendView.satsText(amount)) sats")
                     isWorking = true
                     errorMessage = nil
-                    do { try ldk.openChannel(peer: peer, amountSats: amount) } catch { errorMessage = error.localizedDescription }
-                    isWorking = false
-                    Task { await refresh() }
+                    Task {
+                        do {
+                            // Opening a channel commits funds: Face ID first.
+                            _ = try await SecureKeyStore.shared.authenticateWithBiometrics(reason: reason)
+                            try ldk.openChannel(peer: peer, amountSats: amount)
+                        } catch {
+                            errorMessage = error.localizedDescription
+                        }
+                        isWorking = false
+                        await refresh()
+                    }
                 }
                 Text(t("Default peer: ACINQ. The channel is usable after ~3 confirmations.",
                        "Par por defecto: ACINQ. El canal se puede usar tras ~3 confirmaciones."))

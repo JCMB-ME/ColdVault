@@ -459,10 +459,7 @@ public final class EthereumRPC {
     public init(isTestnet: Bool, chain: EVMChain = .ethereum) {
         self.isTestnet = isTestnet
         self.chain = chain
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 15
-        TorProxy.apply(to: config)
-        session = URLSession(configuration: config)
+        session = SharedSession.get(timeout: TorProxy.isEnabled ? 45 : 15)
     }
 
     private func post(_ url: String, _ method: String, _ params: [Any]) async throws -> Any {

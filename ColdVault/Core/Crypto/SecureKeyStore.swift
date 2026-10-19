@@ -193,6 +193,12 @@ public final class SecureKeyStore {
             || itemExists(account: SecureKeyStore.openSecretAccount(for: slot))
     }
 
+    /// The secret of `slot` is in the current format (read without the system prompt). An
+    /// older item is read with iOS's own Face ID prompt, which is then the authentication.
+    public func hasOpenSecret(slot: String) -> Bool {
+        itemExists(account: SecureKeyStore.openSecretAccount(for: slot))
+    }
+
     /// Every slot that has wallet metadata in the Keychain (to recover a wallet missing
     /// from the library list). Reads attributes only: never prompts.
     public func storedMetadataSlots() -> [String] {

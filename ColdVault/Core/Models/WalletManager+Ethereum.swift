@@ -548,8 +548,10 @@ extension WalletManager {
                 guard stable || (jetton.verified && (jetton.usdPrice ?? 0) > 0), !jetton.balance.isZero else { continue }
             }
             hasStable = hasStable || stable
-            list.append(EVMAsset(chain: .ton, contract: master, symbol: stable ? "USDT" : String(jetton.symbol.prefix(11)),
-                                 name: stable ? "Tether USD" : jetton.name, decimals: jetton.decimals, balance: jetton.balance,
+            list.append(EVMAsset(chain: .ton, contract: master,
+                                 symbol: stable ? "USDT" : KnownToken.cleanText(jetton.symbol, limit: 11),
+                                 name: stable ? "Tether USD" : KnownToken.cleanText(jetton.name, limit: 40),
+                                 decimals: min(max(jetton.decimals, 0), 36), balance: jetton.balance,
                                  usdPrice: stable ? 1 : jetton.usdPrice, iconURL: stable ? nil : jetton.image,
                                  tokenWallet: jetton.wallet))
         }
@@ -704,9 +706,10 @@ extension WalletManager {
                   let rateText = token["exchange_rate"] as? String, let rate = Double(rateText), rate > 0,
                   let value = UInt256(decimal: item["value"] as? String ?? "", decimals: 0), !value.isZero else { return nil }
             let decimals = Int(token["decimals"] as? String ?? "") ?? 18
-            let symbol = (token["symbol"] as? String) ?? "?"
-            return EVMAsset(chain: chain, contract: contract, symbol: String(symbol.prefix(11)),
-                            name: (token["name"] as? String) ?? symbol, decimals: min(max(decimals, 0), 36),
+            let symbol = KnownToken.cleanText((token["symbol"] as? String) ?? "?", limit: 11)
+            return EVMAsset(chain: chain, contract: contract, symbol: symbol,
+                            name: KnownToken.cleanText((token["name"] as? String) ?? symbol, limit: 40),
+                            decimals: min(max(decimals, 0), 36),
                             balance: value, usdPrice: rate,
                             iconURL: (token["icon_url"] as? String).flatMap { URL(string: $0) })
         }
@@ -749,12 +752,15 @@ extension WalletManager {
                           let contract = (token["address_hash"] as? String) ?? (token["address"] as? String),
                           let tokenId = (item["id"] as? String) ?? (item["id"] as? NSNumber)?.stringValue else { continue }
                     let metadata = item["metadata"] as? [String: Any]
-                    let collection = (token["name"] as? String) ?? (token["symbol"] as? String) ?? "NFT"
-                    let name = (metadata?["name"] as? String) ?? "\(collection) #\(tokenId.prefix(12))"
+                    let collection = KnownToken.cleanText((token["name"] as? String) ?? (token["symbol"] as? String) ?? "NFT",
+                                                          limit: 60)
+                    let name = KnownToken.cleanText((metadata?["name"] as? String) ?? "\(collection) #\(tokenId.prefix(12))",
+                                                    limit: 80)
                     let image = EVMNFT.webURL(item["image_url"] as? String) ?? EVMNFT.webURL(metadata?["image"] as? String)
                     let standard = (item["token_type"] as? String) ?? (token["type"] as? String) ?? "ERC-721"
                     result.append(EVMNFT(chain: chain, contract: contract, tokenId: tokenId, name: name,
-                                         collection: collection, details: (metadata?["description"] as? String) ?? "",
+                                         collection: collection,
+                                         details: KnownToken.cleanText((metadata?["description"] as? String) ?? "", limit: 600),
                                          imageURL: image, standard: standard))
                 }
                 // Next page: Blockscout returns the parameters to ask for it.
@@ -774,13 +780,15 @@ extension WalletManager {
         return items.compactMap { item in
             guard let address = item["address"] as? String, (item["trust"] as? String) != "blacklist" else { return nil }
             let metadata = item["metadata"] as? [String: Any]
-            let collection = ((item["collection"] as? [String: Any])?["name"] as? String) ?? "NFT"
+            let collection = KnownToken.cleanText(((item["collection"] as? [String: Any])?["name"] as? String) ?? "NFT", limit: 60)
             let previews = (item["previews"] as? [[String: Any]]) ?? []
             let preview = previews.first { ($0["resolution"] as? String) == "500x500" } ?? previews.last
             let image = EVMNFT.webURL(preview?["url"] as? String) ?? EVMNFT.webURL(metadata?["image"] as? String)
             return EVMNFT(chain: .ton, contract: address, tokenId: String((item["index"] as? NSNumber)?.int64Value ?? 0),
-                          name: (metadata?["name"] as? String) ?? collection, collection: collection,
-                          details: (metadata?["description"] as? String) ?? "", imageURL: image, standard: "TON NFT")
+                          name: KnownToken.cleanText((metadata?["name"] as? String) ?? collection, limit: 80),
+                          collection: collection,
+                          details: KnownToken.cleanText((metadata?["description"] as? String) ?? "", limit: 600),
+                          imageURL: image, standard: "TON NFT")
         }
     }
 
@@ -887,7 +895,9 @@ extension WalletManager {
             let failed = (item["status"] as? String) == "error"
             var net: Int64 = 0
             if to == me && !failed { net += Int64(clamping: value) }
-            if from == me { net -= Int64(clamping: (failed ? 0 : value) + fee) }
+            // Values come from a server: an absurd one must not overflow (and crash) the sum.
+            let spent = (failed ? 0 : value).addingReportingOverflow(fee)
+            if from == me { net -= Int64(clamping: spent.overflow ? UInt64.max : spent.partialValue) }
             let date = (item["timestamp"] as? String).flatMap { iso.date(from: $0) }
             let confirmed = !(item["block_number"] is NSNull) && item["block_number"] != nil
             return WalletTransaction(txid: hash, net: net, date: date, confirmed: confirmed, chain: chain.rawValue)
@@ -1387,9 +1397,10 @@ extension WalletManager {
         }
         let amount = plan.amount.formatted(decimals: plan.asset.decimals, maxFraction: 8)
         let network = plan.asset.chain.name(testnet: isTestnet)
+        let fee = plan.maxFee.formatted(decimals: plan.asset.chain.nativeDecimals, maxFraction: 8) + " " + plan.asset.chain.nativeSymbol
         let secret = try await loadSecret(reason: appLanguage == .english
-                                          ? "Authorize sending \(amount) \(plan.asset.symbol) on \(network) to \(plan.recipient)"
-                                          : "Autoriza el envío de \(amount) \(plan.asset.symbol) en \(network) a \(plan.recipient)",
+                                          ? "Authorize sending \(amount) \(plan.asset.symbol) on \(network) to \(plan.recipient), fee up to \(fee)"
+                                          : "Autoriza el envío de \(amount) \(plan.asset.symbol) en \(network) a \(plan.recipient), comisión hasta \(fee)",
                                           authenticate: true)
         let account = activeRecord?.accountNumber ?? 0
         let hash: String

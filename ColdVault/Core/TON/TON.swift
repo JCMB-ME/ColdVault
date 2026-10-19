@@ -565,10 +565,7 @@ public final class TonAPI {
 
     public init(isTestnet: Bool) {
         self.isTestnet = isTestnet
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = TorProxy.isEnabled ? 45 : 20
-        TorProxy.apply(to: config)
-        session = URLSession(configuration: config)
+        session = SharedSession.get(timeout: TorProxy.isEnabled ? 45 : 20)
     }
 
     /// Without an API key both services allow about one call per second: a busy
@@ -611,8 +608,15 @@ public final class TonAPI {
             let balance = UInt256(decimal: (result["balance"] as? String) ?? "\((result["balance"] as? NSNumber)?.int64Value ?? 0)",
                                   decimals: 0) ?? .zero
             let active = (result["account_state"] as? String) == "active"
-            let seqno = (result["seqno"] as? NSNumber)?.uint32Value ?? 0
-            return (balance, active ? seqno : 0, active)
+            var seqno = (result["seqno"] as? NSNumber)?.uint32Value
+            // toncenter reads the seqno only of the wallet versions it recognises (W5 may be
+            // missing): a wrong 0 would make every send fail, so tonapi asks the contract itself.
+            if active && seqno == nil {
+                let answer = try await json("\(tonapi)/v2/wallet/\(address)/seqno")
+                guard let value = (answer["seqno"] as? NSNumber)?.uint32Value else { throw TonError.unavailable }
+                seqno = value
+            }
+            return (balance, active ? (seqno ?? 0) : 0, active)
         } catch {
             let account = try await json("\(tonapi)/v2/accounts/\(address)")
             guard let nanotons = (account["balance"] as? NSNumber)?.int64Value, nanotons >= 0 else { throw error }

@@ -243,6 +243,18 @@ public final class BlockchainService {
         lock.unlock()
     }
 
+    /// Forgets the saved history (the last wallet was deleted).
+    public func clearDiskHistory() {
+        lock.lock()
+        rawTxCache = [:]
+        rawTxHex = [:]
+        blockTimeCache = [:]
+        diskDirty = false
+        diskLoaded = true
+        lock.unlock()
+        if let url = BlockchainService.diskURL { try? FileManager.default.removeItem(at: url) }
+    }
+
     /// Writes what is new (at most 4 000 transactions are kept).
     private func saveDiskHistory() {
         lock.lock()

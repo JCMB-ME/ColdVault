@@ -270,6 +270,17 @@ public struct KnownToken {
     public static let primarySymbols: Set<String> = ["USDT", "USDC"]
     public static let stableSymbols: Set<String> = Set(stablecoins.map { $0.symbol })
 
+    /// A token's symbol or name from an explorer, made safe to show: no control or
+    /// direction-changing characters (they can disguise text), trimmed, at most `limit` long.
+    public static func cleanText(_ text: String, limit: Int) -> String {
+        let scalars = text.unicodeScalars.filter { scalar in
+            !scalar.properties.isBidiControl && !CharacterSet.controlCharacters.contains(scalar)
+                && scalar.properties.generalCategory != .format
+        }
+        let cleaned = String(String.UnicodeScalarView(scalars)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? "?" : String(cleaned.prefix(limit))
+    }
+
     public static func find(_ contract: String, chain: EVMChain, testnet: Bool) -> KnownToken? {
         stablecoins.first { $0.chain == chain && $0.testnet == testnet && $0.contract.lowercased() == contract.lowercased() }
     }
@@ -298,14 +309,21 @@ public struct EVMAsset: Identifiable, Equatable, @unchecked Sendable {
     public var tokenWallet: String? = nil
 
     public var isNative: Bool { contract == nil }
-    public var isStablecoin: Bool { KnownToken.stableSymbols.contains(symbol) }
+    /// Only the known contracts count: a token that merely calls itself "USDT" does not.
+    public var isStablecoin: Bool {
+        guard let contract else { return false }
+        return KnownToken.stablecoins.contains { $0.chain == chain && $0.contract.lowercased() == contract.lowercased() }
+    }
 
     /// Logo bundled with the app: the native coins, USDC, USDT.
     public var logoName: String? {
         if isNative { return chain.nativeLogoName }
+        // The real logos only for the real contracts (a fake "USDT" keeps its own icon).
+        guard isStablecoin else { return nil }
         switch symbol {
         case "USDC": return "UsdcLogo"
         case "USDT": return "UsdtLogo"
+        case "EURC": return "EurcLogo"
         default: return nil
         }
     }

@@ -62,8 +62,9 @@ enum SecurePasteboard {
 // MARK: - App lock
 
 /// Optional (Settings › Security): the app asks for Face ID / passcode when it opens
-/// and whenever it comes back from the background. The keys are always protected by
-/// the Keychain anyway; this hides balances and history from someone holding the phone.
+/// and whenever it comes back from the background. Sending, signing and showing the
+/// phrase or keys ask for Face ID anyway; this also hides balances and history from
+/// someone holding the unlocked phone.
 struct AppLockModifier: ViewModifier {
     @EnvironmentObject var walletManager: WalletManager
     @AppStorage("appLockEnabled") private var enabled = false

@@ -250,8 +250,9 @@ public struct WalletKeyring {
         public let derivationPath: String
     }
 
-    /// BIP-380 output descriptors for the three standard accounts, e.g.
-    /// `wpkh([73c5da0a/84h/0h/0h]xpub.../0/*)#afwvtk2s`, importable in Sparrow / Core.
+    /// BIP-380 output descriptors for the three standard accounts, with the receive and the
+    /// change chains (BIP-389 multipath), e.g. `wpkh([73c5da0a/84h/0h/0h]xpub.../<0;1>/*)#…`,
+    /// importable in Sparrow / Core: a watch-only wallet made from it also sees the change.
     public func accountDescriptors() -> [AccountDescriptor] {
         guard let master = master, let fingerprint = fingerprint else { return [] }
         let coin: UInt32 = isTestnet ? 1 : 0
@@ -270,7 +271,7 @@ public struct WalletKeyring {
             case .p2tr:   function = "tr";   label = "Taproot (BIP-86)"
             default:      function = "pkh";  label = "Legacy (BIP-44)"
             }
-            let body = "\(function)([\(fingerprint.hexEncodedString)/\(path)]\(xpub)/0/*)"
+            let body = "\(function)([\(fingerprint.hexEncodedString)/\(path)]\(xpub)/<0;1>/*)"
             guard let descriptor = DescriptorChecksum.append(to: body) else { continue }
             result.append(AccountDescriptor(label: label, descriptor: descriptor, xpub: xpub, derivationPath: "m/\(path)"))
         }

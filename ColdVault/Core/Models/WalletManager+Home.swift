@@ -820,6 +820,9 @@ extension WalletManager {
             let name = "wallet-\(key.prefix(16)).json"
             WalletManager.balanceMemo[name] = nil
             try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+            for kind in ["nfts", "inscriptions"] {
+                try? FileManager.default.removeItem(at: folder.appendingPathComponent(WalletManager.collectiblesFile(record, kind: kind)))
+            }
         }
     }
 
@@ -827,7 +830,7 @@ extension WalletManager {
         WalletManager.balanceMemo.removeAll()
         guard let folder = WalletManager.cacheFolder,
               let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return }
-        for file in files where file.lastPathComponent.hasPrefix("wallet-") {
+        for file in files where file.lastPathComponent.hasPrefix("wallet-") || file.lastPathComponent.hasPrefix("collectibles-") {
             try? FileManager.default.removeItem(at: file)
         }
     }

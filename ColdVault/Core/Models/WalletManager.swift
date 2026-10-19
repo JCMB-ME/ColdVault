@@ -625,7 +625,8 @@ public final class WalletManager: ObservableObject {
     func loadSecret(reason: String, authenticate: Bool = false) async throws -> WalletSecret {
         guard let record = activeRecord else { throw SecureKeyStoreError.itemNotFound }
         guard record.type != .watchOnly else { throw WalletError.unsupportedForWatchOnly }
-        if authenticate {
+        // An older Keychain item makes iOS ask for Face ID itself: one prompt, not two.
+        if authenticate && (!record.secretPayload.isEmpty || SecureKeyStore.shared.hasOpenSecret(slot: SecureKeyStore.shared.slot)) {
             _ = try await SecureKeyStore.shared.authenticateWithBiometrics(reason: reason)
         }
 

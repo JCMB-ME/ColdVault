@@ -390,7 +390,8 @@ public struct SendView: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
                     if let money = fiatText(walletManager.balanceSats) {
-                        Text("≈ \(money)")
+                        // Testnet coins have no value: the mainnet price is only a reference.
+                        Text("≈ \(money)" + (walletManager.isTestnet ? " · " + t("mainnet price", "precio de mainnet") : ""))
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(Palette.secondary)
                     }

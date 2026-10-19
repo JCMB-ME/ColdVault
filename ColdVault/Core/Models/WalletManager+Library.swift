@@ -335,6 +335,10 @@ extension WalletManager {
             selectWallet(slot: next.slot, account: nil)
         } else {
             SecureKeyStore.shared.deleteLibrary()
+            // No wallet left: the saved history, collectible lists and pictures go too.
+            clearCaches()
+            BlockchainService.shared.clearDiskHistory()
+            NFTImageLoader.shared.clearDisk()
             activeSlot = "primary"
             SecureKeyStore.shared.slot = "primary"
             activeRecord = nil
@@ -403,7 +407,8 @@ extension WalletManager {
             throw SecureKeyStoreError.itemNotFound
         }
         guard record.type != .watchOnly else { throw WalletError.unsupportedForWatchOnly }
-        if authenticate {
+        // An older Keychain item makes iOS ask for Face ID itself: one prompt, not two.
+        if authenticate && (!record.secretPayload.isEmpty || SecureKeyStore.shared.hasOpenSecret(slot: slot)) {
             _ = try await SecureKeyStore.shared.authenticateWithBiometrics(reason: reason)
         }
         // Wallet still in the legacy format (migration could not run, e.g. no passcode).

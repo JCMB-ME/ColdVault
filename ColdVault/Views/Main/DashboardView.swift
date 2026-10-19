@@ -229,7 +229,7 @@ public struct DashboardView: View {
 
     private var balancePage: some View {
         VStack(spacing: 0) {
-            // Ethereum / dollars: the network on screen (tap or shake for the next one).
+            // Ethereum / Stable / Polygon / Tron / TON: the network on screen (tap for the list).
             if walletManager.isEthereum {
                 ZStack {
                     // The logo fades away after a few seconds; a tap on this strip brings it back.

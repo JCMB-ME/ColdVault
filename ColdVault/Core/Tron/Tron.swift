@@ -197,10 +197,7 @@ public final class TronAPI {
 
     public init(isTestnet: Bool) {
         self.isTestnet = isTestnet
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = TorProxy.isEnabled ? 45 : 20
-        TorProxy.apply(to: config)
-        session = URLSession(configuration: config)
+        session = SharedSession.get(timeout: TorProxy.isEnabled ? 45 : 20)
     }
 
     /// With the optional TronGrid key; a busy answer (429) is retried twice, a moment later.

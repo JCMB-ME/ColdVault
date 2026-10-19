@@ -196,6 +196,14 @@ final class NFTImageLoader {
         return image
     }
 
+    /// Removes the saved thumbnails (the last wallet was deleted).
+    func clearDisk() {
+        cache.removeAllObjects()
+        guard let folder = NFTImageLoader.folder,
+              let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return }
+        for file in files { try? FileManager.default.removeItem(at: file) }
+    }
+
     private func save(_ image: UIImage, for url: URL) {
         guard let file = NFTImageLoader.file(url) else { return }
         let alpha = image.cgImage?.alphaInfo ?? .none

@@ -262,6 +262,13 @@ public struct ImportWalletView: View {
             }
         }
         .onDisappear {
+            // Closed without importing (or after an error): a phrase or key pasted here does
+            // not stay on the clipboard, where other apps could read it.
+            let typed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if pastedFromClipboard, !typed.isEmpty,
+               UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines) == typed {
+                UIPasteboard.general.string = ""
+            }
             inputText = ""
             passphrase = ""
         }

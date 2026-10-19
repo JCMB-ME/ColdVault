@@ -318,8 +318,9 @@ struct EthSendView: View {
     /// The chosen asset; by default the biggest stablecoin (dollars) or ETH on Ethereum.
     private var asset: EVMAsset {
         if let id = assetID, let match = assets.first(where: { $0.id == id }) { return match }
+        // By value, not raw units: tokens have 6 or 18 decimals.
         if walletManager.isDollars,
-           let biggest = assets.filter({ !$0.isNative }).max(by: { $0.balance < $1.balance }) { return biggest }
+           let biggest = assets.filter({ !$0.isNative }).max(by: { ($0.usdValue ?? 0) < ($1.usdValue ?? 0) }) { return biggest }
         return assets.first { $0.isNative } ?? assets[0]
     }
 
@@ -476,6 +477,19 @@ struct EthSendView: View {
     private func reviewFiat(_ value: UInt256, of item: EVMAsset) -> String? {
         guard let text = fiat(value, of: item, onTestnet: true) else { return nil }
         return walletManager.isTestnet ? "≈ \(text) · " + t("mainnet price", "precio de mainnet") : "≈ \(text)"
+    }
+
+    /// The most the fee can be is above $50, or above a tenth of what is sent (and over $1).
+    private func feeLooksHigh(_ plan: EthereumSendPlan) -> Bool {
+        let chain = plan.asset.chain
+        guard let price = walletManager.nativeUsdPrice(chain.nativeSymbol), price > 0 else { return false }
+        let feeUSD = plan.maxFee.doubleValue / pow(10, Double(chain.nativeDecimals)) * price
+        if feeUSD > 50 { return true }
+        let sentUSD: Double? = plan.asset.isNative
+            ? plan.amount.doubleValue / pow(10, Double(chain.nativeDecimals)) * price
+            : plan.asset.usdPrice.map { plan.amount.doubleValue / pow(10, Double(plan.asset.decimals)) * $0 }
+        guard let sent = sentUSD, sent > 0 else { return false }
+        return feeUSD > 1 && feeUSD > sent / 10
     }
 
     /// EVM: the most each unit of gas can cost, in gwei.
@@ -655,8 +669,8 @@ struct EthSendView: View {
                     Text("\(asset.formatted()) \(asset.symbol)")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
-                    if let money = fiat(asset.balance, of: asset, onTestnet: true) {
-                        Text("≈ \(money)")
+                    if let money = reviewFiat(asset.balance, of: asset) {
+                        Text(money)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(Palette.secondary)
                     }
@@ -941,6 +955,15 @@ struct EthSendView: View {
                 Text(t("Usually the fee ends up lower than the maximum.", "Normalmente la comisión final es menor que la máxima."))
                     .font(.system(size: 11))
                     .foregroundColor(Palette.secondary)
+                if feeLooksHigh(plan) {
+                    // The node sets the fee prices: a wrong or hostile one could ask far too much.
+                    Label(t("The fee is unusually high for this payment. Check it before you send.",
+                            "La comisión es inusualmente alta para este envío. Revísala antes de enviar."),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.orange)
+                        .multilineTextAlignment(.center)
+                }
                 if let similar = lookalikeContact {
                     Label(t("This address looks like \(similar.name) but isn't the same. Compare every character before you send.",
                             "Esta dirección se parece a \(similar.name) pero no es la misma. Compara cada carácter antes de enviar."),
