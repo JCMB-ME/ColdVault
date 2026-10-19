@@ -231,13 +231,12 @@ public struct SendView: View {
                                  isLoading: isProcessing, enabled: canReview, action: review)
                 .disabled(!canReview)
                 .padding(.top, 4)
-                .confirmationDialog(WalletError.ordinalsUnverified.errorDescription ?? "",
-                                    isPresented: $ordinalsQuestion, titleVisibility: .visible) {
-                    Button(t("Send anyway", "Enviar igual")) { startReview(allowUnverifiedOrdinals: true) }
-                    Button(t("Cancel", "Cancelar"), role: .cancel) { }
-                } message: {
-                    Text(t("Ordinals (inscriptions, runes) on those coins could be sent away with the payment. ordinals.com is a third party.",
-                           "Los ordinales (inscripciones, runas) de esas monedas podrían irse con el pago. ordinals.com es un tercero."))
+                .confirmCard(isPresented: $ordinalsQuestion, icon: "photo.on.rectangle.angled",
+                             title: WalletError.ordinalsUnverified.errorDescription ?? "",
+                             message: t("Ordinals (inscriptions, runes) on those coins could be sent away with the payment. ordinals.com is a third party.",
+                                        "Los ordinales (inscripciones, runas) de esas monedas podrían irse con el pago. ordinals.com es un tercero."),
+                             confirmTitle: t("Send anyway", "Enviar igual"), cancelTitle: t("Cancel", "Cancelar")) {
+                    startReview(allowUnverifiedOrdinals: true)
                 }
         }
     }

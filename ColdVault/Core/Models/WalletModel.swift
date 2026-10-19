@@ -49,7 +49,8 @@ public enum CoinKind: String, Codable, CaseIterable, Identifiable {
         case .polygon: return [.polygon]
         case .tron: return [.tron]
         case .ton: return [.ton]
-        case .dollars: return [.ethereum, .base, .polygon, .tron, .ton]
+        // Tron and TON are left out of Stable for now (their own wallets keep them).
+        case .dollars: return [.ethereum, .base, .polygon]
         }
     }
 

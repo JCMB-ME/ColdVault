@@ -84,19 +84,16 @@ struct TransactionDetailView: View {
             feeInfo = try? await walletManager.feeInfo(txid: transaction.txid)
             if let info = feeInfo { bumpRate = Int(info.feeRate.rounded(.down)) + 2 }
         }
-        .alert(t("Copy an address you haven't saved?", "¿Copiar una dirección que no tienes guardada?"),
-               isPresented: Binding(get: { unsavedCopy != nil }, set: { if !$0 { unsavedCopy = nil } })) {
-            Button(t("Copy", "Copiar")) {
-                if let address = unsavedCopy {
-                    SecurePasteboard.copy(address)
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                }
-                unsavedCopy = nil
+        .confirmCard(isPresented: Binding(get: { unsavedCopy != nil }, set: { if !$0 { unsavedCopy = nil } }),
+                     icon: "exclamationmark.shield.fill",
+                     title: t("Copy an address you haven't saved?", "¿Copiar una dirección que no tienes guardada?"),
+                     message: t("Someone can send you a dust amount from a look-alike address so it shows up here (address poisoning). Check it against the source before you use it.",
+                                "Alguien puede enviarte un importe mínimo desde una dirección parecida para que aparezca aquí (envenenamiento de direcciones). Compárala con la fuente antes de usarla."),
+                     confirmTitle: t("Copy", "Copiar"), cancelTitle: t("Cancel", "Cancelar")) {
+            if let address = unsavedCopy {
+                SecurePasteboard.copy(address)
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
             }
-            Button(t("Cancel", "Cancelar"), role: .cancel) { unsavedCopy = nil }
-        } message: {
-            Text(t("Someone can send you a dust amount from a look-alike address so it shows up here (address poisoning). Check it against the source before you use it.",
-                   "Alguien puede enviarte un importe mínimo desde una dirección parecida para que aparezca aquí (envenenamiento de direcciones). Compárala con la fuente antes de usarla."))
         }
     }
 

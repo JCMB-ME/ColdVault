@@ -29,6 +29,9 @@ public struct DashboardView: View {
     @AppStorage(FocusStyle.scaleKey) private var focusScale = FocusStyle.defaultScale
     /// The network list under the logo (ETH, Stable…).
     @State private var networkMenuOpen = false
+    /// The network logo shows for a few seconds, then hides until the top is tapped.
+    @State private var networkPillVisible = true
+    @State private var networkPillToken = 0
 
     @State private var currentAction: DashboardAction = .receive
     @State private var showReceiveSheet: Bool = false
@@ -120,11 +123,6 @@ public struct DashboardView: View {
             }
         }
         .onAppear { showBalancePage() }
-        // Ethereum / dollars: shaking the iPhone on the balance switches network.
-        .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
-            guard walletManager.isEthereum, walletManager.activeCoin.networks.count > 1, onBalancePage, !anySheetOpen else { return }
-            EVMNetworkPill.switchNetwork(walletManager)
-        }
         .onChange(of: scenePhase) { phase in
             if phase == .background {
                 wasInBackground = true
@@ -206,6 +204,16 @@ public struct DashboardView: View {
             .environmentObject(walletManager)
     }
 
+    private func showNetworkPill() {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { networkPillVisible = true }
+        networkPillToken += 1
+        let token = networkPillToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            guard token == networkPillToken, !networkMenuOpen else { return }
+            withAnimation(.easeInOut(duration: 0.6)) { networkPillVisible = false }
+        }
+    }
+
     private var networkMenuCatcher: some View {
         Color.black.opacity(networkMenuOpen ? 0.001 : 0)
             .contentShape(Rectangle())
@@ -223,12 +231,25 @@ public struct DashboardView: View {
         VStack(spacing: 0) {
             // Ethereum / dollars: the network on screen (tap or shake for the next one).
             if walletManager.isEthereum {
-                EVMNetworkPill(expanded: $networkMenuOpen)
-                    .environmentObject(walletManager)
-                    .padding(.top, 10)
-                    .frame(maxWidth: .infinity)
-                    .background(networkMenuCatcher)
-                    .zIndex(10)                       // its list opens over the balance
+                ZStack {
+                    // The logo fades away after a few seconds; a tap on this strip brings it back.
+                    Color.clear
+                        .frame(maxWidth: .infinity, minHeight: 34)
+                        .contentShape(Rectangle())
+                        .onTapGesture { showNetworkPill() }
+                    if networkPillVisible || networkMenuOpen {
+                        EVMNetworkPill(expanded: $networkMenuOpen)
+                            .environmentObject(walletManager)
+                            .transition(.opacity.combined(with: .scale(scale: 0.6)))
+                    }
+                }
+                .padding(.top, 10)
+                .frame(maxWidth: .infinity)
+                .background(networkMenuCatcher)
+                .zIndex(10)                       // its list opens over the balance
+                .onAppear { showNetworkPill() }
+                .onChange(of: walletManager.activeNetwork) { _ in showNetworkPill() }
+                .onChange(of: networkMenuOpen) { open in if !open { showNetworkPill() } }
             }
 
             VStack(spacing: 0) {

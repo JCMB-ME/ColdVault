@@ -480,13 +480,13 @@ public struct SettingsView: View {
                                                          }))
                                     .labelsHidden()
                                     .disabled(walletManager.isWatchOnly)
-                                    .confirmationDialog(t("Switch to testnet?", "¿Cambiar a testnet?"),
-                                                        isPresented: $confirmTestnet, titleVisibility: .visible) {
-                                        Button(t("Switch to testnet", "Cambiar a testnet")) { switchNetwork(toTestnet: true) }
-                                        Button(t("Cancel", "Cancelar"), role: .cancel) { }
-                                    } message: {
-                                        Text(t("This changes this wallet's addresses to testnet. Your mainnet funds will not show until you switch back. Do not send real money to testnet addresses.",
-                                               "Esto cambia las direcciones de esta billetera a testnet. Tus fondos de mainnet no se verán hasta volver a mainnet. No envíes dinero real a direcciones de testnet."))
+                                    .confirmCard(isPresented: $confirmTestnet, icon: "testtube.2",
+                                                 title: t("Switch to testnet?", "¿Cambiar a testnet?"),
+                                                 message: t("This changes this wallet's addresses to testnet. Your mainnet funds will not show until you switch back. Do not send real money to testnet addresses.",
+                                                            "Esto cambia las direcciones de esta billetera a testnet. Tus fondos de mainnet no se verán hasta volver a mainnet. No envíes dinero real a direcciones de testnet."),
+                                                 confirmTitle: t("Switch to testnet", "Cambiar a testnet"),
+                                                 cancelTitle: t("Cancel", "Cancelar")) {
+                                        switchNetwork(toTestnet: true)
                                     }
                             }
                         }
@@ -711,19 +711,17 @@ public struct SettingsView: View {
             .sheet(isPresented: $showDescriptors, onDismiss: { descriptors = [] }) {
                 DescriptorExportView(descriptors: descriptors, lang: lang)
             }
-            .alert(L10n.deleteWalletConfirmTitle(lang), isPresented: $showDeleteConfirmation) {
-                Button(L10n.cancel(lang), role: .cancel) {}
-                Button(L10n.deletePermanently(lang), role: .destructive) {
-                    // Someone holding the unlocked phone must not be able to erase the keys.
-                    Task {
-                        guard await AppLock.authenticate(reason: t("Confirm to delete this wallet",
-                                                                   "Confirma para eliminar esta billetera")) else { return }
-                        route = nil
-                        walletManager.deleteWallet()
-                    }
+            .confirmCard(isPresented: $showDeleteConfirmation, icon: "trash.fill",
+                         title: L10n.deleteWalletConfirmTitle(lang), message: L10n.deleteWalletConfirmDesc(lang),
+                         confirmTitle: L10n.deletePermanently(lang), cancelTitle: L10n.cancel(lang),
+                         destructive: true) {
+                // Someone holding the unlocked phone must not be able to erase the keys.
+                Task {
+                    guard await AppLock.authenticate(reason: t("Confirm to delete this wallet",
+                                                               "Confirma para eliminar esta billetera")) else { return }
+                    route = nil
+                    walletManager.deleteWallet()
                 }
-            } message: {
-                Text(L10n.deleteWalletConfirmDesc(lang))
             }
         }
         .presentationDetents([.large])
@@ -1114,7 +1112,7 @@ struct SettingsDisclosureSection<Content: View>: View {
             VStack(spacing: 0) {
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.84, blendDuration: 0.1)) { isExpanded.toggle() }
+                    withAnimation(.spring(response: 0.62, dampingFraction: 0.86, blendDuration: 0.1)) { isExpanded.toggle() }
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: icon)
@@ -1169,15 +1167,28 @@ struct SettingsDisclosureSection<Content: View>: View {
 
 /// How the rows of a group appear: they fade in from a blur, sliding down a little
 /// and growing from the top.
-struct SettingsReveal: ViewModifier {
-    let progress: CGFloat
+struct SettingsReveal: ViewModifier, Animatable {
+    var progress: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
 
     func body(content: Content) -> some View {
-        content
-            .opacity(progress)
-            .blur(radius: (1 - progress) * 10)
-            .offset(y: (1 - progress) * -14)
-            .scaleEffect(x: 1, y: 0.92 + 0.08 * progress, anchor: .top)
+        // A soft edge sweeps down the rows: the first ones come into focus before the
+        // last, instead of all at once.
+        let edge = progress * 1.35
+        return content
+            .mask(
+                LinearGradient(stops: [
+                    .init(color: .black, location: 0),
+                    .init(color: .black, location: max(0, min(1, edge - 0.35))),
+                    .init(color: .clear, location: max(0, min(1, edge)))
+                ], startPoint: .top, endPoint: .bottom)
+            )
+            .blur(radius: (1 - progress) * 8)
+            .offset(y: (1 - progress) * -10)
     }
 }
 
@@ -1492,16 +1503,15 @@ struct BackupDetailView: View {
         }
         .onDisappear { secret = nil; keys = []; secretToCopy = nil; secretKeyID = nil }
         // Warns before a secret reaches the clipboard, where any app that can read it may see it.
-        .confirmationDialog(t("Copy this secret?", "¿Copiar este secreto?"),
-                            isPresented: Binding(get: { secretToCopy != nil },
-                                                 set: { if !$0 { secretToCopy = nil; secretKeyID = nil } }),
-                            titleVisibility: .visible) {
-            Button(t("Copy for 30 seconds", "Copiar durante 30 s")) { confirmCopy() }
-            Button(t("Cancel", "Cancelar"), role: .cancel) { secretToCopy = nil; secretKeyID = nil }
-        } message: {
-            Text(t("Any app that can read the clipboard can see it for 30 seconds. Then iOS clears it, and it does not go to your other devices.",
-                   "Cualquier app que pueda leer el portapapeles puede verlo durante 30 segundos. Después iOS lo borra, y no pasa a tus otros dispositivos."))
-        }
+        .confirmCard(isPresented: Binding(get: { secretToCopy != nil },
+                                          set: { if !$0 { secretToCopy = nil; secretKeyID = nil } }),
+                     icon: "doc.on.clipboard.fill",
+                     title: t("Copy this secret?", "¿Copiar este secreto?"),
+                     message: t("Any app that can read the clipboard can see it for 30 seconds. Then iOS clears it, and it does not go to your other devices.",
+                                "Cualquier app que pueda leer el portapapeles puede verlo durante 30 segundos. Después iOS lo borra, y no pasa a tus otros dispositivos."),
+                     confirmTitle: t("Copy for 30 seconds", "Copiar durante 30 s"), cancelTitle: t("Cancel", "Cancelar"),
+                     onConfirm: { confirmCopy() },
+                     onCancel: { secretToCopy = nil; secretKeyID = nil })
     }
 
     /// The user agreed: the secret goes to this iPhone's clipboard for 30 seconds only.
@@ -1906,12 +1916,11 @@ struct ContactEditorView: View {
                     ?? code.trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
-        .alert(t("Delete this contact?", "¿Eliminar este contacto?"), isPresented: $showDeleteConfirmation) {
-            Button(L10n.cancel(lang), role: .cancel) {}
-            Button(t("Delete", "Eliminar"), role: .destructive) {
-                walletManager.deleteContact(contact)
-                presentationMode.wrappedValue.dismiss()
-            }
+        .confirmCard(isPresented: $showDeleteConfirmation, icon: "trash.fill",
+                     title: t("Delete this contact?", "¿Eliminar este contacto?"), message: "",
+                     confirmTitle: t("Delete", "Eliminar"), cancelTitle: L10n.cancel(lang), destructive: true) {
+            walletManager.deleteContact(contact)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { presentationMode.wrappedValue.dismiss() }
         }
     }
 

@@ -226,37 +226,32 @@ struct WalletsView: View {
                 }
             }
         }
-        .alert(t("Delete this account?", "¿Eliminar esta cuenta?"),
-               isPresented: Binding(get: { deleteAccountTarget != nil }, set: { if !$0 { deleteAccountTarget = nil } }),
-               presenting: deleteAccountTarget) { target in
-            Button(L10n.cancel(lang), role: .cancel) {}
-            Button(t("Delete", "Eliminar"), role: .destructive) {
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                    walletManager.deleteAccount(slot: target.slot, account: target.account)
-                }
+        .confirmCard(isPresented: Binding(get: { deleteAccountTarget != nil }, set: { if !$0 { deleteAccountTarget = nil } }),
+                     icon: "minus.circle.fill",
+                     title: t("Delete this account?", "¿Eliminar esta cuenta?"),
+                     message: t("\"\(deleteAccountTarget?.name ?? "")\" is removed from this iPhone. Its coins stay in your recovery phrase: create a new account to see it again.",
+                                "\"\(deleteAccountTarget?.name ?? "")\" se quita de este iPhone. Sus fondos siguen en tu frase de recuperación: crea una cuenta nueva para volver a verla."),
+                     confirmTitle: t("Delete", "Eliminar"), cancelTitle: L10n.cancel(lang), destructive: true) {
+            guard let target = deleteAccountTarget else { return }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                walletManager.deleteAccount(slot: target.slot, account: target.account)
             }
-        } message: { target in
-            Text(t("\"\(target.name)\" is removed from this iPhone. Its bitcoin stays in your recovery phrase: create a new account to see it again.",
-                   "\"\(target.name)\" se quita de este iPhone. Sus bitcoins siguen en tu frase de recuperación: crea una cuenta nueva para volver a verla."))
         }
-        .alert(L10n.deleteWalletConfirmTitle(lang), isPresented: Binding(get: { deleteSlot != nil },
-                                                                         set: { if !$0 { deleteSlot = nil } })) {
-            Button(L10n.cancel(lang), role: .cancel) {}
-            Button(L10n.deletePermanently(lang), role: .destructive) {
-                guard let slot = deleteSlot else { return }
-                // Someone holding the unlocked phone must not be able to erase the keys.
-                Task {
-                    guard await AppLock.authenticate(reason: t("Confirm to delete this wallet",
-                                                               "Confirma para eliminar esta billetera")) else { return }
-                    walletManager.selectWallet(slot: slot, account: nil)
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                        walletManager.deleteWallet()
-                    }
+        .confirmCard(isPresented: Binding(get: { deleteSlot != nil }, set: { if !$0 { deleteSlot = nil } }),
+                     icon: "trash.fill",
+                     title: L10n.deleteWalletConfirmTitle(lang), message: L10n.deleteWalletConfirmDesc(lang),
+                     confirmTitle: L10n.deletePermanently(lang), cancelTitle: L10n.cancel(lang), destructive: true) {
+            guard let slot = deleteSlot else { return }
+            // Someone holding the unlocked phone must not be able to erase the keys.
+            Task {
+                guard await AppLock.authenticate(reason: t("Confirm to delete this wallet",
+                                                           "Confirma para eliminar esta billetera")) else { return }
+                walletManager.selectWallet(slot: slot, account: nil)
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                    walletManager.deleteWallet()
                 }
             }
-        } message: {
-            Text(L10n.deleteWalletConfirmDesc(lang))
         }
     }
 
@@ -305,17 +300,42 @@ struct WalletsView: View {
     /// grows into a black capsule with its name, sliding from coin to coin. Tap a logo,
     /// or swipe the dock, to move. Choosing a coin also opens its wallet on the balance.
     private var coinSwitch: some View {
-        let all = ownedCoins
-        return HStack(spacing: 4) {
-            ForEach(all) { item in
+        // Never wider than the screen: with many coins the logos get smaller, then the
+        // chosen one shows only its logo (iPhone mini).
+        ViewThatFits(in: .horizontal) {
+            coinDockRow(logo: 30, showName: true)
+            coinDockRow(logo: 26, showName: true)
+            coinDockRow(logo: 26, showName: false)
+        }
+        .frame(maxWidth: .infinity)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 12)
+                .onChanged { gesture in
+                    guard abs(gesture.translation.width) > abs(gesture.translation.height) else { return }
+                    onSwitchDrag(true)
+                    switchOffset = gesture.translation.width * 0.12
+                }
+                .onEnded { gesture in
+                    onSwitchDrag(false)
+                    let dx = gesture.translation.width
+                    if abs(dx) > 40, abs(dx) > abs(gesture.translation.height) {
+                        stepCoin(dx < 0 ? 1 : -1)
+                    } else {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { switchOffset = 0 }
+                    }
+                }
+        )
+    }
+
+    private func coinDockRow(logo: CGFloat, showName: Bool) -> some View {
+        HStack(spacing: 4) {
+            ForEach(ownedCoins) { item in
                 let selected = item == coin
                 Button { select(item) } label: {
                     HStack(spacing: 8) {
-                        CoinLogo(coin: item, size: selected ? 26 : 30)
+                        CoinLogo(coin: item, size: selected ? logo - 4 : logo)
                             .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: selected ? 2 : 0))
-                            .saturation(selected ? 1 : 0.35)
-                            .opacity(selected ? 1 : 0.7)
-                        if selected {
+                        if selected && showName {
                             Text(item.title(lang))
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundColor(Color(uiColor: .systemBackground))
@@ -325,7 +345,7 @@ struct WalletsView: View {
                         }
                     }
                     .padding(.leading, selected ? 6 : 5)
-                    .padding(.trailing, selected ? 14 : 5)
+                    .padding(.trailing, selected && showName ? 14 : (selected ? 6 : 5))
                     .frame(height: 40)
                     .background {
                         if selected {
@@ -345,24 +365,7 @@ struct WalletsView: View {
         .padding(4)
         .background(Capsule().fill(SettingsStyle.groupFill))
         .offset(x: switchOffset)
-        .frame(maxWidth: .infinity)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 12)
-                .onChanged { gesture in
-                    guard abs(gesture.translation.width) > abs(gesture.translation.height) else { return }
-                    onSwitchDrag(true)
-                    switchOffset = gesture.translation.width * 0.12
-                }
-                .onEnded { gesture in
-                    onSwitchDrag(false)
-                    let dx = gesture.translation.width
-                    if abs(dx) > 40, abs(dx) > abs(gesture.translation.height) {
-                        stepCoin(dx < 0 ? 1 : -1)
-                    } else {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { switchOffset = 0 }
-                    }
-                }
-        )
+        .fixedSize()
     }
 
     /// Next (1) or previous (-1) coin, going round.
@@ -1013,6 +1016,21 @@ struct AddWalletSheet: View {
         ZStack {
             GlassAmbientBackground()
             VStack(spacing: 14) {
+                VStack(spacing: 12) {
+                    Image("IconPreviewDefault")
+                        .resizable()
+                        .frame(width: 76, height: 76)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .shadow(color: Color.black.opacity(0.15), radius: 12, x: 0, y: 6)
+                    Text(t("How do you want to start?", "¿Cómo quieres empezar?"))
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(Color(uiColor: .label))
+                    Text(t("Your keys stay on this iPhone either way.", "En los dos casos tus claves se quedan en este iPhone."))
+                        .font(.system(size: 14))
+                        .foregroundColor(Palette.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.vertical, 18)
                 card(icon: "sparkles", title: L10n.createNewWallet(lang),
                      detail: t("A new recovery phrase, made on this iPhone. Write it down on paper.",
                                "Una frase de recuperación nueva, creada en este iPhone. Anótala en papel.")) {
@@ -1031,7 +1049,7 @@ struct AddWalletSheet: View {
                 SheetHeader(title: t("Add wallet", "Añadir billetera"))
             }
         }
-        .presentationDetents([.height(340)])
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
 
@@ -1050,6 +1068,7 @@ struct AddWalletSheet: View {
                     Text(title)
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(detail)
                         .font(.system(size: 13))
                         .foregroundColor(Palette.secondary)

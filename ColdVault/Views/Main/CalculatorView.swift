@@ -98,10 +98,10 @@ struct CalculatorView: View {
             HStack(spacing: 12) {
                 unitPicker(selection: unit) { select(unit: $0) }
                 Spacer(minLength: 8)
-                TextField("0", text: $input)
+                TextField("0", text: inputText)
                     .font(.system(size: 36, weight: .semibold))
                     .multilineTextAlignment(.trailing)
-                    .keyboardType(unit == "sats" || unit == "JPY" ? .numberPad : .decimalPad)
+                    .keyboardType(CalculatorView.fractionDigits(unit) == 0 ? .numberPad : .decimalPad)
                     .focused($focused)
                     .lineLimit(1)
                     .minimumScaleFactor(0.4)
@@ -221,11 +221,10 @@ struct CalculatorView: View {
                 .frame(width: size, height: size)
                 .clipShape(Circle())
         case "EURC":
-            Text("€")
-                .font(.system(size: size * 0.47, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
+            Image("EurcLogo")
+                .resizable()
+                .scaledToFit()
                 .frame(width: size, height: size)
-                .background(Circle().fill(Color(red: 0.16, green: 0.46, blue: 0.86)))
         case "sats":
             Image("SatsLogo")
                 .resizable()
@@ -289,12 +288,71 @@ struct CalculatorView: View {
 
     /// The typed number.
     private var typedValue: Double? {
-        let separator = Locale.current.decimalSeparator ?? "."
-        let normalized = input.trimmingCharacters(in: .whitespaces)
-            .replacingOccurrences(of: separator, with: ".")
-            .replacingOccurrences(of: ",", with: ".")
-        guard let value = Double(normalized), value >= 0 else { return nil }
+        guard let value = Double(input), value >= 0 else { return nil }
         return value
+    }
+
+    /// Decimals a unit can be typed with.
+    static func fractionDigits(_ item: String) -> Int {
+        switch item {
+        case "sats", "JPY": return 0
+        case "BTC", "ETH", "POL", "TRX", "TON": return 8
+        default: return 2
+        }
+    }
+
+    /// What you type, shown with thousands separators (`input` keeps plain digits and ".").
+    private var inputText: Binding<String> {
+        Binding(get: { CalculatorView.display(input) },
+                set: { input = CalculatorView.parseTyped($0, previous: input, maxFraction: CalculatorView.fractionDigits(unit)) })
+    }
+
+    /// "1234567.5" → "1,234,567.5" in the iPhone's format.
+    static func display(_ raw: String) -> String {
+        let group = Locale.current.groupingSeparator ?? ","
+        let decimal = Locale.current.decimalSeparator ?? "."
+        let parts = raw.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
+        let whole = String(parts.first ?? "")
+        var grouped = ""
+        for (index, digit) in whole.reversed().enumerated() {
+            if index > 0 && index % 3 == 0 { grouped.append(contentsOf: group.reversed()) }
+            grouped.append(digit)
+        }
+        grouped = String(grouped.reversed())
+        return parts.count > 1 ? grouped + decimal + parts[1] : grouped
+    }
+
+    /// The edited text back to plain digits: thousands separators dropped; a comma or a point
+    /// typed at the end is the decimal point.
+    static func parseTyped(_ text: String, previous: String, maxFraction: Int) -> String {
+        let group = Locale.current.groupingSeparator ?? ","
+        let decimal = Locale.current.decimalSeparator ?? "."
+        let shown = display(previous)
+        if text.count == shown.count + 1, text.hasPrefix(shown), let last = text.last, last == "," || last == "." {
+            guard maxFraction > 0, !previous.contains(".") else { return previous }
+            return (previous.isEmpty ? "0" : previous) + "."
+        }
+        var cleaned = text.replacingOccurrences(of: group, with: "")
+        if decimal != "." { cleaned = cleaned.replacingOccurrences(of: decimal, with: ".") }
+        var result = ""
+        var hasPoint = false
+        var fraction = 0
+        for character in cleaned {
+            if character.isASCII && character.isNumber {
+                if hasPoint {
+                    guard fraction < maxFraction else { continue }
+                    fraction += 1
+                } else if result.count >= 15 {
+                    continue
+                }
+                result.append(character)
+            } else if character == "." && !hasPoint && maxFraction > 0 {
+                hasPoint = true
+                result.append(contentsOf: result.isEmpty ? "0." : ".")
+            }
+        }
+        while result.count > 1 && result.hasPrefix("0") && !result.hasPrefix("0.") { result.removeFirst() }
+        return result
     }
 
     /// One coin in a currency.
@@ -378,7 +436,6 @@ struct CalculatorView: View {
 
     /// The value as typed text (no grouping), for continuing from a result.
     private func plain(_ value: Double, unit item: String) -> String {
-        let separator = Locale.current.decimalSeparator ?? "."
         let text: String
         switch item {
         case "sats": text = String(Int64(value.rounded()))
@@ -389,7 +446,7 @@ struct CalculatorView: View {
         case "JPY": text = String(Int64(value.rounded()))
         default: text = String(format: "%.2f", value)
         }
-        return text.replacingOccurrences(of: ".", with: separator)
+        return text
     }
 
     // MARK: - Actions
@@ -453,37 +510,46 @@ struct CalculatorCard: View {
     private var lang: AppLanguage { walletManager.appLanguage }
 
     var body: some View {
+        // A single round button with a calculator drawn in it.
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             showCalculator = true
         } label: {
-            HStack(spacing: 14) {
-                Image(systemName: "plus.forwardslash.minus")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(Color(uiColor: .label))
-                    .frame(width: 42, height: 42)
-                    .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(lang == .english ? "Calculator" : "Calculadora")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(uiColor: .label))
-                    Text("BTC · ETH · POL · TRX · TON · USDT · USDC · EURC")
-                        .font(.system(size: 12))
-                        .foregroundColor(Palette.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Palette.tertiary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+            CalculatorGlyph()
+                .foregroundColor(Color(uiColor: .systemBackground))
+                .frame(width: 58, height: 58)
+                .background(Circle().fill(Color(uiColor: .label)))
+                .shadow(color: Color.black.opacity(0.15), radius: 8, x: 0, y: 4)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(Text(lang == .english ? "Calculator" : "Calculadora"))
+        .frame(maxWidth: .infinity)
         .sheet(isPresented: $showCalculator) {
             CalculatorView().environmentObject(walletManager)
+        }
+    }
+}
+
+
+/// A minimal calculator: the body, its screen and three rows of keys.
+struct CalculatorGlyph: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                .stroke(lineWidth: 2.2)
+                .frame(width: 20, height: 26)
+            VStack(spacing: 2.6) {
+                RoundedRectangle(cornerRadius: 1.2, style: .continuous)
+                    .frame(width: 12, height: 4.5)
+                    .padding(.bottom, 1)
+                ForEach(0..<3, id: \.self) { _ in
+                    HStack(spacing: 2.6) {
+                        ForEach(0..<3, id: \.self) { _ in
+                            Circle().frame(width: 2.6, height: 2.6)
+                        }
+                    }
+                }
+            }
         }
     }
 }

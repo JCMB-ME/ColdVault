@@ -103,6 +103,7 @@ extension WalletManager {
     public func formatDollars(micro: UInt64) -> String {
         let separator = Locale.current.decimalSeparator ?? "."
         let cents = (micro + 5_000) / 10_000
+        if cents == 0 { return "0" }
         let whole = WalletManager.groupingFormatter.string(from: NSNumber(value: cents / 100)) ?? "\(cents / 100)"
         let fraction = cents % 100
         return whole + separator + (fraction < 10 ? "0" : "") + "\(fraction)"
