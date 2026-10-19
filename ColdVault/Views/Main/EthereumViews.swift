@@ -410,6 +410,11 @@ struct EthSendView: View {
             }
         }
         .appMenuHost()
+        // The review shows money values even when the home screen hides them: load the
+        // price of this network's coin (ETH, POL, TRX, TON) if it is not known yet.
+        .task {
+            if walletManager.nativeUsdPrice(asset.chain.nativeSymbol) == nil { await walletManager.refreshEthereumPrice() }
+        }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .sheet(isPresented: $showScanner) {
