@@ -1168,9 +1168,8 @@ struct EVMAssetsCard: View {
                 // Settings › Coins and tokens hides the whole list, gas included.
                 if walletManager.homeShowTokens {
                     VStack(spacing: 10) {
-                        section("Stable", walletManager.orderedTokens().filter {
-                            !$0.balance.isZero || KnownToken.primarySymbols.contains($0.symbol)
-                        })
+                        // Every stablecoin of the network (hide any in Manage tokens).
+                        section("Stable", walletManager.orderedTokens())
                         manageButton
                     }
                     section(t("Gas (pays the fees)", "Gas (paga las comisiones)"), natives,
