@@ -7,11 +7,13 @@
 //  Two Keychain items:
 //   • metadata (addresses, wallet type): kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
 //     readable at launch without a prompt.
-//   • secret (mnemonic / WIF): kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly plus a
-//     SecAccessControl with .userPresence. iOS itself demands Face ID / Touch ID /
-//     passcode on every read, so the check cannot be skipped by patching the app UI,
-//     the item never leaves the device or reaches backups, and it is destroyed if the
-//     device passcode is removed.
+//   • secret (mnemonic / WIF): kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly. It never
+//     leaves the device or reaches backups, cannot be read while the iPhone is locked and
+//     is destroyed if the device passcode is removed. The app asks for Face ID itself
+//     where it matters (sending, showing the phrase or keys, deleting a wallet), so other
+//     actions (testnet, new accounts, networks) do not prompt.
+//     Older versions stored it with a SecAccessControl (.userPresence, iOS prompting on
+//     every read): such an item is read once more with that prompt and then moved.
 //
 
 import Foundation
@@ -68,6 +70,25 @@ public final class SecureKeyStore {
     private var secretAccount: String { SecureKeyStore.secretAccount(for: slot) }
     private static func secretAccount(for slot: String) -> String {
         slot == "primary" ? "wallet_secret" : "wallet_secret_\(slot)"
+    }
+    /// The secret without the per-read system prompt (see the header).
+    private static func openSecretAccount(for slot: String) -> String { secretAccount(for: slot) + "_open" }
+    private var openSecretAccount: String { SecureKeyStore.openSecretAccount(for: slot) }
+
+    private func storeOpenSecret(_ secret: Data, account: String) throws {
+        let match: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        let updated = SecItemUpdate(match as CFDictionary, [kSecValueData as String: secret] as CFDictionary)
+        if updated == errSecSuccess { return }
+        guard updated == errSecItemNotFound else { throw SecureKeyStoreError.keychainSaveFailed(updated) }
+        var query = match
+        query[kSecValueData as String] = secret
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else { throw SecureKeyStoreError.keychainSaveFailed(status) }
     }
 
     // MARK: - Wallet library (list of wallets; public data only)
@@ -142,32 +163,13 @@ public final class SecureKeyStore {
         if secret != nil && !isDevicePasscodeSet {
             throw SecureKeyStoreError.passcodeNotSet
         }
-        guard !itemExists(account: metadataAccount), !itemExists(account: secretAccount) else {
+        guard !itemExists(account: metadataAccount), !itemExists(account: secretAccount),
+              !itemExists(account: openSecretAccount) else {
             throw SecureKeyStoreError.slotInUse
         }
 
         if let secret = secret {
-            var cfError: Unmanaged<CFError>?
-            guard let access = SecAccessControlCreateWithFlags(
-                kCFAllocatorDefault,
-                kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
-                .userPresence,
-                &cfError
-            ) else {
-                throw SecureKeyStoreError.keychainSaveFailed(errSecParam)
-            }
-
-            let secretQuery: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrAccount as String: secretAccount,
-                kSecValueData as String: secret,
-                kSecAttrAccessControl as String: access
-            ]
-            let status = SecItemAdd(secretQuery as CFDictionary, nil)
-            guard status == errSecSuccess else {
-                throw SecureKeyStoreError.keychainSaveFailed(status)
-            }
+            try storeOpenSecret(secret, account: openSecretAccount)
         }
 
         let metadataQuery: [String: Any] = [
@@ -179,7 +181,7 @@ public final class SecureKeyStore {
         ]
         let status = SecItemAdd(metadataQuery as CFDictionary, nil)
         guard status == errSecSuccess else {
-            deleteItem(account: secretAccount)
+            deleteItem(account: openSecretAccount)
             throw SecureKeyStoreError.keychainSaveFailed(status)
         }
     }
@@ -188,6 +190,7 @@ public final class SecureKeyStore {
     public func slotExists(_ slot: String) -> Bool {
         let metadata = slot == "primary" ? "wallet_metadata" : "wallet_metadata_\(slot)"
         return itemExists(account: metadata) || itemExists(account: SecureKeyStore.secretAccount(for: slot))
+            || itemExists(account: SecureKeyStore.openSecretAccount(for: slot))
     }
 
     /// Every slot that has wallet metadata in the Keychain (to recover a wallet missing
@@ -216,6 +219,11 @@ public final class SecureKeyStore {
     /// Replaces the secret of a slot in place (SecItemUpdate: the old secret is never
     /// deleted first, so a failure leaves it intact). Asks for Face ID / passcode.
     public func replaceSecret(_ secret: Data, slot: String, reason: String) async throws {
+        let open = SecureKeyStore.openSecretAccount(for: slot)
+        if itemExists(account: open) {
+            try storeOpenSecret(secret, account: open)
+            return
+        }
         let service = self.service
         let account = SecureKeyStore.secretAccount(for: slot)
         try await Task.detached(priority: .userInitiated) {
@@ -257,8 +265,19 @@ public final class SecureKeyStore {
     // MARK: - Load Secret (system-enforced Face ID / Touch ID / passcode)
     /// The secret of the current slot, or of `slot` (any wallet, e.g. for Backup).
     public func loadSecret(reason: String, slot: String? = nil) async throws -> Data {
+        let slotName = slot ?? self.slot
+        let open = SecureKeyStore.openSecretAccount(for: slotName)
+        if let data = try readUnprotectedItem(account: open) { return data }
+        // A wallet from an older version: read it with the system prompt, then move it.
+        let data = try await loadProtectedSecret(reason: reason, account: SecureKeyStore.secretAccount(for: slotName))
+        if (try? storeOpenSecret(data, account: open)) != nil, (try? readUnprotectedItem(account: open)) == data {
+            deleteItem(account: SecureKeyStore.secretAccount(for: slotName))
+        }
+        return data
+    }
+
+    private func loadProtectedSecret(reason: String, account: String) async throws -> Data {
         let service = self.service
-        let account = slot.map { SecureKeyStore.secretAccount(for: $0) } ?? self.secretAccount
         // SecItemCopyMatching blocks while the system prompt is on screen, so keep it
         // off the main thread.
         return try await Task.detached(priority: .userInitiated) { () throws -> Data in
@@ -308,7 +327,8 @@ public final class SecureKeyStore {
     @discardableResult
     public func delete() -> Bool {
         // Deletes the current wallet (slot) only.
-        let accounts = slot == "primary" ? [metadataAccount, secretAccount, legacyAccount] : [metadataAccount, secretAccount]
+        let accounts = slot == "primary" ? [metadataAccount, secretAccount, openSecretAccount, legacyAccount]
+                                         : [metadataAccount, secretAccount, openSecretAccount]
         let results = accounts.map { deleteItem(account: $0) }
         return results.allSatisfy { $0 }
     }

@@ -617,13 +617,17 @@ public final class WalletManager: ObservableObject {
     }
 
     // MARK: - Secret access (Keychain-enforced Face ID / Touch ID / passcode)
-    func loadSecret(reason: String) async throws -> WalletSecret {
+    /// The wallet's secret. `authenticate`: Face ID / passcode first — for sending, signing
+    /// and showing the phrase or keys; other uses (testnet, accounts, networks) do not ask.
+    func loadSecret(reason: String, authenticate: Bool = false) async throws -> WalletSecret {
         guard let record = activeRecord else { throw SecureKeyStoreError.itemNotFound }
         guard record.type != .watchOnly else { throw WalletError.unsupportedForWatchOnly }
+        if authenticate {
+            _ = try await SecureKeyStore.shared.authenticateWithBiometrics(reason: reason)
+        }
 
         // Wallet still in the legacy format (migration could not run, e.g. no passcode).
         if !record.secretPayload.isEmpty {
-            _ = try await SecureKeyStore.shared.authenticateWithBiometrics(reason: reason)
             guard let secret = WalletSecret.decode(Data(record.secretPayload.utf8)) else {
                 throw SecureKeyStoreError.dataCorrupted
             }
@@ -644,14 +648,15 @@ public final class WalletManager: ObservableObject {
         if record.type == .watchOnly {
             return "Esta es una wallet de solo observación. No contiene claves privadas ni frase semilla."
         }
-        return try await loadSecret(reason: "Confirma tu identidad para ver tu frase semilla o clave privada").displayText
+        return try await loadSecret(reason: "Confirma tu identidad para ver tu frase semilla o clave privada",
+                                    authenticate: true).displayText
     }
 
     /// Private keys for signing. Verifies the secret still derives this wallet's addresses.
-    public func loadKeyring(reason: String) async throws -> WalletKeyring {
+    public func loadKeyring(reason: String, authenticate: Bool = false) async throws -> WalletKeyring {
         guard let record = activeRecord else { throw SecureKeyStoreError.itemNotFound }
         try await ensureSelfTest()
-        let secret = try await loadSecret(reason: reason)
+        let secret = try await loadSecret(reason: reason, authenticate: authenticate)
         let isTestnet = record.isTestnet
         let keyring = try await Task.detached(priority: .userInitiated) {
             try WalletKeyring.from(secret: secret, isTestnet: isTestnet, account: record.accountNumber ?? 0)
@@ -871,7 +876,8 @@ public final class WalletManager: ObservableObject {
 
         let keyring = try await loadKeyring(reason: appLanguage == .english
                                             ? "Authorize sending \(plan.amount) sats to \(recipient), fee \(plan.fee) sats"
-                                            : "Autoriza el envío de \(plan.amount) sats a \(recipient), comisión \(plan.fee) sats")
+                                            : "Autoriza el envío de \(plan.amount) sats a \(recipient), comisión \(plan.fee) sats",
+                                            authenticate: true)
         let tracked = trackedByScript
         let signed = try await Task.detached(priority: .userInitiated) { () throws -> Transaction in
             var tx = plan.transaction

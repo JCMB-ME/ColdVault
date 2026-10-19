@@ -217,7 +217,7 @@ struct SignPSBTView: View {
         Task {
             do {
                 let unlocked = try await walletManager.loadKeyring(reason: t("Unlock to review and sign the transaction",
-                                                                              "Desbloquea para revisar y firmar la transacción"))
+                                                                              "Desbloquea para revisar y firmar la transacción"), authenticate: true)
                 keyring = unlocked
                 summary = await walletManager.summarize(psbt, keyring: unlocked)
             } catch {

@@ -398,14 +398,16 @@ extension WalletManager {
     // MARK: - Secrets of any wallet (Backup lists every wallet)
 
     /// The secret of any wallet on this iPhone (Face ID / passcode, enforced by the Keychain).
-    func loadSecret(slot: String, reason: String) async throws -> WalletSecret {
+    func loadSecret(slot: String, reason: String, authenticate: Bool = false) async throws -> WalletSecret {
         guard let record = library.first(where: { $0.slot == slot })?.bundle.accounts.first?.record else {
             throw SecureKeyStoreError.itemNotFound
         }
         guard record.type != .watchOnly else { throw WalletError.unsupportedForWatchOnly }
+        if authenticate {
+            _ = try await SecureKeyStore.shared.authenticateWithBiometrics(reason: reason)
+        }
         // Wallet still in the legacy format (migration could not run, e.g. no passcode).
         if !record.secretPayload.isEmpty {
-            _ = try await SecureKeyStore.shared.authenticateWithBiometrics(reason: reason)
             guard let secret = WalletSecret.decode(Data(record.secretPayload.utf8)) else {
                 throw SecureKeyStoreError.dataCorrupted
             }
@@ -424,7 +426,8 @@ extension WalletManager {
         if record.type == .watchOnly { return record.secretPayload }
         return try await loadSecret(slot: slot, reason: appLanguage == .english
                                     ? "Confirm to show your recovery phrase or private key"
-                                    : "Confirma tu identidad para ver tu frase semilla o clave privada").displayText
+                                    : "Confirma tu identidad para ver tu frase semilla o clave privada",
+                                    authenticate: true).displayText
     }
 
     /// The private keys of every account of a wallet (Face ID): bitcoin in WIF (the first
@@ -437,7 +440,8 @@ extension WalletManager {
         }
         let secret = try await loadSecret(slot: slot, reason: appLanguage == .english
                                           ? "Confirm to show the private keys"
-                                          : "Confirma tu identidad para ver las claves privadas")
+                                          : "Confirma tu identidad para ver las claves privadas",
+                                          authenticate: true)
         let accounts = wallet.bundle.accounts.map { (name: $0.name, number: $0.number, testnet: $0.record.isTestnet) }
         let coin = first.coinKind
         return try await Task.detached(priority: .userInitiated) {

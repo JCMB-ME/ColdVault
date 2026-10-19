@@ -1389,7 +1389,8 @@ extension WalletManager {
         let network = plan.asset.chain.name(testnet: isTestnet)
         let secret = try await loadSecret(reason: appLanguage == .english
                                           ? "Authorize sending \(amount) \(plan.asset.symbol) on \(network) to \(plan.recipient)"
-                                          : "Autoriza el envío de \(amount) \(plan.asset.symbol) en \(network) a \(plan.recipient)")
+                                          : "Autoriza el envío de \(amount) \(plan.asset.symbol) en \(network) a \(plan.recipient)",
+                                          authenticate: true)
         let account = activeRecord?.accountNumber ?? 0
         let hash: String
         switch plan.payload {
