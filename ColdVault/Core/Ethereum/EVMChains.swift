@@ -466,7 +466,9 @@ public struct EVMNFT: Identifiable, Equatable {
         } else if text.hasPrefix("ar://") {
             text = "https://arweave.net/" + text.dropFirst(5)
         }
-        // Only https: ATS blocks plain http anyway, and an http picture could be altered on the way.
+        // Plain http is tried as https (ATS blocks http, and https can't be altered on the way);
+        // anything else is dropped.
+        if text.hasPrefix("http://") { text = "https://" + text.dropFirst(7) }
         guard text.hasPrefix("https://") else { return nil }
         return URL(string: text)
     }

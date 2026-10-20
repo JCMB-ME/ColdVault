@@ -26,6 +26,8 @@
 	<string>ColdVault uses the camera to scan QR codes of addresses, payment requests and transactions.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>ColdVault uses Face ID to authorize payments and signatures and to show your recovery phrase.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>ColdVault saves the picture of an NFT to your photos when you tap Download.</string>
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>en</string>

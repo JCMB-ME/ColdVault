@@ -141,7 +141,8 @@ struct OrdinalsView: View {
     }
 }
 
-/// One inscription: its content, number and where it sits.
+/// One inscription. It opens like Receive: the content alone and centered; a tap shows the details,
+/// and the Download and Profile picture buttons (for pictures).
 struct InscriptionDetailView: View {
     @EnvironmentObject var walletManager: WalletManager
     let item: Inscription
@@ -150,52 +151,35 @@ struct InscriptionDetailView: View {
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
     var body: some View {
-        ZStack {
-            GlassAmbientBackground()
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 16) {
-                    if item.isImage {
-                        NFTImage(url: item.contentURL)
-                            .aspectRatio(1, contentMode: .fit)
-                            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    }
-                    Text(item.number.map { "Inscription #\($0)" } ?? t("Inscription", "Inscripción"))
-                        .font(.system(size: 22, weight: .bold))
-                    VStack(spacing: 0) {
-                        row(t("Type", "Tipo"), item.contentType.isEmpty ? "—" : item.contentType)
-                        if let value = item.value {
-                            SettingsDivider(inset: 16)
-                            row(t("Coin", "Moneda"), "\(walletManager.format(sats: value)) \(walletManager.displayUnit.rawValue)")
-                        }
-                        if let output = item.output {
-                            SettingsDivider(inset: 16)
-                            row(t("Output", "Salida"), output)
-                        }
-                        SettingsDivider(inset: 16)
-                        row("ID", item.id)
-                    }
-                    .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
-                    if let url = item.pageURL {
-                        Link(destination: url) {
-                            Label("ordinals.com", systemImage: "safari")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(Color(uiColor: .label))
-                                .padding(.horizontal, 18)
-                                .frame(height: 40)
-                                .background(Capsule().fill(SettingsStyle.groupFill))
-                        }
-                    }
+        CollectibleRevealCard(title: "Ordinal", imageURL: item.isImage ? item.contentURL : nil,
+                              placeholderIcon: item.contentType.hasPrefix("text/") ? "doc.text" : "cube") {
+            Text(item.number.map { "Inscription #\($0)" } ?? t("Inscription", "Inscripción"))
+                .font(.system(size: 22, weight: .bold))
+            VStack(spacing: 0) {
+                row(t("Type", "Tipo"), item.contentType.isEmpty ? "—" : item.contentType)
+                if let value = item.value {
+                    SettingsDivider(inset: 16)
+                    row(t("Coin", "Moneda"), "\(walletManager.format(sats: value)) \(walletManager.displayUnit.rawValue)")
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 32)
+                if let output = item.output {
+                    SettingsDivider(inset: 16)
+                    row(t("Output", "Salida"), output)
+                }
+                SettingsDivider(inset: 16)
+                row("ID", item.id)
             }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                SheetHeader(title: "Ordinal")
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+            if let url = item.pageURL {
+                Link(destination: url) {
+                    Label("ordinals.com", systemImage: "safari")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                        .padding(.horizontal, 18)
+                        .frame(height: 40)
+                        .background(Capsule().fill(SettingsStyle.groupFill))
+                }
             }
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
     }
 
     private func row(_ title: String, _ value: String) -> some View {

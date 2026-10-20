@@ -15,6 +15,8 @@ struct NFTGalleryView: View {
     @State private var items: [EVMNFT] = []
     @State private var isLoading = true
     @State private var selected: EVMNFT?
+    /// The collection folder that is open (nil: the grid of folders and single NFTs).
+    @State private var openFolderID: String?
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -49,18 +51,34 @@ struct NFTGalleryView: View {
                         .padding(.vertical, 26)
                         .padding(.horizontal, 20)
                         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+                    } else if let folder = openFolder {
+                        Button(action: closeFolder) {
+                            Label(t("Collections", "Colecciones"), systemImage: "chevron.left")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(Color(uiColor: .label))
+                                .padding(.horizontal, 14)
+                                .frame(height: 36)
+                                .background(Capsule().fill(SettingsStyle.groupFill))
+                        }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        nftGrid(folder.items)
+                            .transition(.opacity.combined(with: .scale(scale: 0.97)))
                     } else {
+                        let layout = NFTFolder.split(items)
                         LazyVGrid(columns: columns, spacing: 12) {
-                            ForEach(items) { item in
+                            ForEach(layout.folders) { folder in
                                 Button {
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                    selected = item
+                                    withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { openFolderID = folder.id }
                                 } label: {
-                                    tile(item)
+                                    NFTFolderTile(folder: folder)
                                 }
                                 .buttonStyle(.plain)
                             }
+                            ForEach(layout.singles) { item in nftButton(item) }
                         }
+                        .transition(.opacity.combined(with: .scale(scale: 0.97)))
                     }
                 }
                 .padding(.horizontal, 20)
@@ -69,7 +87,7 @@ struct NFTGalleryView: View {
             }
             .refreshable { await load(force: true) }
             .safeAreaInset(edge: .top, spacing: 0) {
-                SheetHeader(title: "NFTs · \(networkName)")
+                SheetHeader(title: openFolder?.name ?? "NFTs · \(networkName)")
             }
         }
         .presentationDetents([.large])
@@ -78,6 +96,32 @@ struct NFTGalleryView: View {
         .sheet(item: $selected) { item in
             NFTDetailView(item: item).environmentObject(walletManager)
         }
+    }
+
+    private var openFolder: NFTFolder? {
+        guard let id = openFolderID else { return nil }
+        return NFTFolder.split(items).folders.first { $0.id == id }
+    }
+
+    private func closeFolder() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { openFolderID = nil }
+    }
+
+    private func nftGrid(_ list: [EVMNFT]) -> some View {
+        LazyVGrid(columns: columns, spacing: 12) {
+            ForEach(list) { item in nftButton(item) }
+        }
+    }
+
+    private func nftButton(_ item: EVMNFT) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            selected = item
+        } label: {
+            tile(item)
+        }
+        .buttonStyle(.plain)
     }
 
     private func tile(_ item: EVMNFT) -> some View {
@@ -272,16 +316,45 @@ final class NFTImageLoader {
     }
 
     /// Reads the body, but never more than `maxImageBytes`: a bigger picture is dropped mid-transfer.
-    private func download(_ request: URLRequest) async throws -> Data? {
+    private func download(_ request: URLRequest, limit: Int = NFTImageLoader.maxImageBytes) async throws -> Data? {
         let (bytes, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-              http.expectedContentLength <= Int64(NFTImageLoader.maxImageBytes) else { return nil }
+              http.expectedContentLength <= Int64(limit) else { return nil }
         var data = Data()
         for try await byte in bytes {
             data.append(byte)
-            if data.count > NFTImageLoader.maxImageBytes { return nil }
+            if data.count > limit { return nil }
         }
         return data
+    }
+
+    /// Largest picture downloaded for the full-card view, to save it or to use it as a profile picture.
+    static let maxLargeBytes = 25 * 1024 * 1024
+
+    /// A sharper picture (up to 1600 px) for the full-card view. Not saved on the phone.
+    func loadLarge(_ url: URL) async -> UIImage? {
+        guard !DataSaver.isActive else { return nil }
+        for candidate in NFTImageLoader.candidates(url) {
+            var request = URLRequest(url: candidate)
+            request.setValue("image/*", forHTTPHeaderField: "Accept")
+            guard let data = try? await download(request, limit: NFTImageLoader.maxLargeBytes),
+                  let image = NFTImageLoader.thumbnail(data, maxSide: 1600) else { continue }
+            return image
+        }
+        return nil
+    }
+
+    /// The picture's own bytes (to save it, or to make it a profile picture), checked to be an image.
+    /// The user asked for it, so the data saver does not stop it.
+    func original(_ url: URL) async -> Data? {
+        for candidate in NFTImageLoader.candidates(url) {
+            var request = URLRequest(url: candidate)
+            request.setValue("image/*", forHTTPHeaderField: "Accept")
+            guard let data = try? await download(request, limit: NFTImageLoader.maxLargeBytes),
+                  NFTImageLoader.thumbnail(data, maxSide: 64) != nil else { continue }
+            return data
+        }
+        return nil
     }
 
     /// Decodes a picture at thumbnail size (never the full picture in memory). Returns nil when the
@@ -305,7 +378,8 @@ final class NFTImageLoader {
 
 }
 
-/// One NFT: big picture, name, collection and where it lives.
+/// One NFT. It opens like Receive: the picture alone and centered; a tap shows the details, and
+/// the Download and Profile picture buttons.
 struct NFTDetailView: View {
     @EnvironmentObject var walletManager: WalletManager
     let item: EVMNFT
@@ -314,64 +388,48 @@ struct NFTDetailView: View {
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
     var body: some View {
-        ZStack {
-            GlassAmbientBackground()
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 16) {
-                    NFTImage(url: item.imageURL)
-                        .aspectRatio(1, contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    VStack(spacing: 4) {
-                        Text(item.name)
-                            .font(.system(size: 22, weight: .bold))
-                            .multilineTextAlignment(.center)
-                        Text(item.collection)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(Palette.secondary)
-                    }
-                    if !item.details.isEmpty {
-                        Text(item.details)
-                            .font(.system(size: 13))
-                            .foregroundColor(Palette.secondary)
-                            .multilineTextAlignment(.leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(16)
-                            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
-                    }
-                    VStack(spacing: 0) {
-                        row(t("Network", "Red"), item.chain.name(testnet: walletManager.isTestnet))
-                        SettingsDivider(inset: 16)
-                        row(t("Standard", "Estándar"), item.standard)
-                        // Solana assets are told apart by their address alone: no token id.
-                        if !item.tokenId.isEmpty {
-                            SettingsDivider(inset: 16)
-                            row("Token ID", item.tokenId)
-                        }
-                        SettingsDivider(inset: 16)
-                        row(item.chain == .solana ? "Mint" : t("Contract", "Contrato"), item.contract)
-                    }
-                    .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
-                    if let url = item.chain.nftURL(contract: item.contract, tokenId: item.tokenId, testnet: walletManager.isTestnet) {
-                        Link(destination: url) {
-                            Label(t("View in explorer", "Ver en el explorador"), systemImage: "safari")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(Color(uiColor: .label))
-                                .padding(.horizontal, 18)
-                                .frame(height: 40)
-                                .background(Capsule().fill(SettingsStyle.groupFill))
-                        }
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 32)
+        CollectibleRevealCard(title: "NFT", imageURL: item.imageURL) {
+            VStack(spacing: 4) {
+                Text(item.name)
+                    .font(.system(size: 22, weight: .bold))
+                    .multilineTextAlignment(.center)
+                Text(item.collection)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(Palette.secondary)
             }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                SheetHeader(title: "NFT")
+            if !item.details.isEmpty {
+                Text(item.details)
+                    .font(.system(size: 13))
+                    .foregroundColor(Palette.secondary)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+            }
+            VStack(spacing: 0) {
+                row(t("Network", "Red"), item.chain.name(testnet: walletManager.isTestnet))
+                SettingsDivider(inset: 16)
+                row(t("Standard", "Estándar"), item.standard)
+                // Solana assets are told apart by their address alone: no token id.
+                if !item.tokenId.isEmpty {
+                    SettingsDivider(inset: 16)
+                    row("Token ID", item.tokenId)
+                }
+                SettingsDivider(inset: 16)
+                row(item.chain == .solana ? "Mint" : t("Contract", "Contrato"), item.contract)
+            }
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+            if let url = item.chain.nftURL(contract: item.contract, tokenId: item.tokenId, testnet: walletManager.isTestnet) {
+                Link(destination: url) {
+                    Label(t("View in explorer", "Ver en el explorador"), systemImage: "safari")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                        .padding(.horizontal, 18)
+                        .frame(height: 40)
+                        .background(Capsule().fill(SettingsStyle.groupFill))
+                }
             }
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
     }
 
     private func row(_ title: String, _ value: String) -> some View {

@@ -22,13 +22,15 @@ extension WalletManager {
     // MARK: - NFTs
 
     /// The account's NFTs. Burnt assets and fungible tokens are left out; the picture only loads from
-    /// https (EVMNFT.webURL), and texts are cleaned of control and direction characters.
+    /// https (EVMNFT.webURL), and texts are cleaned of control and direction characters. The picture is
+    /// looked for in every place the asset record names it, and, if there is none, in the metadata file.
     func solanaNFTs(owner: String, testnet: Bool) async -> [EVMNFT] {
         let items = (try? await SolanaAPI(isTestnet: testnet).nfts(owner: owner)) ?? []
-        return items.compactMap { item in
+        var records: [SolanaNFTRecord] = []
+        for item in items {
             let interface = (item["interface"] as? String) ?? ""
             guard let id = item["id"] as? String, !interface.contains("Fungible"),
-                  (item["burnt"] as? Bool) != true else { return nil }
+                  (item["burnt"] as? Bool) != true else { continue }
             let content = item["content"] as? [String: Any]
             let metadata = content?["metadata"] as? [String: Any]
             let links = content?["links"] as? [String: Any]
@@ -36,7 +38,11 @@ extension WalletManager {
             let collection = KnownToken.cleanText(
                 ((group?["collection_metadata"] as? [String: Any])?["name"] as? String)
                     ?? (metadata?["symbol"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "NFT", limit: 60)
-            let file = ((content?["files"] as? [[String: Any]]) ?? []).first?["uri"] as? String
+            // Every address the picture may be at, the best first.
+            let files = (content?["files"] as? [[String: Any]]) ?? []
+            let imageFiles = files.filter { (($0["mime"] as? String) ?? "image/").hasPrefix("image") }
+            let sources: [String?] = [links?["image"] as? String]
+                + imageFiles.flatMap { [$0["cdn_uri"] as? String, $0["uri"] as? String] }
             let compressed = ((item["compression"] as? [String: Any])?["compressed"] as? Bool) == true
             let standard: String
             switch interface {
@@ -46,13 +52,36 @@ extension WalletManager {
             case "V1_NFT", "V2_NFT": standard = "Metaplex NFT"
             default: standard = interface.isEmpty ? "NFT" : KnownToken.cleanText(interface, limit: 30)
             }
-            return EVMNFT(chain: .solana, contract: id, tokenId: "",
-                          name: KnownToken.cleanText((metadata?["name"] as? String) ?? collection, limit: 80),
-                          collection: collection,
-                          details: KnownToken.cleanText((metadata?["description"] as? String) ?? "", limit: 600),
-                          imageURL: EVMNFT.webURL(links?["image"] as? String) ?? EVMNFT.webURL(file),
-                          standard: standard)
+            let nft = EVMNFT(chain: .solana, contract: id, tokenId: "",
+                             name: KnownToken.cleanText((metadata?["name"] as? String) ?? collection, limit: 80),
+                             collection: collection,
+                             details: KnownToken.cleanText((metadata?["description"] as? String) ?? "", limit: 600),
+                             imageURL: sources.compactMap { EVMNFT.webURL($0) }.first,
+                             standard: standard)
+            records.append(SolanaNFTRecord(nft: nft, metadata: EVMNFT.webURL(content?["json_uri"] as? String)))
         }
+        // Without a picture in the asset record: the metadata file may name it (a few at a time).
+        var result = records.map { $0.nft }
+        let missing = records.indices.filter { records[$0].nft.imageURL == nil && records[$0].metadata != nil }.prefix(12)
+        await withTaskGroup(of: SolanaImageFound.self) { group in
+            for index in missing {
+                guard let metadata = records[index].metadata else { continue }
+                group.addTask { SolanaImageFound(index: index, url: await self.metadataImage(metadata)) }
+            }
+            for await found in group {
+                if let url = found.url { result[found.index] = result[found.index].withImage(url) }
+            }
+        }
+        return result
+    }
+
+    /// The `image` a Metaplex metadata file names.
+    private func metadataImage(_ url: URL) async -> URL? {
+        guard let data = await blockscoutData(url), data.count < 1_000_000,
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        let nested = ((object["properties"] as? [String: Any])?["files"] as? [[String: Any]])?.first?["uri"] as? String
+        return EVMNFT.webURL(object["image"] as? String) ?? EVMNFT.webURL(object["image_url"] as? String)
+            ?? EVMNFT.webURL(nested)
     }
 
     // MARK: - History
@@ -104,5 +133,23 @@ extension WalletManager {
         return EthereumSendPlan(payload: .solana(lamports: lamports, to: destination), recipient: recipient,
                                 maxFee: UInt256(fee), total: UInt256(lamports + fee), asset: asset,
                                 amount: UInt256(lamports))
+    }
+}
+
+/// An NFT as the asset record gives it, and the metadata file to ask for its picture if it has none.
+private struct SolanaNFTRecord {
+    let nft: EVMNFT
+    let metadata: URL?
+}
+
+private struct SolanaImageFound: Sendable {
+    let index: Int
+    let url: URL?
+}
+
+extension EVMNFT {
+    func withImage(_ url: URL?) -> EVMNFT {
+        EVMNFT(chain: chain, contract: contract, tokenId: tokenId, name: name, collection: collection,
+               details: details, imageURL: url, standard: standard)
     }
 }

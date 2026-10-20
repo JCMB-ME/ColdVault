@@ -1,3 +1,4 @@
 /* Permission texts shown by iOS. */
 "NSCameraUsageDescription" = "ColdVault uses the camera to scan QR codes of addresses, payment requests and transactions.";
 "NSFaceIDUsageDescription" = "ColdVault uses Face ID to authorize payments and signatures and to show your recovery phrase.";
+"NSPhotoLibraryAddUsageDescription" = "ColdVault saves the picture of an NFT to your photos when you tap Download.";

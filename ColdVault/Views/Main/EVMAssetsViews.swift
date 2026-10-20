@@ -235,8 +235,8 @@ struct NetworkUnavailableCard: View {
                 .buttonStyle(.plain)
                 .disabled(isWorking)
             } else {
-                Text(t("It needs a wallet made from a recovery phrase (TON can't use a private key). Create or import a $table wallet with your phrase.",
-                       "Hace falta una billetera creada con frase de recuperación (TON no funciona con clave privada). Crea o importa una billetera $table con tu frase."))
+                Text(t("It needs a wallet made from a recovery phrase (TON can't use a private key). Create or import a Stable wallet with your phrase.",
+                       "Hace falta una billetera creada con frase de recuperación (TON no funciona con clave privada). Crea o importa una billetera Stable con tu frase."))
                     .font(.system(size: 13))
                     .foregroundColor(Palette.secondary)
                     .multilineTextAlignment(.center)
@@ -291,7 +291,7 @@ struct EVMAssetsCard: View {
                 if walletManager.homeShowTokens {
                     VStack(spacing: 10) {
                         // Every stablecoin of the network (hide any in Manage tokens).
-                        section("$table", walletManager.orderedTokens())
+                        section("Stable", walletManager.orderedTokens())
                         manageButton
                     }
                     section(t("Gas (pays the fees)", "Gas (paga las comisiones)"), natives,

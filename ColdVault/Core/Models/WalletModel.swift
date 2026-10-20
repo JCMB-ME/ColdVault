@@ -60,7 +60,7 @@ public enum CoinKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .bitcoin: return "Bitcoin"
         case .ethereum: return "Ethereum"
-        case .dollars: return "$table"
+        case .dollars: return "Stable"
         case .ton: return "TON"
         case .tron: return "Tron"
         case .polygon: return "Polygon"
