@@ -116,6 +116,8 @@ struct SettingsDisclosureSection<Content: View>: View {
                     // The rows step in one by one (EscalatorStack); a new identity per opening replays it.
                     _VariadicView.Tree(EscalatorStack(openedAt: openedAt)) { content }
                 }
+                // Full height even when the frame below is 0, so the measurement is the real one.
+                .fixedSize(horizontal: false, vertical: true)
                 .id(openedAt)
                 .background(GeometryReader { proxy in
                     Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)

@@ -122,7 +122,7 @@ struct AppLockModifier: ViewModifier {
         .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in lockForShake() }
         .onChange(of: scenePhase) { phase in
             if phase == .background, enabled {
-                locked = true
+                withAnimation(.easeInOut(duration: 0.45)) { locked = true }
                 // Close any open sheet (Send, Backup…) so nothing is left behind the lock.
                 AppLock.dismissPresentedSheets()
             } else if phase == .active, locked, !enabled {
@@ -134,7 +134,7 @@ struct AppLockModifier: ViewModifier {
     /// Shaking the iPhone locks the wallet (only while the app lock is on).
     private func lockForShake() {
         guard enabled, !locked else { return }
-        locked = true
+        withAnimation(.easeInOut(duration: 0.45)) { locked = true }
         AppLock.dismissPresentedSheets()
     }
 
