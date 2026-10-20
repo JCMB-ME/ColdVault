@@ -52,6 +52,12 @@ struct SettingsSection<Content: View>: View {
     }
 }
 
+/// Height of an open group's rows, read back so the panel can animate to it.
+private struct ContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 /// A group of Settings that opens and closes with one tap on its title row.
 struct SettingsDisclosureSection<Content: View>: View {
     let title: String
@@ -61,11 +67,6 @@ struct SettingsDisclosureSection<Content: View>: View {
     @ViewBuilder let content: Content
     @State private var openedAt = Date()
     @State private var contentHeight: CGFloat = 0
-
-    private struct ContentHeightKey: PreferenceKey {
-        static var defaultValue: CGFloat = 0
-        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-    }
 
     init(title: String, icon: String, isExpanded: Binding<Bool>, footer: String?,
          @ViewBuilder content: () -> Content) {
