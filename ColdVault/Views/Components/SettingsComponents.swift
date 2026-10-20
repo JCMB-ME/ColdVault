@@ -160,7 +160,6 @@ private struct EscalatorStep: ViewModifier {
             }
     }
 }
-}
 
 /// A small title inside an open group (Advanced: Lightning, Export, Cold wallet).
 struct SettingsSubheader: View {
