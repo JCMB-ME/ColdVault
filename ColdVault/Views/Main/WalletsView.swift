@@ -403,20 +403,28 @@ struct WalletsView: View {
 
     // MARK: - Folding cards
 
-    /// Folded cards (wallet slots, plus "watch-<coin>"), remembered between launches.
+    /// Folded cards (wallet slots, plus "watch-<coin>"), remembered between launches. The cards
+    /// animate from `collapsedKeys` (local state): an @AppStorage does not carry the animation of
+    /// withAnimation, so they would open and shut with no motion. `collapsedRaw` only saves them.
     @AppStorage("collapsedWalletCards") private var collapsedRaw = ""
-
-    private var collapsedKeys: Set<String> {
-        Set(collapsedRaw.split(separator: "\n").map(String.init))
-    }
+    @State private var collapsedKeys: Set<String> = Set(
+        (UserDefaults.standard.string(forKey: "collapsedWalletCards") ?? "").split(separator: "\n").map(String.init))
+    /// When a card last opened: its rows step in one after another (EscalatorStack), as in Settings.
+    @State private var cardOpenedAt = Date()
 
     private func toggleCollapsed(_ key: String) {
         var keys = collapsedKeys
-        if keys.contains(key) { keys.remove(key) } else { keys.insert(key) }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) {
-            collapsedRaw = keys.sorted().joined(separator: "\n")
+        if keys.contains(key) {
+            keys.remove(key)
+            cardOpenedAt = Date()
+        } else {
+            keys.insert(key)
         }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.spring(response: 0.55, dampingFraction: 0.86, blendDuration: 0.1)) {
+            collapsedKeys = keys
+        }
+        collapsedRaw = keys.sorted().joined(separator: "\n")
     }
 
     private func collapseButton(_ collapsed: Bool, action: @escaping () -> Void) -> some View {
@@ -478,7 +486,7 @@ struct WalletsView: View {
             .padding(.bottom, collapsed ? 14 : 10)
 
             if !collapsed {
-                VStack(spacing: 4) {
+                _VariadicView.Tree(EscalatorStack(openedAt: cardOpenedAt, spacing: 4)) {
                     ForEach(wallets) { wallet in
                         ForEach(Array(wallet.bundle.accounts.enumerated()), id: \.element.id) { index, account in
                             watchRow(wallet: wallet, index: index, account: account)
@@ -487,7 +495,8 @@ struct WalletsView: View {
                 }
                 .padding(.horizontal, 4)
                 .padding(.bottom, 8)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(.asymmetric(insertion: .identity,
+                                        removal: .opacity.combined(with: .scale(scale: 0.94, anchor: .top))))
             }
         }
         .clipped()
@@ -497,6 +506,8 @@ struct WalletsView: View {
                 .stroke(Color(uiColor: .label).opacity(wallets.contains { $0.slot == walletManager.activeSlot } ? 0.12 : 0),
                         lineWidth: 1)
         )
+        .shadow(color: Color.black.opacity(collapsed ? 0 : 0.06), radius: 14, x: 0, y: 6)
+        .scaleEffect(collapsed ? 0.995 : 1)
     }
 
     private func watchRow(wallet: LibraryWallet, index: Int, account: AccountSlot) -> some View {
@@ -649,7 +660,7 @@ struct WalletsView: View {
 
             // Accounts
             if !collapsed {
-            VStack(spacing: 4) {
+            _VariadicView.Tree(EscalatorStack(openedAt: cardOpenedAt, spacing: 4)) {
                 ForEach(Array(wallet.bundle.accounts.enumerated()), id: \.element.id) { index, account in
                     accountRow(wallet: wallet, index: index, account: account,
                                selected: isActive && index == wallet.bundle.selected)
@@ -688,7 +699,8 @@ struct WalletsView: View {
             }
             .padding(.horizontal, 4)
             .padding(.bottom, 8)
-            .transition(.opacity.combined(with: .move(edge: .top)))
+            .transition(.asymmetric(insertion: .identity,
+                                        removal: .opacity.combined(with: .scale(scale: 0.94, anchor: .top))))
             }
         }
         .clipped()
@@ -697,6 +709,8 @@ struct WalletsView: View {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(Color(uiColor: .label).opacity(isActive ? 0.12 : 0), lineWidth: 1)
         )
+        .shadow(color: Color.black.opacity(collapsed ? 0 : 0.06), radius: 14, x: 0, y: 6)
+        .scaleEffect(collapsed ? 0.995 : 1)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isActive)
     }
 

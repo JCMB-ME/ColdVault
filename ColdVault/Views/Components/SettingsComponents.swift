@@ -142,10 +142,12 @@ struct EscalatorStack: _VariadicView_UnaryViewRoot {
     /// When the group opened: rows that appear later (a switch showing more options)
     /// come in at once instead of waiting for their turn.
     let openedAt: Date
+    /// Space between the rows (Settings rows carry their own padding; the wallet cards use 4).
+    var spacing: CGFloat = 0
 
     func body(children: _VariadicView.Children) -> some View {
         let staggered = Date().timeIntervalSince(openedAt) < 0.8
-        return VStack(spacing: 0) {
+        return VStack(spacing: spacing) {
             ForEach(Array(children.enumerated()), id: \.element.id) { index, child in
                 child.modifier(EscalatorStep(delay: staggered ? 0.04 + Double(min(index, 16)) * 0.045 : 0))
             }
