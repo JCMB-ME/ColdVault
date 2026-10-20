@@ -84,7 +84,7 @@ struct AppLockModifier: ViewModifier {
             if locked && AppPin.isSet {
                 Color(uiColor: .systemBackground).opacity(0.9)
                     .ignoresSafeArea()
-                PinPad(title: WalletManager.deviceLanguage == .english ? "Enter your PIN" : "Introduce tu PIN",
+                PinPad(title: walletManager.appLanguage == .english ? "Enter your PIN" : "Introduce tu PIN",
                        shake: pinShake, shuffled: true, onFaceID: unlock, onComplete: checkAppPIN)
                     .padding(.horizontal, 20)
                     .transition(.opacity)
@@ -92,7 +92,7 @@ struct AppLockModifier: ViewModifier {
                 Color(uiColor: .systemBackground).opacity(0.9)
                     .ignoresSafeArea()
                 VStack(spacing: 26) {
-                    PinPad(title: WalletManager.deviceLanguage == .english ? "Enter your PIN" : "Introduce tu PIN",
+                    PinPad(title: walletManager.appLanguage == .english ? "Enter your PIN" : "Introduce tu PIN",
                            shake: pinShake, onComplete: checkPIN)
                     Button(action: unlock) {
                         Label("Face ID", systemImage: "faceid")
@@ -106,7 +106,7 @@ struct AppLockModifier: ViewModifier {
                 Color(uiColor: .systemBackground).opacity(0.35)
                     .ignoresSafeArea()
                 Button(action: unlock) {
-                    Label(WalletManager.deviceLanguage == .english ? "Unlock" : "Desbloquear", systemImage: "faceid")
+                    Label(walletManager.appLanguage == .english ? "Unlock" : "Desbloquear", systemImage: "faceid")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .systemBackground))
                         .padding(.horizontal, 26)

@@ -105,11 +105,13 @@ struct SettingsDisclosureSection<Content: View>: View {
                 if isExpanded {
                     VStack(spacing: 0) {
                         SettingsDivider(inset: 16)
-                        // The rows step in one by one (EscalatorStack); closing fades them out.
+                        // The rows step in one by one (EscalatorStack); closing rolls them back up under
+                        // the title with the same spring as opening, instead of vanishing at once.
                         _VariadicView.Tree(EscalatorStack(openedAt: openedAt)) { content }
                     }
+                    .clipped()
                     .transition(.asymmetric(insertion: .identity,
-                                            removal: .opacity.animation(.easeOut(duration: 0.18))))
+                                            removal: .opacity.combined(with: .offset(y: -14))))
                 }
             }
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
