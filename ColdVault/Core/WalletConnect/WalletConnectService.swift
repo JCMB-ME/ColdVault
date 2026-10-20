@@ -203,6 +203,7 @@ final class WalletConnectService: ObservableObject {
 
     /// Approves a proposal with the wallet on screen. Throws (and rejects the proposal) when the dApp needs
     /// something this wallet does not offer.
+    @MainActor
     func approve(_ item: DappProposal, walletManager: WalletManager) async throws {
         guard let address = walletManager.walletConnectAddress else { throw WalletConnectError.noEVMWallet }
         let chains = walletManager.walletConnectChainIds.compactMap { Blockchain(namespace: "eip155", reference: String($0)) }
