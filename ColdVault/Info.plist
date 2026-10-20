@@ -28,6 +28,18 @@
 	<string>ColdVault uses Face ID to authorize payments and signatures and to show your recovery phrase.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>ColdVault saves the picture of an NFT to your photos when you tap Download.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.coldvault.wallet.walletconnect</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>coldvault</string>
+				<string>wc</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>en</string>

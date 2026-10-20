@@ -16,6 +16,8 @@ public enum ServiceKeys {
         case tronGrid = "tronGridKey"
         case toncenter = "toncenterKey"
         case tonapi = "tonapiKey"
+        /// The free Project ID WalletConnect asks every app for (cloud.reown.com).
+        case walletConnect = "walletConnectProjectId"
 
         public var id: String { rawValue }
 
@@ -24,6 +26,7 @@ public enum ServiceKeys {
             case .tronGrid: return "TronGrid"
             case .toncenter: return "toncenter"
             case .tonapi: return "tonapi"
+            case .walletConnect: return "WalletConnect Project ID"
             }
         }
 
@@ -33,6 +36,7 @@ public enum ServiceKeys {
             case .tronGrid: return "trongrid.io"
             case .toncenter: return "@tonapibot (Telegram)"
             case .tonapi: return "tonconsole.com"
+            case .walletConnect: return "cloud.reown.com"
             }
         }
     }

@@ -27,6 +27,12 @@ packages:
   LDKNode:
     url: https://github.com/lightningdevkit/ldk-node
     revision: 68ab7f417e595f3997dd598ebe070dd5d1b5facf   # v0.7.0
+  # WalletConnect (connect to dApps), pinned by commit: reown-swift 2.4.0. Only the Sign part is used
+  # (product "WalletConnect"), not ReownWalletKit: that one adds payments and push, and with them a large
+  # Rust library (Yttrium) this wallet does not need. To update: review the release, then change the revision.
+  ReownSwift:
+    url: https://github.com/reown-com/reown-swift
+    revision: 1286a56685266804f3ceae93e394f45eb4473dfb   # 2.4.0
 
 targets:
   ColdVault:
@@ -44,6 +50,8 @@ targets:
         product: BreezSdkSpark
       - package: LDKNode
         product: LDKNode
+      - package: ReownSwift
+        product: WalletConnect
       - target: ColdVaultWidget
     entitlements:
       path: ColdVault/ColdVault.entitlements

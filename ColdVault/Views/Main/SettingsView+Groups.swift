@@ -203,6 +203,15 @@ extension SettingsView {
                     SettingsRow(title: "NFTs", chevron: true, icon: "photo.on.rectangle.angled")
                 }
             }
+            if walletManager.isEthereum {
+                SettingsDivider(inset: 60)
+                Button { showDapps = true } label: {
+                    SettingsRow(title: t("Connect to dApps", "Conectar a dApps"), chevron: true, icon: "link")
+                }
+            }
+        }
+        .sheet(isPresented: $showDapps) {
+            DappsView().environmentObject(walletManager)
         }
         .sheet(isPresented: $showOrdinals) {
             OrdinalsView().environmentObject(walletManager)

@@ -123,8 +123,8 @@ extension SettingsView {
                                     chevron: true, icon: "key.horizontal")
                     }
                 }
-                SettingsNote(text: t("Free keys that raise the request limits of Tron and TON (fewer \"busy\" errors). They identify the app to the service, not your wallet.",
-                                     "Claves gratuitas que suben el límite de peticiones de Tron y TON (menos errores de \"ocupado\"). Identifican a la app ante el servicio, no a tu billetera."))
+                SettingsNote(text: t("Free keys that raise the request limits of Tron and TON (fewer \"busy\" errors). They identify the app to the service, not your wallet. The WalletConnect Project ID (free at cloud.reown.com) is what lets you connect to dApps.",
+                                     "Claves gratuitas que suben el límite de peticiones de Tron y TON (menos errores de \"ocupado\"). Identifican a la app ante el servicio, no a tu billetera. El Project ID de WalletConnect (gratis en cloud.reown.com) es lo que permite conectarte a dApps."))
             }
             Group {
                 SettingsSubheader(text: "Cold wallet")

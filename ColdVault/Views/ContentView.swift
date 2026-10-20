@@ -22,9 +22,13 @@ public struct ContentView: View {
             }
         }
         .tint(Palette.accent)
+        .walletConnectSheets()
         .withAppLock()
         .withPrivacyShield()
         .censorsWhenFaceDown()
+        // WalletConnect: starts when there is a Project ID, and opens links (wc:… / coldvault://wc?uri=…).
+        .task { WalletConnectService.shared.start(walletManager: walletManager) }
+        .onOpenURL { WalletConnectService.shared.handle(url: $0) }
         // The theme is applied to the whole window (not with preferredColorScheme), so
         // every screen, including open sheets and the settings panel, switches at once.
         .onAppear { ThemeApplier.apply(walletManager.appTheme) }
