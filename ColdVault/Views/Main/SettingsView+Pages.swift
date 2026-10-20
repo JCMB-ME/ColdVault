@@ -173,6 +173,15 @@ extension SettingsView {
             DuressSetupView().environmentObject(walletManager)
         }
 
+        SettingsSection(header: t("Privacy", "Privacidad"),
+                        footer: t("Put the iPhone face down and every balance turns into asterisks. Tap the balance to show them again.",
+                                  "Pon el iPhone boca abajo y todos los saldos se convierten en asteriscos. Toca el saldo para volver a verlos.")) {
+            SettingsRow(title: t("Hide balances face down", "Ocultar saldos boca abajo"), icon: "eye.slash") {
+                Toggle("", isOn: $censorFaceDown)
+                    .labelsHidden()
+            }
+        }
+
         SettingsSection(header: t("Danger zone", "Zona peligrosa"),
                         footer: t("Deletes the keys of the wallet on screen from this iPhone. Without your recovery phrase the funds are lost.",
                                   "Borra de este iPhone las claves de la billetera en pantalla. Sin tu frase de recuperación los fondos se pierden.")) {

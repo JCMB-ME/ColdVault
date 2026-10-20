@@ -85,7 +85,7 @@ struct WalletsView: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(Palette.secondary)
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(walletManager.format(units: total, coin: coin))
+                            Text(walletManager.masked(walletManager.format(units: total, coin: coin)))
                                 .font(.system(size: 30, weight: .bold))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.5)
@@ -97,12 +97,12 @@ struct WalletsView: View {
                         }
                         // Mainnet, testnet and watch-only coins are never added together.
                         if !totalIsTestnet, let testnet = sum(testnet: true) {
-                            Text("\(testnetName): \(walletManager.format(units: testnet, coin: coin)) \(walletManager.unitLabel(coin))")
+                            Text("\(testnetName): \(walletManager.masked(walletManager.format(units: testnet, coin: coin))) \(walletManager.unitLabel(coin))")
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundColor(Palette.secondary)
                         }
                         if let watched = watchOnlySum {
-                            Text(t("Watch-only: ", "Observación: ") + "\(walletManager.format(units: watched, coin: coin)) \(walletManager.unitLabel(coin))")
+                            Text(t("Watch-only: ", "Observación: ") + "\(walletManager.masked(walletManager.format(units: watched, coin: coin))) \(walletManager.unitLabel(coin))")
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundColor(Palette.secondary)
                         }
@@ -587,7 +587,7 @@ struct WalletsView: View {
     /// A balance on a single line: it shrinks to fit instead of wrapping (iPhone mini).
     private func amountLabel(_ sats: UInt64) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(walletManager.format(units: sats, coin: coin))
+            Text(walletManager.masked(walletManager.format(units: sats, coin: coin)))
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(Color(uiColor: .label))
             Text(walletManager.unitLabel(coin))

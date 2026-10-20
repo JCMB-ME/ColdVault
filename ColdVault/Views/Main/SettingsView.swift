@@ -54,6 +54,7 @@ public struct SettingsView: View {
     /// Bumped on every reveal so the words animate in again.
     @State var revealCount = 0
     @AppStorage("appLockEnabled") var appLockEnabled = false
+    @AppStorage("censorFaceDown") var censorFaceDown = false
     /// Backup lists every wallet: the one opened (expanded) and the one whose secret is shown.
     @State var backupSlot: String?
     @State var revealedSlot: String?

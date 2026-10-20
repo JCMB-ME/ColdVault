@@ -74,24 +74,42 @@ struct AppLockModifier: ViewModifier {
     @State private var locked = UserDefaults.standard.bool(forKey: "appLockEnabled")
     @State private var authenticating = false
 
+    /// Locking: the screen sinks back, blurs and dims in one spring, and the lock settles in.
+    private static let lockAnimation = Animation.spring(response: 0.55, dampingFraction: 0.8)
+    private static let unlockAnimation = Animation.spring(response: 0.45, dampingFraction: 0.9)
+
+    private var lockTransition: AnyTransition { .opacity.combined(with: .scale(scale: 0.9)) }
+
+    /// How much the screen is dimmed: more behind a keypad than behind the single Unlock button.
+    private var scrimOpacity: Double {
+        guard locked else { return 0 }
+        return AppPin.isSet || PinLock.isEnabled ? 0.9 : 0.35
+    }
+
     func body(content: Content) -> some View {
         ZStack {
             content
                 .blur(radius: locked ? 30 : 0)
+                .scaleEffect(locked ? 0.94 : 1)
                 .allowsHitTesting(!locked)
                 // A blur does not hide the text from VoiceOver: hide it while locked.
                 .accessibilityHidden(locked)
+            // The scrim fades in with the blur, so locking is one continuous motion.
+            Color(uiColor: .systemBackground)
+                .opacity(scrimOpacity)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
             if locked && AppPin.isSet {
-                Color(uiColor: .systemBackground).opacity(0.9)
-                    .ignoresSafeArea()
-                PinPad(title: walletManager.appLanguage == .english ? "Enter your PIN" : "Introduce tu PIN",
-                       shake: pinShake, shuffled: true, onFaceID: unlock, onComplete: checkAppPIN)
-                    .padding(.horizontal, 20)
-                    .transition(.opacity)
+                VStack(spacing: 18) {
+                    LockBadge()
+                    PinPad(title: walletManager.appLanguage == .english ? "Enter your PIN" : "Introduce tu PIN",
+                           shake: pinShake, shuffled: true, onFaceID: unlock, onComplete: checkAppPIN)
+                }
+                .padding(.horizontal, 20)
+                .transition(lockTransition)
             } else if locked && PinLock.isEnabled {
-                Color(uiColor: .systemBackground).opacity(0.9)
-                    .ignoresSafeArea()
-                VStack(spacing: 26) {
+                VStack(spacing: 18) {
+                    LockBadge()
                     PinPad(title: walletManager.appLanguage == .english ? "Enter your PIN" : "Introduce tu PIN",
                            shake: pinShake, onComplete: checkPIN)
                     Button(action: unlock) {
@@ -101,20 +119,21 @@ struct AppLockModifier: ViewModifier {
                     }
                     .buttonStyle(.plain)
                 }
-                .transition(.opacity)
+                .transition(lockTransition)
             } else if locked {
-                Color(uiColor: .systemBackground).opacity(0.35)
-                    .ignoresSafeArea()
-                Button(action: unlock) {
-                    Label(walletManager.appLanguage == .english ? "Unlock" : "Desbloquear", systemImage: "faceid")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(uiColor: .systemBackground))
-                        .padding(.horizontal, 26)
-                        .frame(height: 50)
-                        .background(Capsule().fill(Color(uiColor: .label)))
+                VStack(spacing: 22) {
+                    LockBadge()
+                    Button(action: unlock) {
+                        Label(walletManager.appLanguage == .english ? "Unlock" : "Desbloquear", systemImage: "faceid")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(Color(uiColor: .systemBackground))
+                            .padding(.horizontal, 26)
+                            .frame(height: 50)
+                            .background(Capsule().fill(Color(uiColor: .label)))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                .transition(.opacity)
+                .transition(lockTransition)
             }
         }
         // Face ID never starts on its own: the user taps "Unlock" when ready.
@@ -122,7 +141,7 @@ struct AppLockModifier: ViewModifier {
         .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in lockForShake() }
         .onChange(of: scenePhase) { phase in
             if phase == .background, enabled {
-                withAnimation(.easeInOut(duration: 0.45)) { locked = true }
+                withAnimation(AppLockModifier.lockAnimation) { locked = true }
                 // Close any open sheet (Send, Backup…) so nothing is left behind the lock.
                 AppLock.dismissPresentedSheets()
             } else if phase == .active, locked, !enabled {
@@ -134,7 +153,9 @@ struct AppLockModifier: ViewModifier {
     /// Shaking the iPhone locks the wallet (only while the app lock is on).
     private func lockForShake() {
         guard enabled, !locked else { return }
-        withAnimation(.easeInOut(duration: 0.45)) { locked = true }
+        // A firm tap, so the shake answers back before the screen sinks.
+        UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+        withAnimation(AppLockModifier.lockAnimation) { locked = true }
         AppLock.dismissPresentedSheets()
     }
 
@@ -156,7 +177,7 @@ struct AppLockModifier: ViewModifier {
             } else {
                 walletManager.exitDecoy()
             }
-            withAnimation(.easeOut(duration: 0.25)) { locked = false }
+            withAnimation(AppLockModifier.unlockAnimation) { locked = false }
         }
     }
 
@@ -169,7 +190,7 @@ struct AppLockModifier: ViewModifier {
         if AppPin.matches(pin) {
             AppPin.registerSuccess()
             walletManager.exitDecoy()
-            withAnimation(.easeOut(duration: 0.25)) { locked = false }
+            withAnimation(AppLockModifier.unlockAnimation) { locked = false }
         } else {
             AppPin.registerFailure()
             pinShake += 1
@@ -187,7 +208,7 @@ struct AppLockModifier: ViewModifier {
         case .real:
             PinLock.registerSuccess()
             walletManager.exitDecoy()
-            withAnimation(.easeOut(duration: 0.25)) { locked = false }
+            withAnimation(AppLockModifier.unlockAnimation) { locked = false }
         case .duress:
             guard walletManager.enterDecoy() else {
                 // No decoy to show: answer like a wrong PIN, never open the real wallets.
@@ -197,12 +218,32 @@ struct AppLockModifier: ViewModifier {
             }
             // A duress unlock leaves the counter alone: resetting it here would give the real PIN
             // unlimited tries to whoever already knows the duress PIN.
-            withAnimation(.easeOut(duration: 0.25)) { locked = false }
+            withAnimation(AppLockModifier.unlockAnimation) { locked = false }
         case .wrong:
             PinLock.registerFailure()
             pinShake += 1
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         }
+    }
+}
+
+/// The padlock above the keypad / Unlock button: it springs in with a small turn when the lock appears.
+private struct LockBadge: View {
+    @State private var shown = false
+
+    var body: some View {
+        Image(systemName: "lock.fill")
+            .font(.system(size: 24, weight: .semibold))
+            .foregroundColor(Color(uiColor: .label))
+            .frame(width: 60, height: 60)
+            .background(Circle().fill(SettingsStyle.groupFill))
+            .scaleEffect(shown ? 1 : 0.4)
+            .rotationEffect(.degrees(shown ? 0 : -24))
+            .opacity(shown ? 1 : 0)
+            .onAppear {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.6).delay(0.1)) { shown = true }
+            }
+            .accessibilityHidden(true)
     }
 }
 

@@ -302,7 +302,7 @@ public struct DashboardView: View {
     /// decimal is a little smaller than the one before, so all of them fit. Off: every
     /// digit has the same size (the line shrinks as a whole when it is long).
     private var balanceText: Text {
-        let text = walletManager.formattedBalance
+        let text = walletManager.masked(walletManager.formattedBalance)
         let separator = Locale.current.decimalSeparator ?? "."
         let big = Font.system(size: 64, weight: .bold, design: .default)
         guard walletManager.progressiveDecimals,
@@ -492,17 +492,24 @@ public struct DashboardView: View {
 
     private var belowBalance: some View {
         VStack(spacing: 14) {
+            if walletManager.balancesCensored {
+                Label(t("Balances hidden · tap the balance to show them", "Saldos ocultos · toca el saldo para verlos"),
+                      systemImage: "eye.slash")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Palette.secondary)
+                    .transition(.opacity)
+            }
             // Received but not confirmed yet: not part of the balance until it is.
             if walletManager.pendingIncomingSats > 0 {
                 HStack(spacing: 6) {
                     Image(systemName: "clock")
                         .font(.system(size: 12, weight: .semibold))
                     Text(t("Pending", "Pendiente") + " +"
-                         + walletManager.format(units: walletManager.pendingIncomingSats, coin: walletManager.activeCoin)
+                         + walletManager.masked(walletManager.format(units: walletManager.pendingIncomingSats, coin: walletManager.activeCoin))
                          + " " + walletManager.unitLabel(walletManager.activeCoin)
                          // With Fiat value on, its value in money too.
                          + ((walletManager.homeShowFiat ? walletManager.fiatText(units: walletManager.pendingIncomingSats) : nil)
-                             .map { " · ≈ " + $0 } ?? ""))
+                             .map { " · ≈ " + walletManager.masked($0) } ?? ""))
                         .font(.system(size: 14, weight: .semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -515,7 +522,7 @@ public struct DashboardView: View {
             }
 
             if let fiat = walletManager.formattedFiatBalance {
-                Text("≈ \(fiat)")
+                Text("≈ \(walletManager.masked(fiat))")
                     .font(.system(size: 17, weight: .medium))
                     .foregroundColor(Palette.secondary)
             }
@@ -705,6 +712,12 @@ public struct DashboardView: View {
     }
 
     private func toggleDisplayUnit() {
+        // Balances hidden (iPhone face down): the tap shows them again instead of changing the unit.
+        if walletManager.balancesCensored {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.easeInOut(duration: 0.3)) { walletManager.balancesCensored = false }
+            return
+        }
         guard !walletManager.isEthereum else { return }          // ETH has one unit
         let generator = UIImpactFeedbackGenerator(style: .light)
         generator.impactOccurred()
@@ -895,14 +908,14 @@ struct TransactionCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Always one line: the amount shrinks a little instead of wrapping.
                 VStack(alignment: .trailing, spacing: 3) {
-                    Text("\(received ? "+" : "−")\(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin))")
+                    Text("\(received ? "+" : "−")\(walletManager.masked(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin)))")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                     Text(walletManager.unitLabel(walletManager.activeCoin)
                          + ((walletManager.homeShowFiat ? walletManager.fiatText(units: UInt64(abs(transaction.net))) : nil)
-                             .map { " · ≈ " + $0 } ?? ""))
+                             .map { " · ≈ " + walletManager.masked($0) } ?? ""))
                         .font(.system(size: 12))
                         .foregroundColor(Palette.secondary)
                         .lineLimit(1)

@@ -400,13 +400,13 @@ struct EVMAssetsCard: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .trailing, spacing: 3) {
-                    Text(item.formatted())
+                    Text(walletManager.masked(item.formatted()))
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                     if let fiat = walletManager.fiatValue(of: item) {
-                        Text(fiat)
+                        Text(walletManager.masked(fiat))
                             .font(.system(size: 12))
                             .foregroundColor(Palette.secondary)
                             .lineLimit(1)
@@ -580,7 +580,7 @@ struct ManageTokensView: View {
                 Text(item.symbol)
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
-                Text(item.formatted() + (walletManager.fiatValue(of: item).map { " · " + $0 } ?? "")
+                Text(walletManager.masked(item.formatted()) + (walletManager.fiatValue(of: item).map { " · " + walletManager.masked($0) } ?? "")
                      + (walletManager.isCustomToken(item) ? t(" · added", " · añadido") : ""))
                     .font(.system(size: 12))
                     .foregroundColor(Palette.secondary)
