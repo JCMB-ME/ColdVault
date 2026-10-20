@@ -27,6 +27,7 @@ public struct DashboardView: View {
     @State private var wasInBackground = false
     @AppStorage(FocusStyle.blurKey) private var focusBlur = FocusStyle.defaultBlur
     @AppStorage(FocusStyle.scaleKey) private var focusScale = FocusStyle.defaultScale
+    @AppStorage(FocusStyle.fadeKey) private var focusFade = FocusStyle.defaultFade
     /// The network list under the logo (ETH, Stable…).
     @State private var networkMenuOpen = false
     /// The network logo shows for a few seconds, then hides until the top is tapped.
@@ -39,6 +40,13 @@ public struct DashboardView: View {
     @State private var buttonDragOffset: CGFloat = 0
     @State private var isButtonPressed: Bool = false
     @State private var isPillDragging: Bool = false
+
+    // Vertical transition between the balance screen and the dApp Browser below it.
+    @State private var showBrowser: Bool = false
+    @State private var browserProgress: CGFloat = 0
+    @State private var bottomOverscroll: CGFloat = 0
+    @State private var browserDragOffset: CGFloat = 0
+    @State private var browserTriggerReady: Bool = true
 
     // One canvas, two pages: 0 = balance, 1 = settings (native paging, follows the finger).
     @State private var page: Int = 1                 // iOS 16 TabView: 0 wallets, 1 balance, 2 settings
@@ -106,7 +114,7 @@ public struct DashboardView: View {
                     .scrollPosition(id: $pageID)
                     // Opens on the middle page (the balance), never on Wallets.
                     .defaultScrollAnchor(.center)
-                    .scrollDisabled(isPillDragging)
+                    .scrollDisabled(isPillDragging || showBrowser)
                 }
             } else {
                 // iOS 16: UIKit paging.
@@ -180,6 +188,54 @@ public struct DashboardView: View {
         withTransaction(instant) {
             pageID = 1
             page = 1
+            showBrowser = false
+            browserProgress = 0
+            bottomOverscroll = 0
+            browserDragOffset = 0
+        }
+    }
+
+    private var effectiveBrowserProgress: CGFloat {
+        if showBrowser {
+            let dragBack = min(0.88, max(0, browserDragOffset / max(1, UIScreen.main.bounds.height * 0.65)))
+            return max(0, browserProgress - dragBack)
+        } else {
+            let pull = min(0.42, max(0, bottomOverscroll / 190))
+            return max(browserProgress, pull)
+        }
+    }
+
+    private func openBrowser() {
+        guard !showBrowser else { return }
+        let startProgress = effectiveBrowserProgress
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        var jump = SwiftUI.Transaction()
+        jump.disablesAnimations = true
+        withTransaction(jump) {
+            browserProgress = startProgress
+            bottomOverscroll = 0
+            browserDragOffset = 0
+            showBrowser = true
+        }
+        withAnimation(.spring(response: 0.46, dampingFraction: 0.86)) {
+            browserProgress = 1.0
+        }
+    }
+
+    private func closeBrowser() {
+        guard showBrowser else { return }
+        let startProgress = effectiveBrowserProgress
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        var jump = SwiftUI.Transaction()
+        jump.disablesAnimations = true
+        withTransaction(jump) {
+            browserProgress = startProgress
+            browserDragOffset = 0
+            bottomOverscroll = 0
+            showBrowser = false
+        }
+        withAnimation(.spring(response: 0.46, dampingFraction: 0.86)) {
+            browserProgress = 0.0
         }
     }
 
@@ -222,6 +278,54 @@ public struct DashboardView: View {
     }
 
     private var balancePage: some View {
+        GeometryReader { outerGeo in
+            let p = effectiveBrowserProgress
+            let maxBlur = focusBlur
+            let maxShrink = focusScale / 100
+            let maxFade = focusFade / 100
+            let topSafeMinY = outerGeo.frame(in: .global).minY
+
+            ZStack {
+                balanceMainContent(topSafeMinY: topSafeMinY)
+                    .frame(width: outerGeo.size.width, height: outerGeo.size.height)
+                    .blur(radius: p * maxBlur)
+                    .opacity(1 - p * maxFade)
+                    .scaleEffect(1 - p * maxShrink)
+                    .offset(y: -p * outerGeo.size.height)
+                    .allowsHitTesting(!showBrowser)
+                    .accessibilityHidden(showBrowser)
+
+                DappBrowserView(
+                    onClose: { closeBrowser() },
+                    onDragChanged: { dy in
+                        guard showBrowser else { return }
+                        browserDragOffset = max(0, dy)
+                    },
+                    onDragEnded: { dy, predicted in
+                        guard showBrowser else { return }
+                        if dy > 75 || predicted > 140 {
+                            closeBrowser()
+                        } else {
+                            withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
+                                browserDragOffset = 0
+                            }
+                        }
+                    }
+                )
+                .environmentObject(walletManager)
+                .frame(width: outerGeo.size.width, height: outerGeo.size.height)
+                .blur(radius: (1 - p) * maxBlur)
+                .opacity(p > 0.001 ? (1 - (1 - p) * maxFade) : 0)
+                .scaleEffect(1 - (1 - p) * maxShrink)
+                .offset(y: (1 - p) * outerGeo.size.height)
+                .allowsHitTesting(showBrowser)
+                .accessibilityHidden(!showBrowser)
+            }
+            .clipped()
+        }
+    }
+
+    private func balanceMainContent(topSafeMinY: CGFloat) -> some View {
         VStack(spacing: 0) {
             // Ethereum / Stable / Polygon / Tron / TON: the network on screen (tap for the list).
             if walletManager.isEthereum {
@@ -259,35 +363,58 @@ public struct DashboardView: View {
             }
 
             VStack(spacing: 0) {
-            // Badges sit above the scroll view, so the pull-to-refresh spinner appears
-            // below them instead of on top of "Watch-only".
-            statusBadges
+                // Badges sit above the scroll view, so the pull-to-refresh spinner appears
+                // below them instead of on top of "Watch-only".
+                statusBadges
 
-            GeometryReader { geo in
-                ScrollView(showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        // Puts the middle of the balance line exactly at the middle of
-                        // the screen, whatever is above the scroll view.
-                        Color.clear.frame(height: max(0, UIScreen.main.bounds.height / 2
-                            - geo.frame(in: .global).minY
-                            - DashboardView.balanceHeight / 2))
+                GeometryReader { geo in
+                    let scrollOriginMinY = topSafeMinY + geo.frame(in: .named("balanceMainSpace")).minY
+                    ScrollView(showsIndicators: false) {
+                        VStack(spacing: 0) {
+                            // Puts the middle of the balance line exactly at the middle of
+                            // the screen, whatever is above the scroll view.
+                            Color.clear.frame(height: max(0, UIScreen.main.bounds.height / 2
+                                - scrollOriginMinY
+                                - DashboardView.balanceHeight / 2))
 
-                        balanceDisplay
-                            .frame(height: DashboardView.balanceHeight)
+                            balanceDisplay
+                                .frame(height: DashboardView.balanceHeight)
 
-                        belowBalance
-                            .padding(.top, 6)
+                            belowBalance
+                                .padding(.top, 6)
 
-                        // Keep the first screen tall enough for pull-to-refresh.
-                        Color.clear.frame(height: geo.size.height / 2)
+                            Spacer(minLength: 28)
+
+                            browserPullIndicator
+                                .padding(.bottom, 18)
+                        }
+                        .frame(width: geo.size.width, minHeight: geo.size.height)
+                        .background(
+                            GeometryReader { contentGeo in
+                                Color.clear.preference(
+                                    key: BalanceScrollBottomKey.self,
+                                    value: contentGeo.frame(in: .named("balanceScroll")).maxY
+                                )
+                            }
+                        )
                     }
-                    .frame(width: geo.size.width)
+                    .coordinateSpace(name: "balanceScroll")
+                    .onPreferenceChange(BalanceScrollBottomKey.self) { maxY in
+                        guard onBalancePage, !showBrowser, !anySheetOpen, geo.size.height > 100 else { return }
+                        let overscroll = max(0, geo.size.height - maxY)
+                        bottomOverscroll = overscroll
+                        if overscroll < 10 {
+                            browserTriggerReady = true
+                        } else if overscroll >= 76 && browserTriggerReady {
+                            browserTriggerReady = false
+                            openBrowser()
+                        }
+                    }
+                    // Pull down to refresh the balance (needs a scrollable container).
+                    .refreshable {
+                        await walletManager.refreshAll()
+                    }
                 }
-                // Pull down to refresh the balance (needs a scrollable container).
-                .refreshable {
-                    await walletManager.refreshAll()
-                }
-            }
             }
             // While the network list is open, a tap anywhere else closes it.
             .overlay {
@@ -296,6 +423,33 @@ public struct DashboardView: View {
                 }
             }
         }
+        .coordinateSpace(name: "balanceMainSpace")
+    }
+
+    private var browserPullIndicator: some View {
+        let progress = min(1.0, max(0.0, bottomOverscroll / 76.0))
+        return Button {
+            openBrowser()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "safari")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(t("Browser", "Navegador"))
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                Image(systemName: "chevron.compact.down")
+                    .font(.system(size: 13, weight: .bold))
+                    .offset(y: progress * 3)
+            }
+            .foregroundColor(Palette.secondary.opacity(0.65 + progress * 0.35))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(SettingsStyle.groupFill.opacity(progress > 0.05 ? Double(progress) : 0))
+            )
+            .scaleEffect(1.0 + progress * 0.06)
+        }
+        .buttonStyle(.plain)
     }
 
     /// "Decreasing decimals" (Settings): the whole part keeps the big size and each
@@ -1124,5 +1278,12 @@ struct ActionPillLabel: View {
             .foregroundColor(Color(uiColor: .systemBackground))
             .background(Capsule(style: .continuous).fill(Color(uiColor: .label)))
             .shadow(color: Color.black.opacity(0.12), radius: 6, x: 0, y: 3)
+    }
+}
+
+private struct BalanceScrollBottomKey: PreferenceKey {
+    static var defaultValue: CGFloat = .infinity
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
