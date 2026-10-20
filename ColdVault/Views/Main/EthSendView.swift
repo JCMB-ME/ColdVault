@@ -528,6 +528,9 @@ struct EthSendView: View {
                 Text(asset.chain == .tron
                      ? t("Tron charges bandwidth and, for tokens, energy; without staked TRX it is paid in TRX.",
                          "Tron cobra ancho de banda y, en tokens, energía; si no tienes TRX congelado se paga en TRX.")
+                     : asset.chain == .solana
+                     ? t("A Solana transfer costs a fixed 0.000005 SOL.",
+                         "Un envío en Solana cuesta 0.000005 SOL, una cantidad fija.")
                      : t("TON fees are a fraction of a cent; a token transfer carries 0.05 TON and the unused part comes back.",
                          "Las comisiones de TON son centavos; un envío de token lleva 0.05 TON y lo que no se usa regresa."))
                     .font(.system(size: 12))
@@ -583,7 +586,7 @@ struct EthSendView: View {
             return
         }
         var text = code
-        for prefix in ["tron:", "ton://transfer/", "ton:"] where text.lowercased().hasPrefix(prefix) {
+        for prefix in ["tron:", "ton://transfer/", "ton:", "solana:"] where text.lowercased().hasPrefix(prefix) {
             text = String(text.dropFirst(prefix.count))
             break
         }
