@@ -31,6 +31,10 @@ struct EthSendView: View {
     @State private var showScanner = false
     /// Set by the node before review: a native send to a contract can lose the coins.
     @State private var recipientIsContract = false
+    /// What a typed name turned into (the nodes agreed), or why it did not.
+    @State private var nameLookup: NameLookupState = .idle
+    /// The saved contact's name now points to an address other than the saved one.
+    @State private var nameDrift: String?
 
     /// `asset` preselects what to send (tapped on the home screen's list).
     init(recipient: String? = nil, asset: EVMAsset? = nil) {
@@ -69,7 +73,7 @@ struct EthSendView: View {
     /// The saved contact this recipient imitates (address poisoning), when it is not one of them.
     private var lookalikeContact: Contact? {
         guard recipientContact == nil,
-              let match = AddressLookalike.match(trimmedRecipient, known: walletManager.contacts.map { $0.address })
+              let match = AddressLookalike.match(effectiveRecipient, known: walletManager.contacts.map { $0.address })
         else { return nil }
         return walletManager.contacts.first { $0.address == match }
     }
@@ -114,6 +118,15 @@ struct EthSendView: View {
         return units.formatted(decimals: asset.decimals, maxFraction: min(asset.decimals, 8))
     }
     private var trimmedRecipient: String { recipient.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// A name (alice.eth, deadboy.base.eth) was typed instead of an address.
+    private var isNameInput: Bool { asset.chain.isEVM && ENSName.looksLikeName(trimmedRecipient) }
+    private var resolvedName: ENSResolution? {
+        guard isNameInput, case .resolved(let found) = nameLookup, found.name == ENSName.normalized(trimmedRecipient) else { return nil }
+        return found
+    }
+    /// The address the payment goes to: the one typed, or the one the typed name points to ("" until it is known).
+    private var effectiveRecipient: String { isNameInput ? (resolvedName?.address ?? "") : trimmedRecipient }
     private var tooMuch: Bool { amountUnits.map { asset.balance < $0 } ?? false }
     /// The network's coin held on this network (pays the fee).
     private var nativeBalance: UInt256 {
@@ -130,7 +143,7 @@ struct EthSendView: View {
         return nativeBalance < fee
     }
     private var canReview: Bool {
-        asset.chain.isValidAddress(trimmedRecipient) && (sendAll || amountUnits != nil) && !tooMuch && !feeTooMuch && !isProcessing
+        asset.chain.isValidAddress(effectiveRecipient) && (sendAll || amountUnits != nil) && !tooMuch && !feeTooMuch && !isProcessing
     }
 
     private func nativeText(_ value: UInt256) -> String {
@@ -189,7 +202,7 @@ struct EthSendView: View {
     private var ethContacts: [Contact] { walletManager.contacts.filter { asset.chain.isValidAddress($0.address) } }
     private var recipientContact: Contact? {
         if asset.chain.isEVM {
-            guard let parsed = EthereumAddress.parse(trimmedRecipient) else { return nil }
+            guard let parsed = EthereumAddress.parse(effectiveRecipient) else { return nil }
             let text = EthereumAddress.checksummed(parsed)
             return ethContacts.first { $0.address == text }
         }
@@ -468,10 +481,18 @@ struct EthSendView: View {
             }
             .frame(minHeight: 52)
             .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
-            if !recipient.isEmpty && !asset.chain.isValidAddress(trimmedRecipient) {
+            if isNameInput {
+                nameStatusLine
+            } else if !recipient.isEmpty && !asset.chain.isValidAddress(trimmedRecipient) {
                 Text(t("Not a \(networkName) address (check it).", "No es una dirección de \(networkName) (revísala)."))
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.red)
+                    .padding(.leading, 4)
+            }
+            if let drift = nameDrift {
+                Label(drift, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.orange)
                     .padding(.leading, 4)
             }
             if !ethContacts.isEmpty {
@@ -503,6 +524,8 @@ struct EthSendView: View {
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+        .task(id: trimmedRecipient) { await updateNameLookup() }
+        .task(id: recipientContact?.id) { await checkContactName() }
     }
 
     private var feeCard: some View {
@@ -672,6 +695,9 @@ struct EthSendView: View {
                     } else {
                         EVMAssetIcon(asset: plan.asset, size: 48)
                     }
+                    if let named = resolvedName, named.address == plan.recipient {
+                        Text(named.name).font(.system(size: 16, weight: .semibold))
+                    }
                     Text(plan.recipient)
                         .font(.system(size: 13, weight: .medium, design: .monospaced))
                         .multilineTextAlignment(.center)
@@ -812,12 +838,83 @@ struct EthSendView: View {
         }
     }
 
+    // MARK: Names
+
+    private func abbreviated(_ address: String) -> String {
+        address.count > 14 ? "\(address.prefix(8))…\(address.suffix(6))" : address
+    }
+
+    /// Under the field while a name is typed: looking it up, the address it points to, or why not.
+    @ViewBuilder
+    private var nameStatusLine: some View {
+        switch nameLookup {
+        case .idle:
+            EmptyView()
+        case .resolving:
+            HStack(spacing: 6) {
+                ProgressView().scaleEffect(0.7)
+                Text(t("Looking up the name…", "Buscando el nombre…"))
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(Palette.secondary)
+            .padding(.leading, 4)
+        case .resolved(let found):
+            VStack(alignment: .leading, spacing: 4) {
+                Label(t("Points to", "Apunta a"), systemImage: "checkmark.seal.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.green)
+                Text(found.address)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(Palette.secondary)
+                    .textSelection(.enabled)
+                if found.name.hasSuffix(".base.eth") && asset.chain != .base {
+                    Text(t("This is a Base name. On \(networkName) make sure the address is the right one before sending.",
+                           "Este es un nombre de Base. En \(networkName) comprueba que la dirección sea la correcta antes de enviar."))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.orange)
+                }
+            }
+            .padding(.leading, 4)
+        case .failed(let message):
+            Text(message)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.red)
+                .padding(.leading, 4)
+        }
+    }
+
+    /// Looks the typed name up once typing pauses (the previous lookup is cancelled by the next keystroke).
+    private func updateNameLookup() async {
+        guard isNameInput else {
+            nameLookup = .idle
+            return
+        }
+        nameLookup = .resolving
+        try? await Task.sleep(nanoseconds: 450_000_000)
+        guard !Task.isCancelled else { return }
+        let state = await ENSResolver.lookup(trimmedRecipient)
+        guard !Task.isCancelled else { return }
+        nameLookup = state
+    }
+
+    /// A contact saved from a name: warns when the name now points somewhere else.
+    private func checkContactName() async {
+        nameDrift = nil
+        guard let contact = recipientContact, let name = contact.ensName else { return }
+        let state = await ENSResolver.lookup(name)
+        guard !Task.isCancelled else { return }
+        if case .resolved(let found) = state, found.address != contact.address {
+            nameDrift = t("\(name) now points to \(abbreviated(found.address)), not to the address saved in this contact. The saved address is used.",
+                          "\(name) ahora apunta a \(abbreviated(found.address)), no a la dirección guardada en este contacto. Se usa la dirección guardada.")
+        }
+    }
+
     // MARK: Actions
 
     private func review() {
         errorMessage = nil
         isProcessing = true
-        let to = trimmedRecipient
+        let to = effectiveRecipient
         let amount = sendAll ? nil : amountUnits
         let isFast = fast
         let chosen = asset
@@ -835,8 +932,13 @@ struct EthSendView: View {
     private func confirm(_ plan: EthereumSendPlan) {
         errorMessage = nil
         isProcessing = true
+        let named = resolvedName.flatMap { $0.address == plan.recipient ? $0 : nil }
         Task {
             do {
+                // A name is looked up again just before signing: if it moved, nothing is sent.
+                if let named, (try? await ENSResolver.resolve(named.name))?.address != named.address {
+                    throw ENSError.changed
+                }
                 let hash = try await walletManager.sendEthereum(plan)
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { sentHash = hash }

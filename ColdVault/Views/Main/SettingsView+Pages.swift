@@ -229,8 +229,8 @@ extension SettingsView {
                                     .font(.system(size: 16, weight: .semibold))
                                     .foregroundColor(Color(uiColor: .label))
                                     .lineLimit(1)
-                                Text(contact.note.isEmpty ? shortAddress(contact.address) : contact.note)
-                                    .font(contact.note.isEmpty ? .system(size: 12, design: .monospaced) : .system(size: 13))
+                                Text(contact.note.isEmpty ? (contact.ensName ?? shortAddress(contact.address)) : contact.note)
+                                    .font(contact.note.isEmpty && contact.ensName == nil ? .system(size: 12, design: .monospaced) : .system(size: 13))
                                     .foregroundColor(Palette.secondary)
                                     .lineLimit(1)
                             }

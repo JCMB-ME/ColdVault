@@ -16,6 +16,9 @@ struct EthReceiveView: View {
     @State private var showRequest = false
     @State private var isAddingAccount = false
     @State private var accountError: String?
+    /// The ENS names and Basenames of this address (looked up when the screen opens).
+    @State private var names: [OwnedName] = []
+    @State private var copiedName: String?
     @FocusState private var requestFocused: Bool
 
     private var lang: AppLanguage { walletManager.appLanguage }
@@ -76,6 +79,12 @@ struct EthReceiveView: View {
                         .buttonStyle(.plain)
                         .padding(.horizontal, 24)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+
+                    if revealStep >= 1 && !names.isEmpty && !address.isEmpty {
+                        namesBlock
+                            .padding(.horizontal, 24)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
 
                     if revealStep >= 2 && !address.isEmpty {
@@ -183,6 +192,74 @@ struct EthReceiveView: View {
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+        .task(id: address) { await loadNames() }
+    }
+
+    /// Looks up the names of the address on screen (Ethereum, Base and Polygon share it).
+    private func loadNames() async {
+        guard network.isEVM, !walletManager.isTestnet, !address.isEmpty else {
+            names = []
+            return
+        }
+        let found = await walletManager.ownedNames(address: address)
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { names = found }
+    }
+
+    /// Every name the address has; tap one to copy it. The QR still carries the address.
+    private var namesBlock: some View {
+        VStack(spacing: 8) {
+            Text(t("Your names", "Tus nombres"))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Palette.secondary)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], spacing: 8) {
+                ForEach(names) { item in
+                    Button { copyName(item.name) } label: {
+                        HStack(spacing: 6) {
+                            if item.isPrimary {
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.yellow)
+                            }
+                            if !item.pointsHere {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.orange)
+                            }
+                            Text(item.name)
+                                .font(.system(size: 13, weight: .semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                            Image(systemName: copiedName == item.name ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 11))
+                                .foregroundColor(copiedName == item.name ? .green : Palette.secondary)
+                        }
+                        .foregroundColor(Color(uiColor: .label))
+                        .padding(.horizontal, 12)
+                        .frame(height: 36)
+                        .frame(maxWidth: .infinity)
+                        .background(Capsule().fill(SettingsStyle.groupFill))
+                        .opacity(item.pointsHere ? 1 : 0.6)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            if names.contains(where: { !$0.pointsHere }) {
+                Text(t("A name marked ⚠ points to another address: money sent to it won't arrive here.",
+                       "Un nombre con ⚠ apunta a otra dirección: el dinero que le envíen no llegará aquí."))
+                    .font(.system(size: 11))
+                    .foregroundColor(Palette.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+    }
+
+    private func copyName(_ name: String) {
+        SecurePasteboard.copy(name)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        withAnimation { copiedName = name }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation { if copiedName == name { copiedName = nil } }
+        }
     }
 
     /// Raises the QR, then shows the details one after another.

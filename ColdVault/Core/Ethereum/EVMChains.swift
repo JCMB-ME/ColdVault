@@ -222,7 +222,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .tron: return "T…"
         case .ton: return "UQ…"
         case .solana: return "…"
-        default: return "0x…"
+        default: return "0x… · name.eth"
         }
     }
 }

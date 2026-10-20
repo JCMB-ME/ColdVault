@@ -21,15 +21,19 @@ public struct Contact: Codable, Identifiable, Equatable {
     public var photo: Data?
     /// Built-in icon (SF Symbol) used when there is no photo; nil = initials.
     public var symbol: String?
+    /// The ENS name or Basename this contact was saved from (alice.eth). `address` is what the name
+    /// resolved to when it was saved, and what payments use; the name is shown and checked again.
+    public var ensName: String?
 
     public init(id: UUID = UUID(), name: String, address: String, note: String = "", photo: Data? = nil,
-                symbol: String? = nil) {
+                symbol: String? = nil, ensName: String? = nil) {
         self.id = id
         self.name = name
         self.address = address
         self.note = note
         self.photo = photo
         self.symbol = symbol
+        self.ensName = ensName
     }
 
     public var initials: String {
@@ -582,6 +586,7 @@ extension WalletManager {
             cleaned.address = decoded.type == .p2pkh || decoded.type == .p2sh ? address : address.lowercased()
         }
         cleaned.note = contact.note.trimmingCharacters(in: .whitespacesAndNewlines)
+        cleaned.ensName = contact.ensName.flatMap { ENSName.normalized($0) }
         if let index = contacts.firstIndex(where: { $0.id == contact.id }) {
             contacts[index] = cleaned
         } else {

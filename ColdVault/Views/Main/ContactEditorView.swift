@@ -17,6 +17,8 @@ struct ContactEditorView: View {
     @State private var showScanner = false
     @State private var showDeleteConfirmation = false
     @State private var photoItem: PhotosPickerItem?
+    /// What a typed name turned into (the nodes agreed), or why it did not.
+    @State private var nameLookup: NameLookupState = .idle
     private let isNew: Bool
 
     init(contact: Contact) {
@@ -65,6 +67,7 @@ struct ContactEditorView: View {
                             .padding(.horizontal, 16)
                             .frame(minHeight: 52)
                         }
+                        editorNameStatus
                         SettingsSection(header: t("Note", "Nota"), footer: nil) {
                             TextField(t("Optional", "Opcional"), text: $contact.note)
                                 .font(.system(size: 16))
@@ -107,6 +110,7 @@ struct ContactEditorView: View {
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+        .task(id: contact.address.trimmingCharacters(in: .whitespacesAndNewlines)) { await updateLookup() }
         .sheet(isPresented: $showScanner) {
             QRScannerView { code in
                 contact.address = BitcoinAddress.parsePaymentURI(code)?.address
@@ -209,9 +213,85 @@ struct ContactEditorView: View {
         .buttonStyle(.plain)
     }
 
+    /// Names (alice.eth, deadboy.base.eth) can be typed instead of an address on the EVM networks.
+    private var namesAllowed: Bool { walletManager.isEthereum && walletManager.activeNetwork.isEVM }
+    private var typedAddress: String { contact.address.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// Under the address: looking the name up, what it points to, or the name this contact was saved from.
+    @ViewBuilder
+    private var editorNameStatus: some View {
+        if namesAllowed && ENSName.looksLikeName(typedAddress) {
+            switch nameLookup {
+            case .idle:
+                EmptyView()
+            case .resolving:
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.7)
+                    Text(t("Looking up the name…", "Buscando el nombre…"))
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Palette.secondary)
+                .padding(.horizontal, 16)
+            case .resolved(let found):
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(t("\(found.name) points to", "\(found.name) apunta a"), systemImage: "checkmark.seal.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.green)
+                    Text(found.address)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(Palette.secondary)
+                        .textSelection(.enabled)
+                    Text(t("The contact is saved with this address; the name is shown and checked again when you send.",
+                           "El contacto se guarda con esta dirección; el nombre se muestra y se vuelve a comprobar al enviar."))
+                        .font(.system(size: 11))
+                        .foregroundColor(Palette.secondary)
+                }
+                .padding(.horizontal, 16)
+            case .failed(let message):
+                Text(message)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.red)
+                    .padding(.horizontal, 16)
+            }
+        } else if let name = contact.ensName {
+            Label(t("Saved from \(name)", "Guardado desde \(name)"), systemImage: "at")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Palette.secondary)
+                .padding(.horizontal, 16)
+        }
+    }
+
+    /// Looks the typed name up once typing pauses.
+    private func updateLookup() async {
+        guard namesAllowed, ENSName.looksLikeName(typedAddress) else {
+            nameLookup = .idle
+            return
+        }
+        nameLookup = .resolving
+        try? await Task.sleep(nanoseconds: 450_000_000)
+        guard !Task.isCancelled else { return }
+        let state = await ENSResolver.lookup(typedAddress)
+        guard !Task.isCancelled else { return }
+        nameLookup = state
+    }
+
     private func save() {
+        var toSave = contact
+        if namesAllowed && ENSName.looksLikeName(typedAddress) {
+            // A name is saved with the address it resolved to (the nodes agree) and keeps the name.
+            guard case .resolved(let found) = nameLookup, found.name == ENSName.normalized(typedAddress) else {
+                errorMessage = t("Wait for the name to be checked, or use a valid one.",
+                                 "Espera a que se compruebe el nombre, o usa uno válido.")
+                return
+            }
+            toSave.address = found.address
+            toSave.ensName = found.name
+        } else if toSave.ensName != nil,
+                  EthereumAddress.parse(typedAddress).map({ EthereumAddress.checksummed($0) }) != toSave.address {
+            toSave.ensName = nil          // the address was replaced by hand: the name no longer belongs to it
+        }
         do {
-            try walletManager.saveContact(contact)
+            try walletManager.saveContact(toSave)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             presentationMode.wrappedValue.dismiss()
         } catch {
