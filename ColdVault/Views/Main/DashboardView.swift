@@ -246,6 +246,16 @@ public struct DashboardView: View {
                 .onAppear { showNetworkPill() }
                 .onChange(of: walletManager.activeNetwork) { _ in showNetworkPill() }
                 .onChange(of: networkMenuOpen) { open in if !open { showNetworkPill() } }
+            } else {
+                // Bitcoin has one network: just its logo, where the others show theirs.
+                Image("BitcoinLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 26, height: 26)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 34)
+                    .padding(.top, 10)
+                    .accessibilityLabel("Bitcoin")
             }
 
             VStack(spacing: 0) {

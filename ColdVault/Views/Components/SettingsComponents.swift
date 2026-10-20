@@ -59,6 +59,7 @@ struct SettingsDisclosureSection<Content: View>: View {
     @Binding var isExpanded: Bool
     let footer: String?
     @ViewBuilder let content: Content
+    @State private var openedAt = Date()
 
     init(title: String, icon: String, isExpanded: Binding<Bool>, footer: String?,
          @ViewBuilder content: () -> Content) {
@@ -74,7 +75,8 @@ struct SettingsDisclosureSection<Content: View>: View {
             VStack(spacing: 0) {
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.spring(response: 0.62, dampingFraction: 0.86, blendDuration: 0.1)) { isExpanded.toggle() }
+                    if !isExpanded { openedAt = Date() }
+                    withAnimation(.spring(response: 0.55, dampingFraction: 0.86, blendDuration: 0.1)) { isExpanded.toggle() }
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: icon)
@@ -103,12 +105,11 @@ struct SettingsDisclosureSection<Content: View>: View {
                 if isExpanded {
                     VStack(spacing: 0) {
                         SettingsDivider(inset: 16)
-                        content
+                        // The rows step in one by one (EscalatorStack); closing fades them out.
+                        _VariadicView.Tree(EscalatorStack(openedAt: openedAt)) { content }
                     }
-                    .transition(.asymmetric(
-                        insertion: .modifier(active: SettingsReveal(progress: 0), identity: SettingsReveal(progress: 1)),
-                        removal: .modifier(active: SettingsReveal(progress: 0), identity: SettingsReveal(progress: 1))
-                            .animation(.easeOut(duration: 0.18))))
+                    .transition(.asymmetric(insertion: .identity,
+                                            removal: .opacity.animation(.easeOut(duration: 0.18))))
                 }
             }
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
@@ -127,31 +128,38 @@ struct SettingsDisclosureSection<Content: View>: View {
     }
 }
 
-/// How the rows of a group appear: they fade in from a blur, sliding down a little
-/// and growing from the top.
-struct SettingsReveal: ViewModifier, Animatable {
-    var progress: CGFloat
+/// How the rows of a group appear: one after another, each rising into place and
+/// tilting flat like the steps of an escalator coming out of the floor.
+struct EscalatorStack: _VariadicView_UnaryViewRoot {
+    /// When the group opened: rows that appear later (a switch showing more options)
+    /// come in at once instead of waiting for their turn.
+    let openedAt: Date
 
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
+    func body(children: _VariadicView.Children) -> some View {
+        let staggered = Date().timeIntervalSince(openedAt) < 0.8
+        return VStack(spacing: 0) {
+            ForEach(Array(children.enumerated()), id: \.element.id) { index, child in
+                child.modifier(EscalatorStep(delay: staggered ? 0.04 + Double(min(index, 16)) * 0.045 : 0))
+            }
+        }
     }
+}
+
+private struct EscalatorStep: ViewModifier {
+    let delay: Double
+    @State private var shown = false
 
     func body(content: Content) -> some View {
-        // A soft edge sweeps down the rows: the first ones come into focus before the
-        // last, instead of all at once.
-        let edge = progress * 1.35
-        return content
-            .mask(
-                LinearGradient(stops: [
-                    .init(color: .black, location: 0),
-                    .init(color: .black, location: max(0, min(1, edge - 0.35))),
-                    .init(color: .clear, location: max(0, min(1, edge)))
-                ], startPoint: .top, endPoint: .bottom)
-            )
-            .blur(radius: (1 - progress) * 8)
-            .offset(y: (1 - progress) * -10)
+        content
+            .opacity(shown ? 1 : 0)
+            .offset(y: shown ? 0 : 26)
+            .scaleEffect(shown ? 1 : 0.94, anchor: .top)
+            .rotation3DEffect(.degrees(shown ? 0 : 24), axis: (x: 1, y: 0, z: 0), anchor: .top, perspective: 0.55)
+            .onAppear {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.78).delay(delay)) { shown = true }
+            }
     }
+}
 }
 
 /// A small title inside an open group (Advanced: Lightning, Export, Cold wallet).
