@@ -388,7 +388,8 @@ public struct DashboardView: View {
                             browserPullIndicator
                                 .padding(.bottom, 18)
                         }
-                        .frame(width: geo.size.width, minHeight: geo.size.height)
+                        .frame(width: geo.size.width)
+                        .frame(minHeight: geo.size.height)
                         .background(
                             GeometryReader { contentGeo in
                                 Color.clear.preference(
