@@ -352,7 +352,9 @@ extension WalletManager {
 
     /// The coin lists its coins and tokens (Stable's list is its balance, always shown).
     public var showsTokenList: Bool { isEthereum && !isDollars }
-    public var supportsNFTs: Bool { activeCoin == .ethereum || activeCoin == .polygon || activeCoin == .ton }
+    public var supportsNFTs: Bool {
+        activeCoin == .ethereum || activeCoin == .polygon || activeCoin == .ton || activeCoin == .solana
+    }
 
     // MARK: - Home blocks (NFTs / ordinals)
 
@@ -427,6 +429,10 @@ extension WalletManager {
             guard let owner = address(on: chain, record: record) else { continue }
             if chain == .ton {
                 result += await tonNFTs(owner: owner, testnet: record.isTestnet)
+                continue
+            }
+            if chain == .solana {
+                result += await solanaNFTs(owner: owner, testnet: record.isTestnet)
                 continue
             }
             guard let base = chain.blockscout(testnet: record.isTestnet) else { continue }

@@ -19,6 +19,42 @@ extension WalletManager {
                          balance: UInt256(lamports), usdPrice: nativeUsdPrice("SOL"), iconURL: nil)]
     }
 
+    // MARK: - NFTs
+
+    /// The account's NFTs. Burnt assets and fungible tokens are left out; the picture only loads from
+    /// https (EVMNFT.webURL), and texts are cleaned of control and direction characters.
+    func solanaNFTs(owner: String, testnet: Bool) async -> [EVMNFT] {
+        let items = (try? await SolanaAPI(isTestnet: testnet).nfts(owner: owner)) ?? []
+        return items.compactMap { item in
+            let interface = (item["interface"] as? String) ?? ""
+            guard let id = item["id"] as? String, !interface.contains("Fungible"),
+                  (item["burnt"] as? Bool) != true else { return nil }
+            let content = item["content"] as? [String: Any]
+            let metadata = content?["metadata"] as? [String: Any]
+            let links = content?["links"] as? [String: Any]
+            let group = ((item["grouping"] as? [[String: Any]]) ?? []).first { ($0["group_key"] as? String) == "collection" }
+            let collection = KnownToken.cleanText(
+                ((group?["collection_metadata"] as? [String: Any])?["name"] as? String)
+                    ?? (metadata?["symbol"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "NFT", limit: 60)
+            let file = ((content?["files"] as? [[String: Any]]) ?? []).first?["uri"] as? String
+            let compressed = ((item["compression"] as? [String: Any])?["compressed"] as? Bool) == true
+            let standard: String
+            switch interface {
+            case _ where compressed: standard = "Compressed NFT"
+            case "ProgrammableNFT": standard = "Programmable NFT"
+            case "MplCoreAsset": standard = "Metaplex Core"
+            case "V1_NFT", "V2_NFT": standard = "Metaplex NFT"
+            default: standard = interface.isEmpty ? "NFT" : KnownToken.cleanText(interface, limit: 30)
+            }
+            return EVMNFT(chain: .solana, contract: id, tokenId: "",
+                          name: KnownToken.cleanText((metadata?["name"] as? String) ?? collection, limit: 80),
+                          collection: collection,
+                          details: KnownToken.cleanText((metadata?["description"] as? String) ?? "", limit: 600),
+                          imageURL: EVMNFT.webURL(links?["image"] as? String) ?? EVMNFT.webURL(file),
+                          standard: standard)
+        }
+    }
+
     // MARK: - History
 
     /// The newest transfers of the account (failed ones and fee-only transactions are left out).

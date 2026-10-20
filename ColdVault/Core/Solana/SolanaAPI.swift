@@ -63,8 +63,17 @@ public final class SolanaAPI {
                   : ["https://api.mainnet-beta.solana.com", "https://solana-rpc.publicnode.com"]
     }
 
-    /// One JSON-RPC call, tried on each node in turn.
     private func call(_ method: String, _ params: [Any]) async throws -> Any {
+        try await rpc(method, params: params)
+    }
+
+    /// For the methods that take named parameters (the asset API).
+    private func call(_ method: String, object params: [String: Any]) async throws -> Any {
+        try await rpc(method, params: params)
+    }
+
+    /// One JSON-RPC call, tried on each node in turn.
+    private func rpc(_ method: String, params: Any) async throws -> Any {
         let body = try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 1, "method": method, "params": params])
         var failure: Error = SolanaError.unavailable
         for endpoint in endpoints {
@@ -130,6 +139,22 @@ public final class SolanaAPI {
                           date: (item["blockTime"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) },
                           failed: item["err"].map { !($0 is NSNull) } ?? false)
         }
+    }
+
+    /// The assets the account owns that are not fungible tokens (compressed NFTs included), as the
+    /// asset API (DAS) answers: 100 per page, at most 300.
+    func nfts(owner: String) async throws -> [[String: Any]] {
+        var items: [[String: Any]] = []
+        for page in 1...3 {
+            let result = try await call("getAssetsByOwner", object: [
+                "ownerAddress": owner, "page": page, "limit": 100,
+                "options": ["showFungible": false, "showCollectionMetadata": true]
+            ]) as? [String: Any]
+            guard let batch = result?["items"] as? [[String: Any]] else { break }
+            items += batch
+            if batch.count < 100 { break }
+        }
+        return items
     }
 
     /// What a transaction did to `owner`; nil when the node does not have it or `owner` is not in it.

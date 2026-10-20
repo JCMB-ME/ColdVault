@@ -141,7 +141,9 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case (.polygon, true): return URL(string: "https://amoy.polygonscan.com/nft/\(contract)/\(tokenId)")
         case (.ton, false): return URL(string: "https://tonviewer.com/\(contract)")
         case (.ton, true): return URL(string: "https://testnet.tonviewer.com/\(contract)")
-        case (.tron, _), (.solana, _): return nil
+        case (.tron, _): return nil
+        case (.solana, false): return URL(string: "https://solscan.io/token/\(contract)")
+        case (.solana, true): return URL(string: "https://solscan.io/token/\(contract)?cluster=devnet")
         }
     }
 

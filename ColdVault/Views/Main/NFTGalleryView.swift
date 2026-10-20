@@ -342,10 +342,13 @@ struct NFTDetailView: View {
                         row(t("Network", "Red"), item.chain.name(testnet: walletManager.isTestnet))
                         SettingsDivider(inset: 16)
                         row(t("Standard", "Estándar"), item.standard)
+                        // Solana assets are told apart by their address alone: no token id.
+                        if !item.tokenId.isEmpty {
+                            SettingsDivider(inset: 16)
+                            row("Token ID", item.tokenId)
+                        }
                         SettingsDivider(inset: 16)
-                        row("Token ID", item.tokenId)
-                        SettingsDivider(inset: 16)
-                        row(t("Contract", "Contrato"), item.contract)
+                        row(item.chain == .solana ? "Mint" : t("Contract", "Contrato"), item.contract)
                     }
                     .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
                     if let url = item.chain.nftURL(contract: item.contract, tokenId: item.tokenId, testnet: walletManager.isTestnet) {
