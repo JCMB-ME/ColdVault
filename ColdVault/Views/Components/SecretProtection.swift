@@ -119,6 +119,7 @@ struct AppLockModifier: ViewModifier {
         }
         // Face ID never starts on its own: the user taps "Unlock" when ready.
         .onAppear { if locked && !enabled { locked = false } }
+        .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in lockForShake() }
         .onChange(of: scenePhase) { phase in
             if phase == .background, enabled {
                 locked = true
@@ -128,6 +129,13 @@ struct AppLockModifier: ViewModifier {
                 locked = false
             }
         }
+    }
+
+    /// Shaking the iPhone locks the wallet (only while the app lock is on).
+    private func lockForShake() {
+        guard enabled, !locked else { return }
+        locked = true
+        AppLock.dismissPresentedSheets()
     }
 
     private func unlock() {

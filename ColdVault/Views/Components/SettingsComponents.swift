@@ -60,6 +60,12 @@ struct SettingsDisclosureSection<Content: View>: View {
     let footer: String?
     @ViewBuilder let content: Content
     @State private var openedAt = Date()
+    @State private var contentHeight: CGFloat = 0
+
+    private struct ContentHeightKey: PreferenceKey {
+        static var defaultValue: CGFloat = 0
+        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+    }
 
     init(title: String, icon: String, isExpanded: Binding<Bool>, footer: String?,
          @ViewBuilder content: () -> Content) {
@@ -102,17 +108,21 @@ struct SettingsDisclosureSection<Content: View>: View {
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
 
-                if isExpanded {
-                    VStack(spacing: 0) {
-                        SettingsDivider(inset: 16)
-                        // The rows step in one by one (EscalatorStack); closing rolls them back up under
-                        // the title with the same spring as opening, instead of vanishing at once.
-                        _VariadicView.Tree(EscalatorStack(openedAt: openedAt)) { content }
-                    }
-                    .clipped()
-                    .transition(.asymmetric(insertion: .identity,
-                                            removal: .opacity.combined(with: .offset(y: -14))))
+                // Always in the layout, so its height is measured and the panel rolls open and shut
+                // with the same spring (a conditional view would just disappear).
+                VStack(spacing: 0) {
+                    SettingsDivider(inset: 16)
+                    // The rows step in one by one (EscalatorStack); a new identity per opening replays it.
+                    _VariadicView.Tree(EscalatorStack(openedAt: openedAt)) { content }
                 }
+                .id(openedAt)
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)
+                })
+                .frame(height: isExpanded ? contentHeight : 0, alignment: .top)
+                .clipped()
+                .opacity(isExpanded ? 1 : 0)
+                .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
             }
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))

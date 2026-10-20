@@ -2,7 +2,7 @@
 //  Shake.swift
 //  ColdVault
 //
-//  Shaking the iPhone posts a notification (Ethereum wallets switch network with it).
+//  Shaking the iPhone posts a notification; shaking locks the wallet (AppLockModifier).
 //
 
 import SwiftUI
