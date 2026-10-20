@@ -144,11 +144,18 @@ extension SettingsView {
         .padding(.horizontal, 4)
 
         SettingsSection(header: t("App", "App"),
-                        footer: t("Asks for Face ID or your passcode every time ColdVault opens (tap Unlock). Your keys always need it anyway.",
-                                  "Pide Face ID o tu código cada vez que abres ColdVault (toca Desbloquear). Tus claves siempre lo piden de todos modos.")) {
+                        footer: t("Asks for Face ID or your passcode every time ColdVault opens (tap Unlock). With an access PIN you can type it instead. Your keys always need Face ID or your passcode anyway.",
+                                  "Pide Face ID o tu código cada vez que abres ColdVault (toca Desbloquear). Con un PIN de acceso puedes escribirlo en su lugar. Tus claves siempre piden Face ID o tu código de todos modos.")) {
             SettingsRow(title: t("Lock with Face ID", "Bloquear con Face ID"), icon: "faceid") {
                 Toggle("", isOn: Binding(get: { appLockEnabled }, set: { setAppLock($0) }))
                     .labelsHidden()
+            }
+            if appLockEnabled && walletManager.decoySlot == nil {
+                SettingsDivider(inset: 60)
+                Button { showAppPin = true } label: {
+                    SettingsRow(title: t("Access PIN", "PIN de acceso"),
+                                value: AppPin.isSet ? t("On", "Activado") : nil, chevron: true, icon: "number")
+                }
             }
             // Hidden while PinLock.duressEnabled is false, and never shown while the decoy wallet is open.
             if PinLock.duressEnabled && walletManager.decoySlot == nil {
@@ -158,6 +165,9 @@ extension SettingsView {
                                 value: PinLock.isEnabled ? t("On", "Activado") : nil, chevron: true, icon: "hand.raised")
                 }
             }
+        }
+        .sheet(isPresented: $showAppPin) {
+            AppPinSetupView().environmentObject(walletManager)
         }
         .sheet(isPresented: $showDuress) {
             DuressSetupView().environmentObject(walletManager)

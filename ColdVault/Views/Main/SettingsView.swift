@@ -40,6 +40,7 @@ public struct SettingsView: View {
     @State var showSignPSBT = false
     @State var showInheritance = false
     @State var showDuress = false
+    @State var showAppPin = false
     @State var confirmTestnet = false
     @State var showOrdinals = false
     @State var showNFTs = false

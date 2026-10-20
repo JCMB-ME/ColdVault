@@ -81,7 +81,14 @@ struct AppLockModifier: ViewModifier {
                 .allowsHitTesting(!locked)
                 // A blur does not hide the text from VoiceOver: hide it while locked.
                 .accessibilityHidden(locked)
-            if locked && PinLock.isEnabled {
+            if locked && AppPin.isSet {
+                Color(uiColor: .systemBackground).opacity(0.9)
+                    .ignoresSafeArea()
+                PinPad(title: WalletManager.deviceLanguage == .english ? "Enter your PIN" : "Introduce tu PIN",
+                       shake: pinShake, shuffled: true, onFaceID: unlock, onComplete: checkAppPIN)
+                    .padding(.horizontal, 20)
+                    .transition(.opacity)
+            } else if locked && PinLock.isEnabled {
                 Color(uiColor: .systemBackground).opacity(0.9)
                     .ignoresSafeArea()
                 VStack(spacing: 26) {
@@ -142,6 +149,23 @@ struct AppLockModifier: ViewModifier {
                 walletManager.exitDecoy()
             }
             withAnimation(.easeOut(duration: 0.25)) { locked = false }
+        }
+    }
+
+    /// Access PIN (Settings › Security): opens the real wallets, like Face ID does without a duress PIN.
+    private func checkAppPIN(_ pin: String) {
+        if AppPin.blockedRemaining() > 0 {
+            pinShake += 1
+            return
+        }
+        if AppPin.matches(pin) {
+            AppPin.registerSuccess()
+            walletManager.exitDecoy()
+            withAnimation(.easeOut(duration: 0.25)) { locked = false }
+        } else {
+            AppPin.registerFailure()
+            pinShake += 1
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
         }
     }
 

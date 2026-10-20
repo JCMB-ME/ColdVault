@@ -169,9 +169,20 @@ struct PinPad: View {
     let title: String
     var subtitle: String? = nil
     var shake: Int = 0
+    /// Shuffles the digits on every new round (on appear, after each PIN and after a wrong one).
+    var shuffled: Bool = false
+    /// When set, a Face ID button sits at the bottom left, where the keypad is otherwise empty.
+    var onFaceID: (() -> Void)? = nil
     let onComplete: (String) -> Void
 
     @State private var digits = ""
+    @State private var layout = PinPad.defaultLayout
+
+    private static let defaultLayout = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0]
+
+    private func reshuffle() {
+        layout = shuffled ? Array(0...9).shuffled() : PinPad.defaultLayout
+    }
 
     var body: some View {
         VStack(spacing: 22) {
@@ -199,9 +210,19 @@ struct PinPad: View {
             .animation(.default, value: shake)
 
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(78), spacing: 18), count: 3), spacing: 14) {
-                ForEach(1...9, id: \.self) { key($0) }
-                Color.clear.frame(width: 72, height: 72)
-                key(0)
+                ForEach(0..<9, id: \.self) { key(layout[$0]) }
+                if let onFaceID = onFaceID {
+                    Button(action: onFaceID) {
+                        Image(systemName: "faceid")
+                            .font(.system(size: 26, weight: .regular))
+                            .foregroundColor(Color(uiColor: .label))
+                            .frame(width: 72, height: 72)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Color.clear.frame(width: 72, height: 72)
+                }
+                key(layout[9])
                 Button {
                     if !digits.isEmpty { digits.removeLast() }
                 } label: {
@@ -213,7 +234,11 @@ struct PinPad: View {
                 .buttonStyle(.plain)
             }
         }
-        .onChange(of: shake) { _ in digits = "" }
+        .onAppear { reshuffle() }
+        .onChange(of: shake) { _ in
+            digits = ""
+            reshuffle()
+        }
     }
 
     private func key(_ number: Int) -> some View {
@@ -226,6 +251,7 @@ struct PinPad: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                     onComplete(pin)
                     digits = ""
+                    reshuffle()
                 }
             }
         } label: {
