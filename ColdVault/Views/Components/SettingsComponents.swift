@@ -52,27 +52,25 @@ struct SettingsSection<Content: View>: View {
     }
 }
 
-/// Height of an open group's rows, read back so the panel can animate to it.
-private struct ContentHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
 /// A group of Settings that opens and closes with one tap on its title row.
 struct SettingsDisclosureSection<Content: View>: View {
     let title: String
     let icon: String
+    /// Where the open / closed choice is remembered (the callers pass an @AppStorage). The panel
+    /// animates from its own `open` state: a binding backed by UserDefaults does not carry the
+    /// animation of withAnimation, so the panel would just appear and disappear.
     @Binding var isExpanded: Bool
     let footer: String?
     @ViewBuilder let content: Content
+    @State private var open: Bool
     @State private var openedAt = Date()
-    @State private var contentHeight: CGFloat = 0
 
     init(title: String, icon: String, isExpanded: Binding<Bool>, footer: String?,
          @ViewBuilder content: () -> Content) {
         self.title = title
         self.icon = icon
         self._isExpanded = isExpanded
+        self._open = State(initialValue: isExpanded.wrappedValue)
         self.footer = footer
         self.content = content()
     }
@@ -82,16 +80,18 @@ struct SettingsDisclosureSection<Content: View>: View {
             VStack(spacing: 0) {
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    if !isExpanded { openedAt = Date() }
-                    withAnimation(.spring(response: 0.55, dampingFraction: 0.86, blendDuration: 0.1)) { isExpanded.toggle() }
+                    let next = !open
+                    if next { openedAt = Date() }
+                    withAnimation(.spring(response: 0.55, dampingFraction: 0.86, blendDuration: 0.1)) { open = next }
+                    isExpanded = next
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: icon)
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(isExpanded ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                            .foregroundColor(open ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
                             .frame(width: 36, height: 36)
-                            .background(Circle().fill(isExpanded ? Color(uiColor: .label)
-                                                                 : Color(uiColor: .systemBackground).opacity(0.9)))
+                            .background(Circle().fill(open ? Color(uiColor: .label)
+                                                           : Color(uiColor: .systemBackground).opacity(0.9)))
                         Text(title)
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundColor(Color(uiColor: .label))
@@ -99,7 +99,7 @@ struct SettingsDisclosureSection<Content: View>: View {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundColor(Palette.secondary)
-                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                            .rotationEffect(.degrees(open ? 180 : 0))
                     }
                     .padding(.horizontal, 12)
                     .frame(minHeight: 62)
@@ -107,32 +107,25 @@ struct SettingsDisclosureSection<Content: View>: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(.isHeader)
-                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+                .accessibilityValue(open ? "Expanded" : "Collapsed")
 
-                // Always in the layout, so its height is measured and the panel rolls open and shut
-                // with the same spring (a conditional view would just disappear).
-                VStack(spacing: 0) {
-                    SettingsDivider(inset: 16)
-                    // The rows step in one by one (EscalatorStack); a new identity per opening replays it.
-                    _VariadicView.Tree(EscalatorStack(openedAt: openedAt)) { content }
+                if open {
+                    VStack(spacing: 0) {
+                        SettingsDivider(inset: 16)
+                        // Opening: the rows step in one by one (EscalatorStack). Closing: they gather up
+                        // toward the title while they fade, and the panel shrinks with the same spring.
+                        _VariadicView.Tree(EscalatorStack(openedAt: openedAt)) { content }
+                    }
+                    .transition(.asymmetric(insertion: .identity,
+                                            removal: .opacity.combined(with: .scale(scale: 0.94, anchor: .top))))
                 }
-                // Full height even when the frame below is 0, so the measurement is the real one.
-                .fixedSize(horizontal: false, vertical: true)
-                .id(openedAt)
-                .background(GeometryReader { proxy in
-                    Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)
-                })
-                .frame(height: isExpanded ? contentHeight : 0, alignment: .top)
-                .clipped()
-                .opacity(isExpanded ? 1 : 0)
-                .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
             }
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .shadow(color: Color.black.opacity(isExpanded ? 0.06 : 0), radius: 14, x: 0, y: 6)
-            .scaleEffect(isExpanded ? 1 : 0.995)
+            .shadow(color: Color.black.opacity(open ? 0.06 : 0), radius: 14, x: 0, y: 6)
+            .scaleEffect(open ? 1 : 0.995)
 
-            if isExpanded, let footer = footer {
+            if open, let footer = footer {
                 Text(footer)
                     .font(.system(size: 12))
                     .foregroundColor(Palette.secondary)
