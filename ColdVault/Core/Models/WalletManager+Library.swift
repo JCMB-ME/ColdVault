@@ -507,6 +507,10 @@ extension WalletManager {
                 let origin = secret.tonNative == true ? "TON (Tonkeeper)" : TonKeys.path(index: account.number)
                 result.append(ExportedKey(title: "\(account.name) · TON", detail: origin + " · Ed25519",
                                           key: key.hexEncodedString))
+            case .solana:
+                let key = try solanaKey(secret: secret, account: account.number)
+                result.append(ExportedKey(title: "\(account.name) · Solana", detail: SolanaKeys.path(index: account.number) + " · Ed25519",
+                                          key: key.hexEncodedString))
             case .dollars:
                 let evm = try ethereumKey(secret: secret, account: account.number)
                 result.append(ExportedKey(title: "\(account.name) · Ethereum / Base / Polygon",

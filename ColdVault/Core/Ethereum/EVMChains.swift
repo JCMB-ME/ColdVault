@@ -9,13 +9,14 @@
 //   • Polygon: an EVM chain paid in POL, fees of cents (same 0x address).
 //   • Tron: TRX; the biggest USDT network (T… address, same phrase).
 //   • TON: Telegram's network, USDT and TON (UQ… address, same phrase).
-//  Testnets: Sepolia, Base Sepolia, Polygon Amoy, Tron Nile, TON testnet.
+//   • Solana: SOL (base58 address, same phrase).
+//  Testnets: Sepolia, Base Sepolia, Polygon Amoy, Tron Nile, TON testnet, Solana Devnet.
 //
 
 import Foundation
 
 public enum EVMChain: String, CaseIterable, Identifiable, Codable {
-    case ethereum, base, polygon, tron, ton
+    case ethereum, base, polygon, tron, ton, solana
 
     public var id: String { rawValue }
 
@@ -29,6 +30,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .polygon: return testnet ? "Polygon Amoy" : "Polygon"
         case .tron: return testnet ? "Tron Nile" : "Tron"
         case .ton: return testnet ? "TON Testnet" : "TON"
+        case .solana: return testnet ? "Solana Devnet" : "Solana"
         }
     }
 
@@ -39,6 +41,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .polygon: return "POL"
         case .tron: return "TRX"
         case .ton: return "TON"
+        case .solana: return "SOL"
         }
     }
 
@@ -48,6 +51,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .polygon: return "Polygon"
         case .tron: return "Tron"
         case .ton: return "Toncoin"
+        case .solana: return "Solana"
         }
     }
 
@@ -56,6 +60,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .ethereum, .base, .polygon: return 18
         case .tron: return 6
         case .ton: return 9
+        case .solana: return 9
         }
     }
 
@@ -67,7 +72,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .ethereum: return testnet ? 11_155_111 : 1
         case .base: return testnet ? 84_532 : 8_453
         case .polygon: return testnet ? 80_002 : 137
-        case .tron, .ton: return 0
+        case .tron, .ton, .solana: return 0
         }
     }
 
@@ -104,6 +109,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .polygon: return "Polygonscan"
         case .tron: return "Tronscan"
         case .ton: return "Tonviewer"
+        case .solana: return "Solscan"
         }
     }
 
@@ -119,6 +125,8 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case (.tron, true): return URL(string: "https://nile.tronscan.org/#/transaction/\(hash)")
         case (.ton, false): return URL(string: "https://tonviewer.com/transaction/\(hash)")
         case (.ton, true): return URL(string: "https://testnet.tonviewer.com/transaction/\(hash)")
+        case (.solana, false): return URL(string: "https://solscan.io/tx/\(hash)")
+        case (.solana, true): return URL(string: "https://solscan.io/tx/\(hash)?cluster=devnet")
         }
     }
 
@@ -133,7 +141,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case (.polygon, true): return URL(string: "https://amoy.polygonscan.com/nft/\(contract)/\(tokenId)")
         case (.ton, false): return URL(string: "https://tonviewer.com/\(contract)")
         case (.ton, true): return URL(string: "https://testnet.tonviewer.com/\(contract)")
-        case (.tron, _): return nil
+        case (.tron, _), (.solana, _): return nil
         }
     }
 
@@ -145,6 +153,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .polygon: return "PolygonLogo"
         case .tron: return "TronLogo"
         case .ton: return "TonLogo"
+        case .solana: return "SolanaLogo"
         }
     }
 
@@ -155,6 +164,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .polygon: return "PolygonLogo"
         case .tron: return "TronLogo"
         case .ton: return "TonLogo"
+        case .solana: return "SolanaLogo"
         }
     }
 
@@ -166,6 +176,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .polygon: return "polygon"
         case .tron: return "tron"
         case .ton: return "ton"
+        case .solana: return "solana"
         }
     }
 
@@ -179,6 +190,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .polygon: return .polygon
         case .tron: return .tron
         case .ton: return .ton
+        case .solana: return .solana
         }
     }
 
@@ -187,6 +199,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .tron: return TronKeys.path(index: index)
         case .ton: return TonKeys.path(index: index)
+        case .solana: return SolanaKeys.path(index: index)
         default: return EthereumKeys.path(index: index)
         }
     }
@@ -196,6 +209,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .tron: return TronAddress.isValid(text)
         case .ton: return TonAddress.parse(text) != nil
+        case .solana: return SolanaAddress.isValid(text)
         default: return EthereumAddress.parse(text) != nil
         }
     }
@@ -205,6 +219,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .tron: return "T…"
         case .ton: return "UQ…"
+        case .solana: return "…"
         default: return "0x…"
         }
     }

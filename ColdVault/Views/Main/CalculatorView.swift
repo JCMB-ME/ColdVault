@@ -14,7 +14,7 @@ struct CalculatorView: View {
     @EnvironmentObject var walletManager: WalletManager
     @Environment(\.presentationMode) var presentationMode
 
-    static let coins = ["BTC", "sats", "ETH", "POL", "TRX", "TON", "USDT", "USDC", "EURC"]
+    static let coins = ["BTC", "sats", "ETH", "POL", "TRX", "TON", "SOL", "USDT", "USDC", "EURC"]
     static let units = coins + ["USD", "MXN", "JPY", "CNY"]
     private static let crypto: Set<String> = Set(coins)
     /// Coins priced from Kraken (in dollars).
@@ -69,6 +69,7 @@ struct CalculatorView: View {
             case .polygon: unit = "POL"
             case .tron: unit = "TRX"
             case .ton: unit = "TON"
+            case .solana: unit = "SOL"
             case .dollars: unit = "USDT"
             default: break
             }
@@ -214,6 +215,8 @@ struct CalculatorView: View {
             CoinLogo(coin: .tron, size: size)
         case "TON":
             CoinLogo(coin: .ton, size: size)
+        case "SOL":
+            CoinLogo(coin: .solana, size: size)
         case "USDT", "USDC":
             Image(item == "USDT" ? "UsdtLogo" : "UsdcLogo")
                 .resizable()
@@ -296,7 +299,7 @@ struct CalculatorView: View {
     static func fractionDigits(_ item: String) -> Int {
         switch item {
         case "sats", "JPY": return 0
-        case "BTC", "ETH", "POL", "TRX", "TON": return 8
+        case "BTC", "ETH", "POL", "TRX", "TON", "SOL": return 8
         default: return 2
         }
     }
@@ -371,7 +374,7 @@ struct CalculatorView: View {
         case "ETH": return ethPrices["USD"]
         case "USDT", "USDC": return 1
         case "EURC": return coinUsd["EURC"]
-        case "POL", "TRX", "TON": return coinUsd[item]
+        case "POL", "TRX", "TON", "SOL": return coinUsd[item]
         case "USD": return 1
         default:
             guard let usd = prices["USD"], let local = prices[item], local > 0 else { return nil }
@@ -421,7 +424,7 @@ struct CalculatorView: View {
             formatter.minimumFractionDigits = 2
             formatter.maximumFractionDigits = 2
             return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
-        case "BTC", "ETH", "POL", "TRX", "TON":
+        case "BTC", "ETH", "POL", "TRX", "TON", "SOL":
             return CalculatorView.btcFormatter.string(from: NSNumber(value: value)) ?? "\(value)"
         case "sats": return CalculatorView.satsFormatter.string(from: NSNumber(value: value)) ?? "\(Int64(value))"
         default:
@@ -439,7 +442,7 @@ struct CalculatorView: View {
         let text: String
         switch item {
         case "sats": text = String(Int64(value.rounded()))
-        case "BTC", "ETH", "POL", "TRX", "TON":
+        case "BTC", "ETH", "POL", "TRX", "TON", "SOL":
             text = String(format: "%.8f", value)
                 .replacingOccurrences(of: "0+$", with: "", options: .regularExpression)
                 .replacingOccurrences(of: "\\.$", with: "", options: .regularExpression)

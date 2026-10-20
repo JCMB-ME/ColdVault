@@ -15,6 +15,8 @@ public enum ChainTransaction {
     case tron(TronTransaction)
     /// TON: what the key signs; the StateInit is added when the wallet is not deployed.
     case ton(wallet: TonAddress, signing: TonCell, deploy: Bool, version: TonWalletVersion)
+    /// Solana: the lamports and the recipient; the transaction is built with a fresh blockhash when sent.
+    case solana(lamports: UInt64, to: Data)
 }
 
 /// A broadcast whose outcome is unknown, with what is needed to ask the chain about it.
@@ -26,6 +28,8 @@ struct UnconfirmedSend {
         case tron(txID: Data, signed: Data)
         /// TON message hash and the wallet seqno it was signed with: done once the wallet's seqno moves on.
         case ton(hash: String, seqno: UInt32)
+        /// Solana signature and the signed bytes: found with getSignatureStatuses, else sent again (same bytes, same signature).
+        case solana(signature: String, signed: Data)
     }
     let recipient: String
     let amount: UInt256
@@ -64,6 +68,8 @@ extension WalletManager {
         switch asset.chain {
         case .tron:
             return UInt256(UInt64(asset.isNative ? 300_000 : 15_000_000))          // 0.3 TRX / ~15 TRX of energy
+        case .solana:
+            return UInt256(SolanaTransfer.fee)
         case .ton:
             return UInt256(UInt64(asset.isNative ? 6_000_000 : 56_000_000))        // ~0.006 TON / 0.05 TON attached
         default:
@@ -79,6 +85,7 @@ extension WalletManager {
         switch asset.chain {
         case .tron: return try await prepareTronSend(asset: asset, to: recipient, amount: amount)
         case .ton: return try await prepareTonSend(asset: asset, to: recipient, amount: amount)
+        case .solana: return try await prepareSolanaSend(asset: asset, to: recipient, amount: amount)
         default: return try await prepareEVMChainSend(asset: asset, to: recipient, amount: amount, fast: fast)
         }
     }
@@ -282,6 +289,21 @@ extension WalletManager {
                 unconfirmedSends[sendKey] = nil          // refused or expired: it can no longer go out
                 return nil
             }
+        case .solana(let signature, let signed):
+            let api = SolanaAPI(isTestnet: isTestnet)
+            if try await api.isKnown(signature) {
+                unconfirmedSends[sendKey] = nil
+                return signature
+            }
+            // Not on the network yet: the same signed bytes cannot pay twice, so they are sent again.
+            do {
+                let sent = try await api.send(signed)
+                unconfirmedSends[sendKey] = nil
+                return sent
+            } catch SolanaError.server(_) {
+                unconfirmedSends[sendKey] = nil          // expired or refused: it can no longer go out
+                return nil
+            }
         case .ton(let hash, let seqno):
             let current = try await TonAPI(isTestnet: isTestnet).wallet(owner).seqno
             unconfirmedSends[sendKey] = nil
@@ -335,6 +357,26 @@ extension WalletManager {
             } catch TronError.server(let text) {
                 unconfirmedSends[sendKey] = nil          // refused or expired: it can no longer go out
                 throw TronError.server(text)
+            }
+            unconfirmedSends[sendKey] = nil
+        case .solana(let lamports, let to):
+            let key = try WalletManager.solanaKey(secret: secret, account: account)
+            guard let publicKey = SolanaKeys.publicKey(privateKey: key),
+                  SolanaKeys.address(publicKey: publicKey) == address(on: .solana) else { throw WalletError.secretMismatch }
+            let api = SolanaAPI(isTestnet: isTestnet)
+            // A fresh blockhash: the one from the review may have expired by now.
+            let blockhash = try await api.latestBlockhash()
+            let message = SolanaTransfer.message(from: publicKey, to: to, lamports: lamports, blockhash: blockhash)
+            guard let signed = SolanaTransfer.signed(message: message, privateKey: key) else { throw WalletError.secretMismatch }
+            let signature = SolanaTransfer.signatureText(of: signed)
+            // Recorded before the send: if the outcome is unknown, the next attempt looks the signature up.
+            unconfirmedSends[sendKey] = UnconfirmedSend(recipient: plan.recipient, amount: plan.amount,
+                                                        proof: .solana(signature: signature, signed: signed))
+            do {
+                hash = try await api.send(signed)
+            } catch SolanaError.server(let text) {
+                unconfirmedSends[sendKey] = nil          // refused: nothing went out
+                throw SolanaError.server(text)
             }
             unconfirmedSends[sendKey] = nil
         case .ton(let wallet, let signing, let deploy, let version):

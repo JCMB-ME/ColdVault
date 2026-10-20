@@ -17,7 +17,7 @@ public enum WalletSecurityType: String, Codable {
 /// The coin of a wallet. Bitcoin wallets made before Ethereum existed have none (nil).
 public enum CoinKind: String, Codable, CaseIterable, Identifiable {
     /// `dollars` ("Stable"): stablecoins (USDC / USDT…) on every network the app knows.
-    case bitcoin, ethereum, dollars, ton, tron, polygon
+    case bitcoin, ethereum, dollars, ton, tron, polygon, solana
     public var id: String { rawValue }
     public var symbol: String {
         switch self {
@@ -27,6 +27,7 @@ public enum CoinKind: String, Codable, CaseIterable, Identifiable {
         case .ton: return "TON"
         case .tron: return "TRX"
         case .polygon: return "POL"
+        case .solana: return "SOL"
         }
     }
     /// Every coin but bitcoin: one account address, balances per network, tokens.
@@ -36,7 +37,7 @@ public enum CoinKind: String, Codable, CaseIterable, Identifiable {
     public var unitsPerCoin: Double {
         switch self {
         case .bitcoin: return 100_000_000
-        case .ethereum, .polygon, .ton: return 1_000_000_000
+        case .ethereum, .polygon, .ton, .solana: return 1_000_000_000
         case .tron, .dollars: return 1_000_000
         }
     }
@@ -49,6 +50,7 @@ public enum CoinKind: String, Codable, CaseIterable, Identifiable {
         case .polygon: return [.polygon]
         case .tron: return [.tron]
         case .ton: return [.ton]
+        case .solana: return [.solana]
         // Tron and TON are left out of Stable for now (their own wallets keep them).
         case .dollars: return [.ethereum, .base, .polygon]
         }
@@ -62,6 +64,7 @@ public enum CoinKind: String, Codable, CaseIterable, Identifiable {
         case .ton: return "TON"
         case .tron: return "Tron"
         case .polygon: return "Polygon"
+        case .solana: return "Solana"
         }
     }
 }

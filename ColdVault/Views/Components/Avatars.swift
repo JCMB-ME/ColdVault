@@ -381,6 +381,7 @@ struct CoinLogo: View {
         case .polygon: return "PolygonLogo"
         case .tron: return "TronLogo"
         case .ton: return "TonLogo"
+        case .solana: return "SolanaLogo"
         }
     }
 }

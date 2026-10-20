@@ -211,6 +211,7 @@ extension WalletManager {
             case .bitcoin: return BitcoinAddress.decode(contact.address) != nil
             case .tron: return TronAddress.isValid(contact.address)
             case .ton: return TonAddress.parse(contact.address) != nil
+            case .solana: return SolanaAddress.isValid(contact.address)
             case .ethereum, .polygon: return EthereumAddress.parse(contact.address) != nil
             case .dollars: return activeNetwork.isValidAddress(contact.address)
             }
@@ -225,7 +226,7 @@ extension WalletManager {
         case .dollars:
             guard let factor = usdToFiat else { return nil }
             value = Double(units) / 1_000_000 * factor
-        case .ethereum, .polygon, .ton, .tron:
+        case .ethereum, .polygon, .ton, .tron, .solana:
             guard let price = nativeFiatPrice(kind.symbol), price > 0 else { return nil }
             value = Double(units) / kind.unitsPerCoin * price
         case .bitcoin:

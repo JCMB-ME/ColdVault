@@ -51,7 +51,7 @@ extension WalletManager {
     /// An amount of a coin in its own units (sats, gwei, sun, nanotons, micro-dollars).
     public func format(units: UInt64, coin: CoinKind) -> String {
         switch coin {
-        case .ethereum, .polygon, .ton: return formatUnits(units, decimals: 9)
+        case .ethereum, .polygon, .ton, .solana: return formatUnits(units, decimals: 9)
         case .tron: return formatUnits(units, decimals: 6)
         case .dollars: return formatDollars(micro: units)
         case .bitcoin: return format(sats: units)
@@ -135,6 +135,12 @@ extension WalletManager {
         return TonKeys.privateKey(seed: seed, index: account)
     }
 
+    /// Solana key: m/44'/501'/n'/0' of the phrase (Ed25519; there is none for a hex key).
+    nonisolated static func solanaKey(secret: WalletSecret, account: UInt32) throws -> Data {
+        guard let seed = try seed(secret) else { throw WalletError.derivationFailed }
+        return SolanaKeys.privateKey(seed: seed, index: account)
+    }
+
     /// The account comes from a TON-format phrase (Tonkeeper): a single account, no path.
     nonisolated static func isTonNative(_ record: StoredWalletRecord?) -> Bool {
         record?.chainAddresses?["tonScheme"] == "native"
@@ -172,6 +178,10 @@ extension WalletManager {
         switch coin {
         case .ethereum, .polygon, .bitcoin: return (try evm(), nil)
         case .tron: return (try tron(), nil)
+        case .solana:
+            let key = try solanaKey(secret: secret, account: account)
+            guard let publicKey = SolanaKeys.publicKey(privateKey: key) else { throw WalletError.derivationFailed }
+            return (SolanaKeys.address(publicKey: publicKey), nil)
         case .ton:
             // The public key is kept (not secret) so the W5 address can be shown without Face ID.
             guard let publicKey = tonPublicKey(),
@@ -207,6 +217,7 @@ extension WalletManager {
         case .bitcoin: return nil
         case .ethereum, .polygon: return chain.isEVM ? record.primaryAddress : nil
         case .tron: return chain == .tron ? record.primaryAddress : nil
+        case .solana: return chain == .solana ? record.primaryAddress : nil
         case .ton:
             guard chain == .ton else { return nil }
             if WalletManager.tonVersion(of: record) == .w5, let hex = record.chainAddresses?["tonPublicKey"],
@@ -317,6 +328,7 @@ extension WalletManager {
         var watchAddress: String?
         switch coin {
         case .tron: if TronAddress.isValid(trimmed) { watchAddress = trimmed }
+        case .solana: if SolanaAddress.isValid(trimmed) { watchAddress = trimmed }
         case .ton: watchAddress = TonAddress.parse(trimmed)?.friendly(bounceable: false, testnet: false)
         default: watchAddress = EthereumAddress.parse(trimmed).map { EthereumAddress.checksummed($0) }
         }
@@ -339,7 +351,7 @@ extension WalletManager {
             secret = WalletSecret(mnemonic: words.joined(separator: " "), passphrase: passphrase.isEmpty ? nil : passphrase)
             type = words.count == 24 ? .mnemonic24 : .mnemonic12
         } else {
-            guard coin != .ton else { throw WalletError.derivationFailed }      // TON keys come from a phrase
+            guard coin != .ton, coin != .solana else { throw WalletError.derivationFailed }   // TON and Solana keys come from a phrase
             secret = WalletSecret(privateKey: trimmed.lowercased().replacingOccurrences(of: "0x", with: ""))
             type = .privateKey
         }

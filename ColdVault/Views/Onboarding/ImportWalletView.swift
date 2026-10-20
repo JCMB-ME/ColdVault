@@ -46,6 +46,7 @@ public struct ImportWalletView: View {
         switch coin {
         case .tron: isAddress = TronAddress.isValid(text)
         case .ton: isAddress = TonAddress.parse(text) != nil
+        case .solana: isAddress = SolanaAddress.isValid(text)
         default: isAddress = EthereumAddress.parse(text) != nil
         }
         if isAddress { return t("\(coin.title(lang)) address (watch-only)", "Dirección de \(coin.title(lang)) (solo observación)") }
@@ -56,7 +57,7 @@ public struct ImportWalletView: View {
         }
         if BIP39.validateMnemonic(text) { return t("Recovery phrase", "Frase de recuperación") }
         let hex = text.lowercased().replacingOccurrences(of: "0x", with: "")
-        if coin != .ton, hex.count == 64, let key = hex.hexDecoded, Secp256k1.isValidPrivateKey(key) {
+        if coin != .ton, coin != .solana, hex.count == 64, let key = hex.hexDecoded, Secp256k1.isValidPrivateKey(key) {
             return t("Private key", "Clave privada")
         }
         return nil

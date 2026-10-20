@@ -69,6 +69,7 @@ extension WalletManager {
         switch chain {
         case .tron: return try await tronAssets(owner: owner, testnet: testnet, kind: kind)
         case .ton: return try await tonAssets(owner: owner, testnet: testnet, kind: kind)
+        case .solana: return try await solanaAssets(owner: owner, testnet: testnet)
         default: return try await evmAssets(chain: chain, owner: owner, testnet: testnet, kind: kind)
         }
     }
@@ -221,6 +222,8 @@ extension WalletManager {
             return "\(account.sun)|" + account.tokens.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
         case .ton:
             return try? await TonAPI(isTestnet: testnet).latestEventID(owner)
+        case .solana:
+            return (try? await SolanaAPI(isTestnet: testnet).balance(owner)).map { "\($0)" }
         default:
             let contracts = KnownToken.stablecoins(testnet: testnet).filter { $0.chain == chain }.map { $0.contract }
             guard let found = try? await EthereumRPC(isTestnet: testnet, chain: chain).balances(owner: owner, contracts: contracts) else {
@@ -294,6 +297,8 @@ extension WalletManager {
             }
             let name = await read("name()").flatMap { CustomToken.text($0, limit: 40) } ?? symbol
             token = CustomToken(chain: chain.rawValue, testnet: testnet, contract: input, symbol: symbol, name: name, decimals: decimals)
+        case .solana:
+            throw CustomTokenError.invalidContract
         case .ton:
             guard TonAddress.parse(input) != nil else { throw CustomTokenError.invalidContract }
             guard let info = try? await TonAPI(isTestnet: testnet).jettonInfo(input),
