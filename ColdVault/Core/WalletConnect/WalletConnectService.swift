@@ -151,6 +151,21 @@ final class WalletConnectService: ObservableObject {
             .sink { [weak self] id in self?.requests.removeAll { $0.request.id == id } }
             .store(in: &cancellables)
 
+        // One-step sign-in (wc_sessionAuthenticate) is not supported yet: the dApp is told, not left waiting.
+        sign.authenticateRequestPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] item in
+                Task {
+                    try? await Sign.instance.rejectSession(requestId: item.request.id)
+                    await MainActor.run {
+                        self?.notice = AppLanguage.current == .english
+                            ? "\(item.request.requester.name) uses a one-step sign-in ColdVault doesn't support yet. It must offer a normal WalletConnect connection."
+                            : "\(item.request.requester.name) usa un inicio de sesión de un solo paso que ColdVault aún no admite. Debe ofrecer una conexión WalletConnect normal."
+                    }
+                }
+            }
+            .store(in: &cancellables)
+
         // What was waiting before this launch.
         update(sessions: sign.getSessions())
         for item in sign.getPendingProposals() { add(proposal: item.proposal, context: item.context) }
@@ -247,8 +262,11 @@ final class WalletConnectService: ObservableObject {
         case "eth_accounts", "eth_requestAccounts", "eth_chainId", "wallet_switchEthereumChain":
             // Nothing to sign: answered at once.
             Task { await answerWithoutPrompt(item) }
-        default:
+        case "personal_sign", "eth_signTypedData", "eth_signTypedData_v4", "eth_sendTransaction":
             requests.append(item)
+        default:
+            // A method this wallet does not offer: refused at once, without a screen.
+            Task { await reject(item, code: 4200, message: "Unsupported method") }
         }
     }
 
