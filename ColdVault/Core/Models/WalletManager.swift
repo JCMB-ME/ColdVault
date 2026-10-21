@@ -804,7 +804,8 @@ public final class WalletManager: ObservableObject {
         return try await BlockchainService.shared.fetchRecommendedFees(isTestnet: isTestnet)
     }
 
-    public func spendableCoins(keepUnverified: Bool = false) async throws -> [SpendableCoin] {
+    /// `includeInscriptions`: every coin, also those that carry an inscription or a rune (to send one).
+    public func spendableCoins(keepUnverified: Bool = false, includeInscriptions: Bool = false) async throws -> [SpendableCoin] {
         guard let record = activeRecord else { return [] }
         var coins = [SpendableCoin]()
         if usesAddressRotation {
@@ -819,6 +820,7 @@ public final class WalletManager: ObservableObject {
             }
             // Small coins carrying an ordinal or a rune are never spent.
             let verified = try await verifiedCoins(coins, isTestnet: record.isTestnet)
+            if includeInscriptions { return verified }
             return await withoutInscriptions(verified, isTestnet: record.isTestnet, keepUnverified: keepUnverified)
         }
         for address in staticAddresses {
@@ -833,6 +835,7 @@ public final class WalletManager: ObservableObject {
             }
         }
         let verified = try await verifiedCoins(coins, isTestnet: record.isTestnet)
+        if includeInscriptions { return verified }
         return await withoutInscriptions(verified, isTestnet: record.isTestnet, keepUnverified: keepUnverified)
     }
 

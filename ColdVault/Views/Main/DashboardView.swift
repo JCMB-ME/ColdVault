@@ -51,6 +51,9 @@ public struct DashboardView: View {
     @State private var pullPeak: CGFloat = 0
     /// Settings › Home screen › Browser.
     @AppStorage("browserEnabled") private var browserEnabled = true
+    /// The browser opens as a sheet, like Send; its page is kept between openings.
+    @StateObject private var browserModel = BrowserWebModel()
+    @State private var showBrowserSheet = false
 
     // One canvas, two pages: 0 = balance, 1 = settings (native paging, follows the finger).
     @State private var page: Int = 1                 // iOS 16 TabView: 0 wallets, 1 balance, 2 settings
@@ -169,6 +172,14 @@ public struct DashboardView: View {
                 .focusAppear()
                 .environmentObject(walletManager)
         }
+        .sheet(isPresented: $showBrowserSheet) {
+            DappBrowserView(webModel: browserModel, onClose: { showBrowserSheet = false },
+                            onDragChanged: { _ in }, onDragEnded: { _, _ in }, asSheet: true)
+                .focusAppear()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .environmentObject(walletManager)
+        }
         .sheet(isPresented: $showHistory) {
             TransactionHistoryView()
                 .focusAppear()
@@ -210,6 +221,12 @@ public struct DashboardView: View {
     }
 
     private func openBrowser() {
+        guard browserEnabled, !showBrowserSheet else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showBrowserSheet = true
+    }
+
+    private func openBrowserPage() {
         guard browserEnabled, !showBrowser else { return }
         let startProgress = effectiveBrowserProgress
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -283,53 +300,8 @@ public struct DashboardView: View {
 
     private var balancePage: some View {
         GeometryReader { outerGeo in
-            let p = effectiveBrowserProgress
-            let maxBlur = focusBlur
-            let maxShrink = focusScale / 100
-            let maxFade = focusFade / 100
-            let topSafeMinY = outerGeo.frame(in: .global).minY
-
-            ZStack {
-                balanceMainContent(topSafeMinY: topSafeMinY)
-                    .frame(width: outerGeo.size.width, height: outerGeo.size.height)
-                    .compositingGroup()
-                    .blur(radius: p * maxBlur)
-                    .opacity(1 - p * maxFade)
-                    .scaleEffect(1 - p * maxShrink)
-                    .offset(y: -p * outerGeo.size.height)
-                    .allowsHitTesting(!showBrowser)
-                    .accessibilityHidden(showBrowser)
-
-                if browserEnabled {
-                DappBrowserView(
-                    onClose: { closeBrowser() },
-                    onDragChanged: { dy in
-                        guard showBrowser else { return }
-                        browserDragOffset = max(0, dy)
-                    },
-                    onDragEnded: { dy, predicted in
-                        guard showBrowser else { return }
-                        if dy > 75 || predicted > 140 {
-                            closeBrowser()
-                        } else {
-                            withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
-                                browserDragOffset = 0
-                            }
-                        }
-                    }
-                )
-                .environmentObject(walletManager)
+            balanceMainContent(topSafeMinY: outerGeo.frame(in: .global).minY)
                 .frame(width: outerGeo.size.width, height: outerGeo.size.height)
-                .compositingGroup()
-                .blur(radius: (1 - p) * maxBlur)
-                .opacity(p > 0.001 ? (1 - (1 - p) * maxFade) : 0)
-                .scaleEffect(1 - (1 - p) * maxShrink)
-                .offset(y: (1 - p) * outerGeo.size.height)
-                .allowsHitTesting(showBrowser)
-                .accessibilityHidden(!showBrowser)
-                }
-            }
-            .clipped()
         }
     }
 
@@ -448,16 +420,20 @@ public struct DashboardView: View {
     /// Under the balance: a globe. Pull past the bottom (or tap it) and the browser comes up.
     private var browserPullIndicator: some View {
         let progress = min(1.0, max(0.0, bottomOverscroll / 60.0))
-        // Only a sign of what is below: the browser opens by scrolling, not by a tap.
-        return Image(systemName: "globe")
-            .font(.system(size: 17, weight: .semibold))
-            .foregroundColor(Palette.secondary.opacity(0.7 + progress * 0.3))
-            .frame(width: 40, height: 40)
-            .background(Circle().fill(SettingsStyle.groupFill.opacity(0.4 + progress * 0.6)))
-            .scaleEffect(1.0 + progress * 0.15)
-            .rotationEffect(.degrees(progress * 30))
-            .allowsHitTesting(false)
-            .accessibilityLabel(Text(t("Browser: scroll down past the end", "Navegador: desliza más allá del final")))
+        // A tap (or a pull past the end) opens the browser as a sheet, like Send.
+        return Button {
+            openBrowser()
+        } label: {
+            Image(systemName: "globe")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(Palette.secondary.opacity(0.7 + progress * 0.3))
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(SettingsStyle.groupFill.opacity(0.4 + progress * 0.6)))
+                .scaleEffect(1.0 + progress * 0.15)
+                .rotationEffect(.degrees(progress * 30))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(t("Browser", "Navegador")))
     }
 
     /// "Decreasing decimals" (Settings): the whole part keeps the big size and each

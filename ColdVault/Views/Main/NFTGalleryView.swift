@@ -383,6 +383,12 @@ final class NFTImageLoader {
 struct NFTDetailView: View {
     @EnvironmentObject var walletManager: WalletManager
     let item: EVMNFT
+    @State private var showSend = false
+
+    /// Sending works on Ethereum, Base, Polygon and TON, from a wallet with keys.
+    private var canSend: Bool {
+        !walletManager.isWatchOnly && [EVMChain.ethereum, .base, .polygon, .ton].contains(item.chain)
+    }
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -419,6 +425,9 @@ struct NFTDetailView: View {
                 row(item.chain == .solana ? "Mint" : t("Contract", "Contrato"), item.contract)
             }
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+            if canSend {
+                sendButton(t("Send", "Enviar")) { showSend = true }
+            }
             if let url = item.chain.nftURL(contract: item.contract, tokenId: item.tokenId, testnet: walletManager.isTestnet) {
                 Link(destination: url) {
                     Label(t("View in explorer", "Ver en el explorador"), systemImage: "safari")
@@ -430,6 +439,24 @@ struct NFTDetailView: View {
                 }
             }
         }
+        .sheet(isPresented: $showSend) {
+            CollectibleSendView(item: .nft(item)).environmentObject(walletManager)
+        }
+    }
+
+    private func sendButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            action()
+        }) {
+            Label(title, systemImage: "arrow.up.right")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(Color(uiColor: .systemBackground))
+                .padding(.horizontal, 26)
+                .frame(height: 46)
+                .background(Capsule().fill(Color(uiColor: .label)))
+        }
+        .buttonStyle(.plain)
     }
 
     private func row(_ title: String, _ value: String) -> some View {

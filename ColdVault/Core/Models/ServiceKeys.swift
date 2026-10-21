@@ -30,9 +30,34 @@ public enum ServiceKeys {
             case .tronGrid: return "TronGrid"
             case .toncenter: return "toncenter"
             case .tonapi: return "tonapi"
-            case .walletConnect: return "WalletConnect Project ID"
-            case .alchemy: return "Alchemy (ETH · Base · Polygon)"
-            case .helius: return "Helius (Solana)"
+            case .walletConnect: return "WalletConnect"
+            case .alchemy: return "Alchemy"
+            case .helius: return "Helius"
+            }
+        }
+
+        /// The wallets that use it (Settings › Advanced lists only those of the coin on screen).
+        public var coins: [CoinKind] {
+            switch self {
+            case .tronGrid: return [.tron]
+            case .toncenter, .tonapi: return [.ton]
+            case .walletConnect, .alchemy: return [.ethereum, .polygon, .dollars]
+            case .helius: return [.solana]
+            }
+        }
+
+        /// What it improves, in one line.
+        public func note(_ lang: AppLanguage) -> String {
+            let english = lang == .english
+            switch self {
+            case .tronGrid, .toncenter, .tonapi:
+                return english ? "Fewer \"busy\" errors." : "Menos errores de \"ocupado\"."
+            case .walletConnect:
+                return english ? "Needed to connect to dApps." : "Necesario para conectarte a dApps."
+            case .alchemy:
+                return english ? "Faster balances, tokens with prices." : "Saldos más rápidos, tokens con precio."
+            case .helius:
+                return english ? "Faster Solana, and its NFTs." : "Solana más rápido, y sus NFTs."
             }
         }
 

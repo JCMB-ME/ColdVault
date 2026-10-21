@@ -110,9 +110,12 @@ extension SettingsView {
                                      "Con datos móviles: sin revisión automática de pagos nuevos (desliza para actualizar) y sin descargar imágenes nuevas de NFTs u ordinals (las guardadas se siguen viendo). El modo de datos reducidos de iOS hace lo mismo en cualquier conexión."))
             }
             Group {
+                // Only the keys of the coin on screen (bitcoin uses none).
+                let services = ServiceKeys.Service.allCases.filter { $0.coins.contains(walletManager.activeCoin) }
+                if !services.isEmpty {
                 SettingsSubheader(text: t("API keys (optional)", "API keys (opcional)"))
-                ForEach(ServiceKeys.Service.allCases) { service in
-                    if service != .tronGrid { SettingsDivider(inset: 60) }
+                ForEach(services) { service in
+                    if service != services.first { SettingsDivider(inset: 60) }
                     Button {
                         serviceKeyTarget = service
                         serviceKeyDraft = serviceKey(service)
@@ -123,8 +126,10 @@ extension SettingsView {
                                     chevron: true, icon: "key.horizontal")
                     }
                 }
-                SettingsNote(text: t("Free keys (create a free account on each site). Alchemy: faster balances, tokens with prices and fewer errors on Ethereum, Base and Polygon. Helius: faster Solana and its NFTs. TronGrid, toncenter, tonapi: fewer \"busy\" errors on Tron and TON. Without a key the app uses the free public services. The WalletConnect Project ID (free at cloud.reown.com) is what lets you connect to dApps. Keys stay in this iPhone's Keychain; the services see the addresses you look up, as the public ones do.",
-                                     "Claves gratuitas (crea una cuenta gratis en cada web). Alchemy: saldos más rápidos, tokens con precio y menos errores en Ethereum, Base y Polygon. Helius: Solana más rápido y sus NFTs. TronGrid, toncenter, tonapi: menos errores de \"ocupado\" en Tron y TON. Sin clave, la app usa los servicios públicos gratuitos. El Project ID de WalletConnect (gratis en cloud.reown.com) es lo que permite conectarte a dApps. Las claves quedan en el Keychain de este iPhone; los servicios ven las direcciones que consultas, igual que los públicos."))
+                SettingsNote(text: services.map { "\($0.title): \($0.note(lang))" }.joined(separator: " ")
+                             + t(" Free: create an account on each site. Without a key the app uses the free public services. Keys stay in this iPhone's Keychain.",
+                                 " Gratis: crea una cuenta en cada web. Sin clave, la app usa los servicios públicos gratuitos. Las claves quedan en el Keychain de este iPhone."))
+                }
             }
             Group {
                 SettingsSubheader(text: "Cold wallet")

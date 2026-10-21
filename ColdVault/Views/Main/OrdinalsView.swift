@@ -146,6 +146,7 @@ struct OrdinalsView: View {
 struct InscriptionDetailView: View {
     @EnvironmentObject var walletManager: WalletManager
     let item: Inscription
+    @State private var showSend = false
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -169,6 +170,9 @@ struct InscriptionDetailView: View {
                 row("ID", item.id)
             }
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+            if !walletManager.isWatchOnly && item.output != nil {
+                sendButton(t("Send", "Enviar")) { showSend = true }
+            }
             if let url = item.pageURL {
                 Link(destination: url) {
                     Label("ordinals.com", systemImage: "safari")
@@ -180,6 +184,24 @@ struct InscriptionDetailView: View {
                 }
             }
         }
+        .sheet(isPresented: $showSend) {
+            CollectibleSendView(item: .inscription(item)).environmentObject(walletManager)
+        }
+    }
+
+    private func sendButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            action()
+        }) {
+            Label(title, systemImage: "arrow.up.right")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(Color(uiColor: .systemBackground))
+                .padding(.horizontal, 26)
+                .frame(height: 46)
+                .background(Capsule().fill(Color(uiColor: .label)))
+        }
+        .buttonStyle(.plain)
     }
 
     private func row(_ title: String, _ value: String) -> some View {

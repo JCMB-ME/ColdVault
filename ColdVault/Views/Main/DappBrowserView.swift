@@ -722,7 +722,8 @@ private struct BrowserStartScrollTopKey: PreferenceKey {
 
 struct DappBrowserView: View {
     @EnvironmentObject var walletManager: WalletManager
-    @StateObject private var webModel = BrowserWebModel()
+    /// Kept by the home screen: the open page survives closing and reopening the sheet.
+    @ObservedObject var webModel: BrowserWebModel
     @FocusState private var isUrlFocused: Bool
     @State private var selectedCategory: CuratedDapp.Category = .defi
     @State private var showQRScanner = false
@@ -732,6 +733,8 @@ struct DappBrowserView: View {
     let onClose: () -> Void
     let onDragChanged: (CGFloat) -> Void
     let onDragEnded: (CGFloat, CGFloat) -> Void
+    /// Opened as a sheet (like Send): its title on top instead of the "Balance" handle.
+    var asSheet = false
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -807,6 +810,9 @@ struct DappBrowserView: View {
 
     private var browserTopBar: some View {
         VStack(spacing: 8) {
+            if asSheet {
+                SheetHeader(title: t("Browser", "Navegador"))
+            } else {
             // Pull handle + "Back to balance" pill: drag down or tap to return to the balance page
             Button {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -843,6 +849,7 @@ struct DappBrowserView: View {
                         onDragEnded(dy, predicted)
                     }
             )
+            }
 
             // Search / URL Bar + Network Selector
             HStack(spacing: 10) {
