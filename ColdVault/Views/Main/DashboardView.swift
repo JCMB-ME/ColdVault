@@ -47,6 +47,8 @@ public struct DashboardView: View {
     @State private var bottomOverscroll: CGFloat = 0
     @State private var browserDragOffset: CGFloat = 0
     @State private var browserTriggerReady: Bool = true
+    /// The furthest the current pull went past the bottom: the browser opens when the finger lets go.
+    @State private var pullPeak: CGFloat = 0
     /// Settings › Home screen › Browser.
     @AppStorage("browserEnabled") private var browserEnabled = true
 
@@ -202,7 +204,7 @@ public struct DashboardView: View {
             let dragBack = min(0.88, max(0, browserDragOffset / max(1, UIScreen.main.bounds.height * 0.65)))
             return max(0, browserProgress - dragBack)
         } else {
-            let pull = browserEnabled ? min(0.5, max(0, bottomOverscroll / 110)) : 0
+            let pull = browserEnabled ? min(1, max(0, bottomOverscroll / 140)) : 0
             return max(browserProgress, pull)
         }
     }
@@ -318,6 +320,8 @@ public struct DashboardView: View {
                 )
                 .environmentObject(walletManager)
                 .frame(width: outerGeo.size.width, height: outerGeo.size.height)
+                .compositingGroup()
+                .blur(radius: (1 - p) * maxBlur)
                 .opacity(p > 0.001 ? (1 - (1 - p) * maxFade) : 0)
                 .scaleEffect(1 - (1 - p) * maxShrink)
                 .offset(y: (1 - p) * outerGeo.size.height)
@@ -410,11 +414,19 @@ public struct DashboardView: View {
                         guard onBalancePage, !showBrowser, !anySheetOpen, geo.size.height > 100 else { return }
                         let overscroll = max(0, geo.size.height - maxY)
                         bottomOverscroll = overscroll
-                        if overscroll < 10 {
+                        // Like the side pages: the browser follows the finger, and the move is decided
+                        // when the finger lets go (the pull starts springing back): far enough, it opens;
+                        // otherwise it slides back.
+                        if overscroll < 4 {
                             browserTriggerReady = true
-                        } else if browserEnabled && overscroll >= 55 && browserTriggerReady {
-                            browserTriggerReady = false
-                            openBrowser()
+                            pullPeak = 0
+                        } else if browserEnabled && browserTriggerReady {
+                            pullPeak = max(pullPeak, overscroll)
+                            if pullPeak >= 60 && overscroll < pullPeak - 5 {
+                                browserTriggerReady = false
+                                pullPeak = 0
+                                openBrowser()
+                            }
                         }
                     }
                     // Pull down to refresh the balance (needs a scrollable container).
@@ -435,20 +447,17 @@ public struct DashboardView: View {
 
     /// Under the balance: a globe. Pull past the bottom (or tap it) and the browser comes up.
     private var browserPullIndicator: some View {
-        let progress = min(1.0, max(0.0, bottomOverscroll / 55.0))
-        return Button {
-            openBrowser()
-        } label: {
-            Image(systemName: "globe")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(Palette.secondary.opacity(0.7 + progress * 0.3))
-                .frame(width: 40, height: 40)
-                .background(Circle().fill(SettingsStyle.groupFill.opacity(0.4 + progress * 0.6)))
-                .scaleEffect(1.0 + progress * 0.15)
-                .rotationEffect(.degrees(progress * 30))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text(t("Browser", "Navegador")))
+        let progress = min(1.0, max(0.0, bottomOverscroll / 60.0))
+        // Only a sign of what is below: the browser opens by scrolling, not by a tap.
+        return Image(systemName: "globe")
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundColor(Palette.secondary.opacity(0.7 + progress * 0.3))
+            .frame(width: 40, height: 40)
+            .background(Circle().fill(SettingsStyle.groupFill.opacity(0.4 + progress * 0.6)))
+            .scaleEffect(1.0 + progress * 0.15)
+            .rotationEffect(.degrees(progress * 30))
+            .allowsHitTesting(false)
+            .accessibilityLabel(Text(t("Browser: scroll down past the end", "Navegador: desliza más allá del final")))
     }
 
     /// "Decreasing decimals" (Settings): the whole part keeps the big size and each
