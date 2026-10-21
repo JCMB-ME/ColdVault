@@ -174,8 +174,8 @@ extension SettingsView {
         }
 
         SettingsSection(header: t("Privacy", "Privacidad"),
-                        footer: t("Put the iPhone face down and every balance turns into asterisks. Tap the balance to show them again.",
-                                  "Pon el iPhone boca abajo y todos los saldos se convierten en asteriscos. Toca el saldo para volver a verlos.")) {
+                        footer: t("Turn the iPhone screen-down (in your hand or on a table) and every balance turns into asterisks. Tap the balance to show them again. The app remembers it for the next time it opens.",
+                                  "Gira el iPhone con la pantalla hacia abajo (en la mano o sobre la mesa) y todos los saldos se convierten en asteriscos. Toca el saldo para volver a verlos. La app lo recuerda la próxima vez que la abras.")) {
             SettingsRow(title: t("Hide balances face down", "Ocultar saldos boca abajo"), icon: "eye.slash") {
                 Toggle("", isOn: $censorFaceDown)
                     .labelsHidden()

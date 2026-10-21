@@ -109,6 +109,24 @@ public struct WalletTransaction: Identifiable, Equatable, Codable {
     /// Bitcoin payments received and confirmed (Electrum): true once their Merkle proof and
     /// block header checked out (SPV), false while the server has not proven it; nil otherwise.
     public var verified: Bool? = nil
+    /// EVM wallets: a token (or NFT) the transaction moved in or out of this account.
+    public var token: TokenMove? = nil
+}
+
+/// A token moved by a transaction: what, how much (raw units) and which way.
+public struct TokenMove: Codable, Equatable {
+    public let symbol: String
+    public let raw: String
+    public let decimals: Int
+    public let incoming: Bool
+    /// An NFT (ERC-721 / ERC-1155): `raw` is how many.
+    public var isNFT: Bool = false
+
+    /// "1,000.5" in the token's units.
+    public var amount: String {
+        let value = UInt256(decimal: raw, decimals: 0) ?? .zero
+        return isNFT ? value.formatted(decimals: 0, maxFraction: 0) : value.formatted(decimals: decimals, maxFraction: 6)
+    }
 }
 
 public enum FiatCurrency {

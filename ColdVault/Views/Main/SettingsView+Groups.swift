@@ -17,6 +17,10 @@ extension SettingsView {
             SettingsRow(title: t("Transactions", "Transacciones"), icon: "list.bullet") {
                 Toggle("", isOn: $walletManager.homeShowTransactions.animation()).labelsHidden()
             }
+            SettingsDivider(inset: 60)
+            SettingsRow(title: t("Browser", "Navegador"), icon: "globe") {
+                Toggle("", isOn: $browserEnabled.animation()).labelsHidden()
+            }
             if walletManager.homeShowTransactions {
                 SettingsDivider(inset: 60)
                 AppMenuButton(items: { transactionCountMenu }) {

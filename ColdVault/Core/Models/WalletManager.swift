@@ -120,8 +120,11 @@ public final class WalletManager: ObservableObject {
     @Published public var swipeActionButton: Bool {
         didSet { UserDefaults.standard.set(swipeActionButton, forKey: "swipeActionButton") }
     }
-    /// Balances show as asterisks (iPhone put face down, Settings › Security). Not saved: it clears at launch.
-    @Published public var balancesCensored = false
+    /// Balances show as asterisks (iPhone put face down, Settings › Security). Saved: the app opens
+    /// the way it was left.
+    @Published public var balancesCensored = UserDefaults.standard.bool(forKey: "balancesCensored") {
+        didSet { UserDefaults.standard.set(balancesCensored, forKey: "balancesCensored") }
+    }
     @Published public var fiatCurrency: String {
         didSet {
             UserDefaults.standard.set(fiatCurrency, forKey: "fiatCurrency")

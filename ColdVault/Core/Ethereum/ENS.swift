@@ -94,20 +94,22 @@ enum ENSRPC {
     /// least two nodes agree on; nil when fewer than two answered alike.
     static func call(chain: EVMChain, to: String, data: Data) async -> NodeAnswer? {
         let session = SharedSession.get(timeout: TorProxy.isEnabled ? 45 : 12)
-        let answers = await withTaskGroup(of: NodeAnswer?.self) { group -> [NodeAnswer] in
+        // The first answer two nodes agree on wins; the slower nodes are not waited for.
+        return await withTaskGroup(of: NodeAnswer?.self) { group -> NodeAnswer? in
             for url in chain.endpoints(testnet: false) {
                 group.addTask { await ask(session, url, to, data) }
             }
-            var list = [NodeAnswer]()
+            var counts = [NodeAnswer: Int]()
             for await answer in group {
-                if let answer { list.append(answer) }
+                guard let answer else { continue }
+                counts[answer, default: 0] += 1
+                if counts[answer, default: 0] >= 2 {
+                    group.cancelAll()
+                    return answer
+                }
             }
-            return list
+            return nil
         }
-        var counts = [NodeAnswer: Int]()
-        for answer in answers { counts[answer, default: 0] += 1 }
-        guard let best = counts.max(by: { $0.value < $1.value }), best.value >= 2 else { return nil }
-        return best.key
     }
 
     private static func ask(_ session: URLSession, _ url: String, _ to: String, _ data: Data) async -> NodeAnswer? {

@@ -88,7 +88,10 @@ extension WalletManager {
               let data = await blockscoutData(url),
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let items = object["items"] as? [[String: Any]] else { return nil }
-        return items.compactMap { item in
+        // Token and NFT moves: shown on their transaction (a send that moved only a token
+        // read "−0 ETH"), and incoming ones as their own rows.
+        let moves = await tokenMoves(base: base, owner: owner)
+        var list: [WalletTransaction] = items.compactMap { item in
             guard let hash = item["hash"] as? String else { return nil }
             let from = ((item["from"] as? [String: Any])?["hash"] as? String)?.lowercased()
             let to = ((item["to"] as? [String: Any])?["hash"] as? String)?.lowercased()
@@ -102,8 +105,47 @@ extension WalletManager {
             if from == me { net -= Int64(clamping: spent.overflow ? UInt64.max : spent.partialValue) }
             let date = (item["timestamp"] as? String).flatMap { iso.date(from: $0) }
             let confirmed = !(item["block_number"] is NSNull) && item["block_number"] != nil
-            return WalletTransaction(txid: hash, net: net, date: date, confirmed: confirmed, chain: chain.rawValue)
+            var transaction = WalletTransaction(txid: hash, net: net, date: date, confirmed: confirmed, chain: chain.rawValue)
+            transaction.token = moves[hash.lowercased()]?.move
+            return transaction
         }
+        let listed = Set(list.map { $0.txid.lowercased() })
+        for (hash, found) in moves where !listed.contains(hash) {
+            var transaction = WalletTransaction(txid: found.hash, net: 0, date: found.date, confirmed: true, chain: chain.rawValue)
+            transaction.token = found.move
+            list.append(transaction)
+        }
+        return list
+    }
+
+    /// The latest token / NFT transfers in or out of the account (Blockscout), one per transaction.
+    private func tokenMoves(base: String, owner: String) async -> [String: (hash: String, date: Date?, move: TokenMove)] {
+        guard let url = URL(string: "\(base)/api/v2/addresses/\(owner)/token-transfers"),
+              let data = await blockscoutData(url),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let items = object["items"] as? [[String: Any]] else { return [:] }
+        let me = owner.lowercased()
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        var result = [String: (hash: String, date: Date?, move: TokenMove)]()
+        for item in items {
+            guard let hash = (item["transaction_hash"] as? String) ?? (item["tx_hash"] as? String),
+                  result[hash.lowercased()] == nil,
+                  let token = item["token"] as? [String: Any] else { continue }
+            let from = ((item["from"] as? [String: Any])?["hash"] as? String)?.lowercased()
+            let to = ((item["to"] as? [String: Any])?["hash"] as? String)?.lowercased()
+            guard from == me || to == me else { continue }
+            let type = (token["type"] as? String) ?? "ERC-20"
+            let total = item["total"] as? [String: Any]
+            let isNFT = type != "ERC-20"
+            let raw = isNFT ? ((total?["value"] as? String) ?? "1") : ((total?["value"] as? String) ?? "0")
+            let symbol = KnownToken.cleanText((token["symbol"] as? String) ?? (token["name"] as? String) ?? "?", limit: 11)
+            let decimals = min(max(Int((total?["decimals"] as? String) ?? (token["decimals"] as? String) ?? "") ?? 18, 0), 36)
+            let date = (item["timestamp"] as? String).flatMap { iso.date(from: $0) }
+            result[hash.lowercased()] = (hash, date, TokenMove(symbol: symbol, raw: raw, decimals: decimals,
+                                                               incoming: to == me && from != me, isNFT: isNFT))
+        }
+        return result
     }
 
     private func tronHistory(owner: String, record: StoredWalletRecord) async -> [WalletTransaction]? {

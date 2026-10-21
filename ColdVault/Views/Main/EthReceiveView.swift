@@ -201,7 +201,14 @@ struct EthReceiveView: View {
             names = []
             return
         }
+        // The names found last time show at once; the fresh list replaces them.
+        let saved = walletManager.savedNames(address: address)
+        if names.isEmpty && !saved.isEmpty {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { names = saved }
+        }
         let found = await walletManager.ownedNames(address: address)
+        // A lookup that found nothing (often a network hiccup) does not wipe names already on screen.
+        guard !found.isEmpty || names.isEmpty else { return }
         withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { names = found }
     }
 

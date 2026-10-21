@@ -11,13 +11,14 @@
 
 import Foundation
 
-public struct OwnedName: Identifiable, Equatable {
+public struct OwnedName: Identifiable, Equatable, Codable {
     public var id: String { name }
     public let name: String
     /// The name the address chose as its own.
     public let isPrimary: Bool
     /// The name's address record is this account. A name can be owned and point elsewhere: then money
-    /// sent to the name does not arrive here.
+    /// sent to the name does not arrive here. Only false when the nodes agreed on another address (or
+    /// none): a lookup that did not finish is no reason for a warning.
     public let pointsHere: Bool
 }
 
@@ -66,9 +67,26 @@ final class OwnedNamesCache {
         store[key] = (Date(), names)
         lock.unlock()
     }
+
+    /// The last complete list found for an address, kept on the phone (names are public).
+    func saved(_ key: String) -> [OwnedName]? {
+        guard let data = UserDefaults.standard.data(forKey: "ownedNames.\(key)") else { return nil }
+        return try? JSONDecoder().decode([OwnedName].self, from: data)
+    }
+
+    func save(_ names: [OwnedName], for key: String) {
+        UserDefaults.standard.set(try? JSONEncoder().encode(names), forKey: "ownedNames.\(key)")
+    }
 }
 
 extension WalletManager {
+
+    /// The names last found for the address, without asking the network (Receive opens with them).
+    func savedNames(address: String) -> [OwnedName] {
+        guard !isTestnet, let owner = EthereumAddress.parse(address) else { return [] }
+        let key = owner.hexEncodedString
+        return OwnedNamesCache.shared.get(key) ?? OwnedNamesCache.shared.saved(key) ?? []
+    }
 
     /// Every name the account has, the main one first (mainnet only).
     func ownedNames(address: String, force: Bool = false) async -> [OwnedName] {
@@ -89,29 +107,38 @@ extension WalletManager {
         for name in await held where !candidates.contains(name) { candidates.append(name) }
         let names = Array(candidates.prefix(25))
 
-        // Does each name point to this address?
+        // Does each name point to this address? nil: the lookup did not finish (no answer two nodes
+        // agreed on, or a resolver the app does not read); only a clear "elsewhere" is warned about.
         let here = "0x" + key
-        let pointing = await withTaskGroup(of: String?.self) { group -> Set<String> in
+        let checks = await withTaskGroup(of: (String, Bool?).self) { group -> [String: Bool?] in
             for name in names {
                 group.addTask {
-                    (try? await ENSResolver.resolve(name))?.address.lowercased() == here ? name : nil
+                    do {
+                        return (name, try await ENSResolver.resolve(name).address.lowercased() == here)
+                    } catch ENSError.notFound {
+                        return (name, false)
+                    } catch {
+                        return (name, nil)
+                    }
                 }
             }
-            var found = Set<String>()
-            for await name in group {
-                if let name { found.insert(name) }
-            }
+            var found = [String: Bool?]()
+            for await (name, answer) in group { found[name] = answer }
             return found
         }
+        let elsewhere = Set(checks.compactMap { $0.value == false ? $0.key : nil })
+        let complete = !checks.values.contains { $0 == nil }
 
         let result = names
-            .map { OwnedName(name: $0, isPrimary: primary.contains($0), pointsHere: pointing.contains($0)) }
+            .map { OwnedName(name: $0, isPrimary: primary.contains($0),
+                             pointsHere: primary.contains($0) || !elsewhere.contains($0)) }
             .sorted { lhs, rhs in
                 if lhs.isPrimary != rhs.isPrimary { return lhs.isPrimary }
                 if lhs.pointsHere != rhs.pointsHere { return lhs.pointsHere }
                 return lhs.name < rhs.name
             }
         OwnedNamesCache.shared.put(result, for: key)
+        if complete { OwnedNamesCache.shared.save(result, for: key) }
         return result
     }
 

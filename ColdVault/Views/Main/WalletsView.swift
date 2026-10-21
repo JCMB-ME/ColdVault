@@ -71,6 +71,8 @@ struct WalletsView: View {
 
                 coinSwitch
 
+                // Everything of the coin on screen changes as one block (the same motion for every coin).
+                VStack(alignment: .leading, spacing: 18) {
                 if keyWallets.isEmpty && watchWallets.isEmpty {
                     Text(t("No \(coin.title(lang)) wallets yet.", "Aún no tienes billeteras de \(coin.title(lang))."))
                         .font(.system(size: 14))
@@ -136,10 +138,11 @@ struct WalletsView: View {
                                                                                  walletManager: walletManager))
                 }
 
-                // Every watch-only wallet together, in one card.
-                if !watchWallets.isEmpty {
-                    watchOnlyCard
-                        .transition(.opacity)
+                // Watch-only wallets: cards like the others (rename, picture, delete), after them.
+                ForEach(watchWallets) { wallet in
+                    walletCard(wallet)
+                        .transition(.asymmetric(insertion: .scale(scale: 0.94).combined(with: .opacity),
+                                                removal: .opacity))
                 }
 
                 if keyWallets.count > 1 {
@@ -150,6 +153,9 @@ struct WalletsView: View {
                         .frame(maxWidth: .infinity)
                         .multilineTextAlignment(.center)
                 }
+                }
+                .id(coin)
+                .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 14)), removal: .opacity))
 
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -300,14 +306,15 @@ struct WalletsView: View {
     /// grows into a black capsule with its name, sliding from coin to coin. Tap a logo,
     /// or swipe the dock, to move. Choosing a coin also opens its wallet on the balance.
     private var coinSwitch: some View {
-        // Never wider than the screen: with many coins the logos get smaller, then the
-        // chosen one shows only its logo (iPhone mini).
-        ViewThatFits(in: .horizontal) {
-            coinDockRow(logo: 30, showName: true)
-            coinDockRow(logo: 26, showName: true)
-            coinDockRow(logo: 26, showName: false)
+        // Never wider than the screen. The size is chosen from the longest name of the coins
+        // you have (not the chosen one), so every switch animates the same way: full names,
+        // smaller logos, short names (ETH, BTC…), then logos only.
+        GeometryReader { geo in
+            let style = dockStyle(width: geo.size.width)
+            coinDockRow(logo: style.logo, name: style.name)
+                .frame(width: geo.size.width)
         }
-        .frame(maxWidth: .infinity)
+        .frame(height: 48)
         .simultaneousGesture(
             DragGesture(minimumDistance: 12)
                 .onChanged { gesture in
@@ -327,7 +334,36 @@ struct WalletsView: View {
         )
     }
 
-    private func coinDockRow(logo: CGFloat, showName: Bool) -> some View {
+    private enum DockName { case full, short, none }
+
+    private func dockName(_ coin: CoinKind, _ style: DockName) -> String {
+        switch style {
+        case .full: return coin.title(lang)
+        case .short: return coin == .dollars ? coin.title(lang) : coin.symbol
+        case .none: return ""
+        }
+    }
+
+    /// The largest dock that fits `width` with any of the coins chosen.
+    private func dockStyle(width: CGFloat) -> (logo: CGFloat, name: DockName) {
+        let font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        func needed(_ logo: CGFloat, _ style: DockName) -> CGFloat {
+            let coins = ownedCoins
+            let longest = coins.map { (dockName($0, style) as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+            // The others: logo + 10; the chosen one: logo − 4 + 6 + 8 + name + 14 (or + 12 without a name).
+            let others = CGFloat(max(0, coins.count - 1)) * (logo + 10)
+            let chosen = style == .none ? logo + 8 : logo + 24 + ceil(longest)
+            return others + chosen + CGFloat(max(0, coins.count - 1)) * 4 + 8
+        }
+        for option: (CGFloat, DockName) in [(30, .full), (26, .full), (26, .short), (22, .short), (26, .none), (22, .none)]
+            where needed(option.0, option.1) <= width {
+            return option
+        }
+        return (22, .none)
+    }
+
+    private func coinDockRow(logo: CGFloat, name style: DockName) -> some View {
+        let showName = style != .none
         HStack(spacing: 4) {
             ForEach(ownedCoins) { item in
                 let selected = item == coin
@@ -336,7 +372,7 @@ struct WalletsView: View {
                         CoinLogo(coin: item, size: selected ? logo - 4 : logo)
                             .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: selected ? 2 : 0))
                         if selected && showName {
-                            Text(item.title(lang))
+                            Text(dockName(item, style))
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundColor(Color(uiColor: .systemBackground))
                                 .lineLimit(1)
@@ -452,103 +488,6 @@ struct WalletsView: View {
 
     private func isWatchOnly(_ wallet: LibraryWallet) -> Bool {
         wallet.bundle.accounts.first?.record.type == .watchOnly
-    }
-
-    // MARK: - Watch-only wallets (one card)
-
-    private var watchOnlyCard: some View {
-        let wallets = watchWallets
-        let key = "watch-\(coin.rawValue)"
-        let collapsed = collapsedKeys.contains(key)
-        return VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Image(systemName: "eye")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundColor(Color(uiColor: .label))
-                    .frame(width: 46, height: 46)
-                    .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(t("Watch-only", "Observación"))
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(Color(uiColor: .label))
-                    Text(wallets.count == 1 ? t("1 wallet · no keys", "1 billetera · sin claves")
-                                            : t("\(wallets.count) wallets · no keys", "\(wallets.count) billeteras · sin claves"))
-                        .font(.system(size: 13))
-                        .foregroundColor(Palette.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .onTapGesture { toggleCollapsed(key) }
-                collapseButton(collapsed) { toggleCollapsed(key) }
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 14)
-            .padding(.bottom, collapsed ? 14 : 10)
-
-            if !collapsed {
-                _VariadicView.Tree(EscalatorStack(openedAt: cardOpenedAt, spacing: 4)) {
-                    ForEach(wallets) { wallet in
-                        ForEach(Array(wallet.bundle.accounts.enumerated()), id: \.element.id) { index, account in
-                            watchRow(wallet: wallet, index: index, account: account)
-                        }
-                    }
-                }
-                .padding(.horizontal, 4)
-                .padding(.bottom, 8)
-                .transition(.asymmetric(insertion: .identity,
-                                        removal: .opacity.combined(with: .scale(scale: 0.94, anchor: .top))))
-            }
-        }
-        .clipped()
-        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color(uiColor: .label).opacity(wallets.contains { $0.slot == walletManager.activeSlot } ? 0.12 : 0),
-                        lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(collapsed ? 0 : 0.06), radius: 14, x: 0, y: 6)
-        .scaleEffect(collapsed ? 0.995 : 1)
-    }
-
-    private func watchRow(wallet: LibraryWallet, index: Int, account: AccountSlot) -> some View {
-        let selected = wallet.slot == walletManager.activeSlot && index == wallet.bundle.selected
-        let title = wallet.bundle.accounts.count > 1 ? "\(wallet.bundle.name) · \(account.name)" : wallet.bundle.name
-        return HStack(spacing: 10) {
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                    walletManager.selectWallet(slot: wallet.slot, account: index)
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { onSelect() }
-            } label: {
-                HStack(spacing: 12) {
-                    WalletAvatar(wallet: wallet, images: walletManager.walletImages, size: 32, highlighted: selected)
-                    nameAndAmount(title, selected: selected, logo: true,
-                                  sats: walletManager.cachedBalance(of: account.record))
-                }
-                .contentShape(Rectangle())
-            }
-            AppMenuButton(items: {
-                [AppMenuItem(title: t("Rename", "Renombrar"), icon: "pencil") {
-                    renameText = wallet.bundle.name
-                    renameTarget = RenameTarget(slot: wallet.slot, account: nil)
-                 },
-                 AppMenuItem(title: t("Picture or icon", "Imagen o icono"), icon: "photo") { iconSlot = IconTarget(slot: wallet.slot) },
-                 AppMenuItem(title: t("Delete wallet", "Eliminar billetera"), icon: "trash", destructive: true) { deleteSlot = wallet.slot }]
-            }) {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Palette.secondary)
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
-            }
-        }
-        .padding(.horizontal, 10)
-        .frame(minHeight: 50)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(uiColor: .systemBackground).opacity(selected ? 0.75 : 0))
-        )
     }
 
     /// Name and balance on one line when they fit; otherwise (iPhone mini, long names)

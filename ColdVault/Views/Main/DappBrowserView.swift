@@ -23,6 +23,18 @@ struct BrowserBookmark: Identifiable, Codable, Equatable {
 
 struct CuratedDapp: Identifiable {
     var id: String { url }
+    /// The site's own logo, bundled with the app (Assets: "Dapp" + the name's letters and digits).
+    var logo: String { "Dapp" + name.filter { $0.isLetter || $0.isNumber } }
+    var host: String? { URL(string: url)?.host?.lowercased() }
+
+    /// The bundled logo of a site of the directory, by its address (recents, favourites).
+    static func logo(forHost host: String) -> String? {
+        let host = host.lowercased()
+        return directory.first { dapp in
+            guard let own = dapp.host else { return false }
+            return host == own || host.hasSuffix("." + own) || own.hasSuffix("." + host)
+        }?.logo
+    }
     let name: String
     let subtitleEn: String
     let subtitleEs: String
@@ -37,9 +49,9 @@ struct CuratedDapp: Identifiable {
 
         func title(_ lang: AppLanguage) -> String {
             switch self {
-            case .defi: return lang == .english ? "DeFi & Swaps" : "DeFi e Intercambios"
-            case .nfts: return lang == .english ? "NFTs & Web3" : "NFTs y Web3"
-            case .explorers: return lang == .english ? "Explorers & Tools" : "Exploradores y Herramientas"
+            case .defi: return "DeFi"
+            case .nfts: return "NFTs"
+            case .explorers: return lang == .english ? "Explorers" : "Exploradores"
             }
         }
     }
@@ -725,6 +737,14 @@ struct DappBrowserView: View {
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
     var body: some View {
+        ZStack {
+            GlassAmbientBackground()
+            browserContent
+        }
+        .appMenuHost()
+    }
+
+    private var browserContent: some View {
         VStack(spacing: 0) {
             browserTopBar
 
@@ -888,51 +908,35 @@ struct DappBrowserView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
-        .background(Material.bar)
+    }
+
+    private var networkMenuItems: [AppMenuItem] {
+        var items = [AppMenuItem]()
+        if walletManager.walletConnectAddress != nil {
+            for chain in [EVMChain.ethereum, .base, .polygon] {
+                items.append(AppMenuItem(title: chain.name(testnet: walletManager.isTestnet),
+                                         image: AnyView(Image(chain.logoName).resizable().scaledToFit()),
+                                         selected: webModel.activeEVMChain == chain) {
+                    walletManager.evmNetwork = chain
+                    webModel.syncProviderState()
+                })
+            }
+        }
+        if let host = webModel.currentHost, webModel.connectedHosts.contains(host) {
+            items.append(AppMenuItem(title: t("Disconnect \(host)", "Desconectar \(host)"), icon: "xmark.circle",
+                                     destructive: true) { webModel.disconnectHost(host) })
+        }
+        items.append(AppMenuItem(title: t("Scan QR / WalletConnect", "Escanear QR / WalletConnect"), icon: "qrcode.viewfinder") {
+            showQRScanner = true
+        })
+        items.append(AppMenuItem(title: t("WalletConnect sessions", "Sesiones WalletConnect"), icon: "link") {
+            showWalletConnectSheet = true
+        })
+        return items
     }
 
     private var networkBadgeMenu: some View {
-        Menu {
-            if walletManager.walletConnectAddress != nil {
-                Section(t("Web3 Network", "Red Web3")) {
-                    ForEach([EVMChain.ethereum, .base, .polygon]) { chain in
-                        Button {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            walletManager.evmNetwork = chain
-                            webModel.syncProviderState()
-                        } label: {
-                            HStack {
-                                Text(chain.name(testnet: walletManager.isTestnet))
-                                if webModel.activeEVMChain == chain {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if let host = webModel.currentHost, webModel.connectedHosts.contains(host) {
-                Section(host) {
-                    Button(role: .destructive) {
-                        webModel.disconnectHost(host)
-                    } label: {
-                        Label(t("Disconnect site", "Desconectar sitio"), systemImage: "xmark.circle")
-                    }
-                }
-            }
-            Section {
-                Button {
-                    showQRScanner = true
-                } label: {
-                    Label(t("Scan QR / WalletConnect", "Escanear QR / WalletConnect"), systemImage: "qrcode.viewfinder")
-                }
-                Button {
-                    showWalletConnectSheet = true
-                } label: {
-                    Label(t("WalletConnect sessions", "Sesiones WalletConnect"), systemImage: "link")
-                }
-            }
-        } label: {
+        AppMenuButton(items: { networkMenuItems }) {
             ZStack(alignment: .bottomTrailing) {
                 Group {
                     if walletManager.walletConnectAddress != nil {
@@ -1009,19 +1013,17 @@ struct DappBrowserView: View {
     private var walletConnectionCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                if walletManager.walletConnectAddress != nil {
-                    Image(webModel.activeEVMChain.logoName)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 34, height: 34)
+                if let wallet = walletManager.activeWallet {
+                    WalletAvatar(wallet: wallet, images: walletManager.walletImages, size: 46)
                 } else {
-                    CoinLogo(coin: walletManager.activeCoin, size: 34)
+                    CoinLogo(coin: walletManager.activeCoin, size: 46)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(walletManager.activeWallet?.bundle.name ?? "ColdVault")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
+                        .lineLimit(1)
                     if let addr = walletManager.walletConnectAddress {
                         Text("\(webModel.activeEVMChain.name(testnet: walletManager.isTestnet)) · \(addr.prefix(6))…\(addr.suffix(4))")
                             .font(.system(size: 12, design: .monospaced))
@@ -1042,43 +1044,66 @@ struct DappBrowserView: View {
                     Image(systemName: "qrcode.viewfinder")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
-                        .frame(width: 38, height: 38)
-                        .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.85)))
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
                 }
                 .buttonStyle(.plain)
             }
 
             if walletManager.walletConnectAddress != nil {
-                HStack(spacing: 8) {
+                HStack(spacing: 4) {
                     ForEach([EVMChain.ethereum, .base, .polygon]) { chain in
                         let active = webModel.activeEVMChain == chain
                         Button {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                                 walletManager.evmNetwork = chain
                             }
                             webModel.syncProviderState()
                         } label: {
-                            HStack(spacing: 6) {
+                            HStack(spacing: 7) {
                                 Image(chain.logoName)
                                     .resizable()
                                     .scaledToFit()
-                                    .frame(width: 14, height: 14)
+                                    .frame(width: 18, height: 18)
                                 Text(chain.name(testnet: walletManager.isTestnet))
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.system(size: 14, weight: active ? .semibold : .regular))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
                             }
                             .foregroundColor(active ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
-                            .padding(.horizontal, 12)
-                            .frame(height: 30)
-                            .background(Capsule().fill(active ? Color(uiColor: .label) : Color(uiColor: .systemBackground).opacity(0.7)))
+                            .frame(maxWidth: .infinity, minHeight: 38)
+                            .background(Capsule().fill(active ? Color(uiColor: .label) : Color.clear))
                         }
                         .buttonStyle(.plain)
                     }
                 }
+                .padding(4)
+                .background(Capsule().fill(Color(uiColor: .systemBackground).opacity(0.6)))
             }
         }
-        .padding(16)
+        .padding(14)
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+    }
+
+    /// A site's logo: the bundled one for the sites of the directory, a globe otherwise.
+    @ViewBuilder
+    private func siteIcon(logo: String?, size: CGFloat) -> some View {
+        if let logo {
+            Image(logo)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size * 0.82, height: size * 0.82)
+                .clipShape(Circle())
+                .frame(width: size, height: size)
+                .background(Circle().fill(Color.white))
+        } else {
+            Image(systemName: "globe")
+                .font(.system(size: size * 0.42, weight: .semibold))
+                .foregroundColor(Color(uiColor: .label))
+                .frame(width: size, height: size)
+                .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+        }
     }
 
     private func savedSitesSection(title: String, items: [BrowserBookmark], canClear: Bool) -> some View {
@@ -1110,11 +1135,7 @@ struct DappBrowserView: View {
                             webModel.open(input: item.url)
                         } label: {
                             HStack(spacing: 8) {
-                                Image(systemName: "globe")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(Color(uiColor: .label))
-                                    .frame(width: 28, height: 28)
-                                    .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.85)))
+                                siteIcon(logo: CuratedDapp.logo(forHost: item.host), size: 30)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(item.title)
                                         .font(.system(size: 13, weight: .semibold))
@@ -1140,25 +1161,28 @@ struct DappBrowserView: View {
 
     private var curatedDappsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+            HStack(spacing: 4) {
                 ForEach(CuratedDapp.Category.allCases, id: \.rawValue) { category in
                     let active = selectedCategory == category
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                             selectedCategory = category
                         }
                     } label: {
                         Text(category.title(lang))
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(active ? Color(uiColor: .systemBackground) : Palette.secondary)
-                            .padding(.horizontal, 14)
-                            .frame(height: 32)
-                            .background(Capsule().fill(active ? Color(uiColor: .label) : SettingsStyle.groupFill))
+                            .font(.system(size: 14, weight: active ? .semibold : .regular))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .foregroundColor(active ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                            .frame(maxWidth: .infinity, minHeight: 38)
+                            .background(Capsule().fill(active ? Color(uiColor: .label) : Color.clear))
                     }
                     .buttonStyle(.plain)
                 }
             }
+            .padding(4)
+            .background(Capsule().fill(SettingsStyle.groupFill))
 
             VStack(spacing: 0) {
                 let items = CuratedDapp.directory.filter { $0.category == selectedCategory }
@@ -1169,11 +1193,7 @@ struct DappBrowserView: View {
                         webModel.open(input: dapp.url)
                     } label: {
                         HStack(spacing: 14) {
-                            Image(systemName: dapp.icon)
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(Color(uiColor: .label))
-                                .frame(width: 42, height: 42)
-                                .background(Circle().fill(Color(uiColor: .systemBackground).opacity(0.9)))
+                            siteIcon(logo: dapp.logo, size: 42)
 
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(dapp.name)
@@ -1226,7 +1246,6 @@ struct DappBrowserView: View {
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 10)
-        .background(Material.bar)
     }
 
     private func toolbarButton(icon: String, enabled: Bool, action: @escaping () -> Void) -> some View {

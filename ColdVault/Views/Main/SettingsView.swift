@@ -62,6 +62,8 @@ public struct SettingsView: View {
     @State var copiedBackup = false
     /// Which groups of Settings are open (closed by default).
     @AppStorage("settingsOpenHome") var openHome = false
+    /// Home screen › Browser: the globe under the balance and the browser behind it.
+    @AppStorage("browserEnabled") var browserEnabled = true
     @AppStorage("settingsOpenWallet") var openWallet = false
     @AppStorage("settingsOpenTools") var openTools = false
     @AppStorage("settingsOpenBackup") var openBackup = false

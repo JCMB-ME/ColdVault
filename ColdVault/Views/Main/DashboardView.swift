@@ -47,6 +47,8 @@ public struct DashboardView: View {
     @State private var bottomOverscroll: CGFloat = 0
     @State private var browserDragOffset: CGFloat = 0
     @State private var browserTriggerReady: Bool = true
+    /// Settings › Home screen › Browser.
+    @AppStorage("browserEnabled") private var browserEnabled = true
 
     // One canvas, two pages: 0 = balance, 1 = settings (native paging, follows the finger).
     @State private var page: Int = 1                 // iOS 16 TabView: 0 wallets, 1 balance, 2 settings
@@ -200,13 +202,13 @@ public struct DashboardView: View {
             let dragBack = min(0.88, max(0, browserDragOffset / max(1, UIScreen.main.bounds.height * 0.65)))
             return max(0, browserProgress - dragBack)
         } else {
-            let pull = min(0.42, max(0, bottomOverscroll / 190))
+            let pull = browserEnabled ? min(0.5, max(0, bottomOverscroll / 110)) : 0
             return max(browserProgress, pull)
         }
     }
 
     private func openBrowser() {
-        guard !showBrowser else { return }
+        guard browserEnabled, !showBrowser else { return }
         let startProgress = effectiveBrowserProgress
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         var jump = SwiftUI.Transaction()
@@ -295,6 +297,7 @@ public struct DashboardView: View {
                     .allowsHitTesting(!showBrowser)
                     .accessibilityHidden(showBrowser)
 
+                if browserEnabled {
                 DappBrowserView(
                     onClose: { closeBrowser() },
                     onDragChanged: { dy in
@@ -320,6 +323,7 @@ public struct DashboardView: View {
                 .offset(y: (1 - p) * outerGeo.size.height)
                 .allowsHitTesting(showBrowser)
                 .accessibilityHidden(!showBrowser)
+                }
             }
             .clipped()
         }
@@ -385,8 +389,10 @@ public struct DashboardView: View {
 
                             Spacer(minLength: 28)
 
-                            browserPullIndicator
-                                .padding(.bottom, 18)
+                            if browserEnabled {
+                                browserPullIndicator
+                                    .padding(.bottom, 18)
+                            }
                         }
                         .frame(width: geo.size.width)
                         .frame(minHeight: geo.size.height)
@@ -406,7 +412,7 @@ public struct DashboardView: View {
                         bottomOverscroll = overscroll
                         if overscroll < 10 {
                             browserTriggerReady = true
-                        } else if overscroll >= 76 && browserTriggerReady {
+                        } else if browserEnabled && overscroll >= 55 && browserTriggerReady {
                             browserTriggerReady = false
                             openBrowser()
                         }
@@ -427,30 +433,22 @@ public struct DashboardView: View {
         .coordinateSpace(name: "balanceMainSpace")
     }
 
+    /// Under the balance: a globe. Pull past the bottom (or tap it) and the browser comes up.
     private var browserPullIndicator: some View {
-        let progress = min(1.0, max(0.0, bottomOverscroll / 76.0))
+        let progress = min(1.0, max(0.0, bottomOverscroll / 55.0))
         return Button {
             openBrowser()
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "safari")
-                    .font(.system(size: 12, weight: .semibold))
-                Text(t("Browser", "Navegador"))
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                Image(systemName: "chevron.compact.down")
-                    .font(.system(size: 13, weight: .bold))
-                    .offset(y: progress * 3)
-            }
-            .foregroundColor(Palette.secondary.opacity(0.65 + progress * 0.35))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(SettingsStyle.groupFill.opacity(progress > 0.05 ? Double(progress) : 0))
-            )
-            .scaleEffect(1.0 + progress * 0.06)
+            Image(systemName: "globe")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(Palette.secondary.opacity(0.7 + progress * 0.3))
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(SettingsStyle.groupFill.opacity(0.4 + progress * 0.6)))
+                .scaleEffect(1.0 + progress * 0.15)
+                .rotationEffect(.degrees(progress * 30))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(Text(t("Browser", "Navegador")))
     }
 
     /// "Decreasing decimals" (Settings): the whole part keeps the big size and each
@@ -1009,7 +1007,7 @@ struct TransactionCard: View {
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
-    private var received: Bool { transaction.net >= 0 }
+    private var received: Bool { transaction.token.map { $0.incoming } ?? (transaction.net >= 0) }
 
     private var timeText: String {
         guard transaction.confirmed else { return t("Pending", "Pendiente") }
@@ -1063,6 +1061,19 @@ struct TransactionCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Always one line: the amount shrinks a little instead of wrapping.
                 VStack(alignment: .trailing, spacing: 3) {
+                    if let token = transaction.token {
+                        // A token or NFT: its amount and symbol (its fee, if any, is in the detail).
+                        Text("\(token.incoming ? "+" : "−")\(walletManager.masked(token.amount))")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(Color(uiColor: .label))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                        Text(token.isNFT ? "NFT · \(token.symbol)" : token.symbol)
+                            .font(.system(size: 12))
+                            .foregroundColor(Palette.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    } else {
                     Text("\(received ? "+" : "−")\(walletManager.masked(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin)))")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
@@ -1075,6 +1086,7 @@ struct TransactionCard: View {
                         .foregroundColor(Palette.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
+                    }
                 }
                 .layoutPriority(1)
             }

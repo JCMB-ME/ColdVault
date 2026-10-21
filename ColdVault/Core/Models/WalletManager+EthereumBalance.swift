@@ -394,8 +394,9 @@ extension WalletManager {
                   (token["type"] as? String) == "ERC-20",
                   let contract = (token["address_hash"] as? String) ?? (token["address"] as? String),
                   !KnownToken.isStablecoin(contract, chain: chain, testnet: testnet),
-                  let rateText = token["exchange_rate"] as? String, let rate = Double(rateText), rate > 0,
                   let value = UInt256(decimal: item["value"] as? String ?? "", decimals: 0), !value.isZero else { return nil }
+            // Every token held is listed; those without a price (often unsolicited airdrops) count as 0.
+            let rate = (token["exchange_rate"] as? String).flatMap(Double.init).flatMap { $0 > 0 ? $0 : nil }
             let decimals = Int(token["decimals"] as? String ?? "") ?? 18
             let symbol = KnownToken.cleanText((token["symbol"] as? String) ?? "?", limit: 11)
             return EVMAsset(chain: chain, contract: contract, symbol: symbol,

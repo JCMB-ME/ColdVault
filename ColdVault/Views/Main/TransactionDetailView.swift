@@ -32,7 +32,7 @@ struct TransactionDetailView: View {
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
-    private var received: Bool { transaction.net >= 0 }
+    private var received: Bool { transaction.token.map { $0.incoming } ?? (transaction.net >= 0) }
     /// EVM wallets: the chain the transaction is on.
     private var chain: EVMChain { transaction.chain.flatMap { EVMChain(rawValue: $0) } ?? .ethereum }
     private var canSpeedUp: Bool {
@@ -123,6 +123,18 @@ struct TransactionDetailView: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(Palette.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if let token = transaction.token {
+                    // The token or NFT moved; the ETH spent (the fee) is under it.
+                    Text("\(token.incoming ? "+" : "−")\(token.amount)")
+                        .font(.system(size: 38, weight: .bold))
+                        .foregroundColor(Color(uiColor: .label))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                    Text(token.isNFT ? "NFT · \(token.symbol)" : token.symbol)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(Palette.secondary)
+                        .lineLimit(1)
+                } else {
                 Text("\(received ? "+" : "−")\(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin))")
                     .font(.system(size: 38, weight: .bold))
                     .foregroundColor(Color(uiColor: .label))
@@ -131,8 +143,14 @@ struct TransactionDetailView: View {
                 Text(walletManager.unitLabel(walletManager.activeCoin))
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(Palette.secondary)
+                }
             }
-            if let fiat = walletManager.fiatText(units: UInt64(abs(transaction.net))) {
+            if transaction.token != nil && transaction.net < 0 {
+                Text(t("Fee: \(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin)) \(walletManager.unitLabel(walletManager.activeCoin))",
+                       "Comisión: \(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin)) \(walletManager.unitLabel(walletManager.activeCoin))"))
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(Palette.secondary)
+            } else if transaction.token == nil, let fiat = walletManager.fiatText(units: UInt64(abs(transaction.net))) {
                 Text("≈ \(fiat)")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(Palette.secondary)
