@@ -435,7 +435,9 @@ struct ManageTokensView: View {
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
     var body: some View {
-        let tokens = walletManager.orderedTokens(includeHidden: true)
+        let all = walletManager.orderedTokens(includeHidden: true)
+        let tokens = all.filter { !walletManager.isAutoHidden($0) }
+        let spam = all.filter { walletManager.isAutoHidden($0) }
         ZStack {
             GlassAmbientBackground()
             List {
@@ -472,6 +474,21 @@ struct ManageTokensView: View {
                 } footer: {
                     Text(t("Turn a token off to hide it from the home screen. Drag to change the order.",
                            "Apaga un token para ocultarlo de la pantalla principal. Arrastra para cambiar el orden."))
+                }
+                if !spam.isEmpty {
+                    Section {
+                        ForEach(spam) { item in
+                            row(item)
+                                .listRowBackground(SettingsStyle.groupFill)
+                                .deleteDisabled(true)
+                                .moveDisabled(true)
+                        }
+                    } header: {
+                        Text(t("Hidden · likely spam (\(spam.count))", "Ocultos · posible spam (\(spam.count))"))
+                    } footer: {
+                        Text(t("Tokens without a market price that someone sent you. Don't open the websites in their names or try to sell them: many are traps. Turn one on to show it.",
+                               "Tokens sin precio de mercado que alguien te envió. No abras las webs que aparecen en su nombre ni intentes venderlos: muchos son trampas. Enciende uno para mostrarlo."))
+                    }
                 }
                 addSection
             }
@@ -588,7 +605,7 @@ struct ManageTokensView: View {
             }
             Spacer(minLength: 8)
             Toggle("", isOn: Binding(
-                get: { !walletManager.hiddenTokens.contains(item.id) },
+                get: { walletManager.isTokenVisible(item) },
                 set: { walletManager.setToken(item, visible: $0) }))
                 .labelsHidden()
         }

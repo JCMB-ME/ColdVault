@@ -219,7 +219,7 @@ public struct DashboardView: View {
             browserDragOffset = 0
             showBrowser = true
         }
-        withAnimation(.spring(response: 0.46, dampingFraction: 0.86)) {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.9)) {
             browserProgress = 1.0
         }
     }
@@ -236,7 +236,7 @@ public struct DashboardView: View {
             bottomOverscroll = 0
             showBrowser = false
         }
-        withAnimation(.spring(response: 0.46, dampingFraction: 0.86)) {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.9)) {
             browserProgress = 0.0
         }
     }
@@ -290,6 +290,7 @@ public struct DashboardView: View {
             ZStack {
                 balanceMainContent(topSafeMinY: topSafeMinY)
                     .frame(width: outerGeo.size.width, height: outerGeo.size.height)
+                    .compositingGroup()
                     .blur(radius: p * maxBlur)
                     .opacity(1 - p * maxFade)
                     .scaleEffect(1 - p * maxShrink)
@@ -317,7 +318,6 @@ public struct DashboardView: View {
                 )
                 .environmentObject(walletManager)
                 .frame(width: outerGeo.size.width, height: outerGeo.size.height)
-                .blur(radius: (1 - p) * maxBlur)
                 .opacity(p > 0.001 ? (1 - (1 - p) * maxFade) : 0)
                 .scaleEffect(1 - (1 - p) * maxShrink)
                 .offset(y: (1 - p) * outerGeo.size.height)

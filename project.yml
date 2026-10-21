@@ -62,8 +62,8 @@ targets:
       PRODUCT_BUNDLE_IDENTIFIER: com.coldvault.wallet
       INFOPLIST_FILE: ColdVault/Info.plist
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-      # Settings › Appearance › App icon (inverted colours).
-      ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: AppIconInverted
+      # Settings › Appearance › App icon: the other colours of the logo.
+      ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: AppIconInverted AppIconOrange AppIconBlue AppIconBlueDark AppIconLavender AppIconLavenderDark
       ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
       GENERATE_INFOPLIST_FILE: NO
       CODE_SIGNING_REQUIRED: NO

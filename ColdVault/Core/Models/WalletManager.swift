@@ -166,6 +166,10 @@ public final class WalletManager: ObservableObject {
     @Published public var hiddenTokens: Set<String> {
         didSet { UserDefaults.standard.set(Array(hiddenTokens), forKey: "hiddenTokens") }
     }
+    /// Tokens without a price (likely spam) the user chose to show anyway (Manage tokens).
+    @Published public var shownTokens: Set<String> {
+        didSet { UserDefaults.standard.set(Array(shownTokens), forKey: "shownTokens") }
+    }
     /// Tokens added by their contract (Manage tokens), on every network.
     @Published public var customTokens: [CustomToken] {
         didSet { UserDefaults.standard.set(try? JSONEncoder().encode(customTokens), forKey: "customTokens") }
@@ -251,6 +255,7 @@ public final class WalletManager: ObservableObject {
         self.homeShowOrdinals = defaults.object(forKey: "homeShowOrdinals") as? Bool ?? true
         self.tokenOrder = defaults.stringArray(forKey: "tokenOrder") ?? []
         self.hiddenTokens = Set(defaults.stringArray(forKey: "hiddenTokens") ?? [])
+        self.shownTokens = Set(defaults.stringArray(forKey: "shownTokens") ?? [])
         self.customTokens = defaults.data(forKey: "customTokens").flatMap { try? JSONDecoder().decode([CustomToken].self, from: $0) } ?? []
         let savedCurrency = defaults.string(forKey: "fiatCurrency") ?? FiatCurrency.deviceDefault
         self.fiatCurrency = FiatCurrency.supported.contains(savedCurrency) ? savedCurrency : "USD"

@@ -265,7 +265,21 @@ extension WalletManager {
             default: return (a.usdValue ?? 0) > (b.usdValue ?? 0)
             }
         }
-        return includeHidden ? sorted : sorted.filter { !hiddenTokens.contains($0.id) }
+        return includeHidden ? sorted : sorted.filter { isTokenVisible($0) }
+    }
+
+    /// A token nobody asked for, most likely: no market price, not a known stablecoin, not added by hand.
+    public func isLikelySpam(_ asset: EVMAsset) -> Bool {
+        !asset.isNative && asset.usdPrice == nil && !asset.isStablecoin && !isCustomToken(asset)
+    }
+
+    /// Hidden on its own as likely spam (watch-only wallets show everything).
+    public func isAutoHidden(_ asset: EVMAsset) -> Bool {
+        !isWatchOnly && isLikelySpam(asset) && !shownTokens.contains(asset.id)
+    }
+
+    public func isTokenVisible(_ asset: EVMAsset) -> Bool {
+        !hiddenTokens.contains(asset.id) && !isAutoHidden(asset)
     }
 
     /// Manage tokens: moves rows of `list` (every token of the network, in order).
@@ -347,7 +361,13 @@ extension WalletManager {
     }
 
     public func setToken(_ asset: EVMAsset, visible: Bool) {
-        if visible { hiddenTokens.remove(asset.id) } else { hiddenTokens.insert(asset.id) }
+        if visible {
+            hiddenTokens.remove(asset.id)
+            shownTokens.insert(asset.id)
+        } else {
+            hiddenTokens.insert(asset.id)
+            shownTokens.remove(asset.id)
+        }
     }
 
     /// The coin lists its coins and tokens (Stable's list is its balance, always shown).
@@ -382,29 +402,79 @@ extension WalletManager {
 
     // MARK: - Tokens and NFTs from explorers
 
-    /// Other ERC-20 tokens (PEPE, LINK…) from Blockscout. Only tokens with a market
-    /// price are listed: that hides the spam airdrops every address receives.
+    /// Other ERC-20 tokens (PEPE, LINK… and unsolicited airdrops). Blockscout first; when it gives
+    /// up (addresses with thousands of tokens, like burn addresses), Ethplorer on Ethereum and
+    /// Blockscout's lighter token list elsewhere. At most 300: priced ones first, by value.
     private func otherTokens(chain: EVMChain, owner: String, testnet: Bool) async -> [EVMAsset] {
+        var list = await blockscoutTokenBalances(chain: chain, owner: owner, testnet: testnet)
+        if list == nil, chain == .ethereum, !testnet { list = await ethplorerTokens(owner: owner) }
+        if list == nil { list = await blockscoutTokenList(chain: chain, owner: owner, testnet: testnet) }
+        let tokens = (list ?? []).filter { !KnownToken.isStablecoin($0.contract ?? "", chain: chain, testnet: testnet) }
+        return Array(tokens.sorted { ($0.usdValue ?? -1) > ($1.usdValue ?? -1) }.prefix(300))
+    }
+
+    private func blockscoutTokenBalances(chain: EVMChain, owner: String, testnet: Bool) async -> [EVMAsset]? {
         guard let base = chain.blockscout(testnet: testnet),
               let url = URL(string: "\(base)/api/v2/addresses/\(owner)/token-balances"),
-              let data = await blockscoutData(url),
-              let items = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return [] }
+              let data = await blockscoutData(url, timeout: 15),
+              let items = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return nil }
         return items.compactMap { item -> EVMAsset? in
             guard let token = item["token"] as? [String: Any],
                   (token["type"] as? String) == "ERC-20",
                   let contract = (token["address_hash"] as? String) ?? (token["address"] as? String),
-                  !KnownToken.isStablecoin(contract, chain: chain, testnet: testnet),
                   let value = UInt256(decimal: item["value"] as? String ?? "", decimals: 0), !value.isZero else { return nil }
             // Every token held is listed; those without a price (often unsolicited airdrops) count as 0.
             let rate = (token["exchange_rate"] as? String).flatMap(Double.init).flatMap { $0 > 0 ? $0 : nil }
-            let decimals = Int(token["decimals"] as? String ?? "") ?? 18
-            let symbol = KnownToken.cleanText((token["symbol"] as? String) ?? "?", limit: 11)
-            return EVMAsset(chain: chain, contract: contract, symbol: symbol,
-                            name: KnownToken.cleanText((token["name"] as? String) ?? symbol, limit: 40),
-                            decimals: min(max(decimals, 0), 36),
-                            balance: value, usdPrice: rate,
-                            iconURL: (token["icon_url"] as? String).flatMap { URL(string: $0) })
+            return WalletManager.tokenAsset(chain: chain, contract: contract, symbol: token["symbol"] as? String,
+                                            name: token["name"] as? String, decimals: Int(token["decimals"] as? String ?? ""),
+                                            balance: value, price: rate,
+                                            icon: (token["icon_url"] as? String).flatMap { URL(string: $0) })
         }
+    }
+
+    /// Ethereum only: Ethplorer's free API answers quickly even for addresses with thousands of tokens (up to 500).
+    private func ethplorerTokens(owner: String) async -> [EVMAsset]? {
+        guard let url = URL(string: "https://api.ethplorer.io/getAddressInfo/\(owner)?apiKey=freekey"),
+              let data = await blockscoutData(url, timeout: 20),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              object["error"] == nil else { return nil }
+        return ((object["tokens"] as? [[String: Any]]) ?? []).compactMap { item -> EVMAsset? in
+            guard let info = item["tokenInfo"] as? [String: Any],
+                  let contract = info["address"] as? String,
+                  let value = UInt256(decimal: (item["rawBalance"] as? String) ?? "", decimals: 0), !value.isZero else { return nil }
+            let price = ((info["price"] as? [String: Any])?["rate"] as? NSNumber)?.doubleValue
+            let decimals = Int((info["decimals"] as? String) ?? "") ?? (info["decimals"] as? NSNumber)?.intValue
+            return WalletManager.tokenAsset(chain: .ethereum, contract: contract, symbol: info["symbol"] as? String,
+                                            name: info["name"] as? String, decimals: decimals,
+                                            balance: value, price: price.flatMap { $0 > 0 ? $0 : nil }, icon: nil)
+        }
+    }
+
+    /// Blockscout's older token list (no prices; big answers are cut off at 6 MB).
+    private func blockscoutTokenList(chain: EVMChain, owner: String, testnet: Bool) async -> [EVMAsset]? {
+        guard let base = chain.blockscout(testnet: testnet),
+              let url = URL(string: "\(base)/api?module=account&action=tokenlist&address=\(owner)"),
+              let data = await blockscoutData(url, timeout: 40, maxBytes: 6_000_000),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let items = object["result"] as? [[String: Any]] else { return nil }
+        return items.compactMap { item -> EVMAsset? in
+            guard (item["type"] as? String) == "ERC-20",
+                  let contract = item["contractAddress"] as? String,
+                  let value = UInt256(decimal: (item["balance"] as? String) ?? "", decimals: 0), !value.isZero else { return nil }
+            return WalletManager.tokenAsset(chain: chain, contract: contract, symbol: item["symbol"] as? String,
+                                            name: item["name"] as? String, decimals: Int((item["decimals"] as? String) ?? ""),
+                                            balance: value, price: nil, icon: nil)
+        }
+    }
+
+    /// A token from an explorer, with its texts cleaned.
+    nonisolated static func tokenAsset(chain: EVMChain, contract: String, symbol: String?, name: String?, decimals: Int?,
+                                       balance: UInt256, price: Double?, icon: URL?) -> EVMAsset {
+        let cleanSymbol = KnownToken.cleanText(symbol ?? "?", limit: 11)
+        return EVMAsset(chain: chain, contract: contract, symbol: cleanSymbol,
+                        name: KnownToken.cleanText(name ?? cleanSymbol, limit: 40),
+                        decimals: min(max(decimals ?? 18, 0), 36),
+                        balance: balance, usdPrice: price, iconURL: icon)
     }
 
     /// NFTs on every network of the wallet: Blockscout (every page, up to 300) on EVM
@@ -490,9 +560,9 @@ extension WalletManager {
 
     /// Blockscout behind Cloudflare turns away requests that do not look like a browser
     /// (Base and Polygon answer 403), so it is asked like Safari would.
-    func blockscoutData(_ url: URL) async -> Data? {
+    func blockscoutData(_ url: URL, timeout: TimeInterval = 20, maxBytes: Int = 16_000_000) async -> Data? {
         let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = TorProxy.isEnabled ? 45 : 20
+        config.timeoutIntervalForRequest = TorProxy.isEnabled ? max(45, timeout) : timeout
         TorProxy.apply(to: config)
         let session = URLSession(configuration: config)
         defer { session.finishTasksAndInvalidate() }
@@ -500,8 +570,19 @@ extension WalletManager {
         request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
                          forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        guard let (data, response) = try? await session.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        // Read in pieces: an answer bigger than `maxBytes` is dropped instead of filling the memory.
+        guard let (bytes, response) = try? await session.bytes(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              response.expectedContentLength <= Int64(maxBytes) else { return nil }
+        var data = Data()
+        do {
+            for try await byte in bytes {
+                data.append(byte)
+                if data.count > maxBytes { return nil }
+            }
+        } catch {
+            return nil
+        }
         return data
     }
 

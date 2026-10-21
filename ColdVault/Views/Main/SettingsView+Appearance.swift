@@ -42,10 +42,15 @@ extension SettingsView {
                         .foregroundColor(Color(uiColor: .label))
                     Spacer()
                 }
-                HStack(spacing: 20) {
+                // Every colour of the logo; as many per row as fit.
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 70), spacing: 12)], alignment: .leading, spacing: 14) {
                     appIconChoice(nil, preview: "IconPreviewDefault", title: t("Original", "Original"))
                     appIconChoice("AppIconInverted", preview: "IconPreviewInverted", title: t("Inverted", "Invertido"))
-                    Spacer()
+                    appIconChoice("AppIconOrange", preview: "IconPreviewOrange", title: t("Orange", "Naranja"))
+                    appIconChoice("AppIconBlue", preview: "IconPreviewBlue", title: t("Blue", "Azul"))
+                    appIconChoice("AppIconBlueDark", preview: "IconPreviewBlueDark", title: t("Blue night", "Azul noche"))
+                    appIconChoice("AppIconLavender", preview: "IconPreviewLavender", title: t("Lavender", "Lavanda"))
+                    appIconChoice("AppIconLavenderDark", preview: "IconPreviewLavenderDark", title: t("Lavender night", "Lavanda noche"))
                 }
                 .padding(.leading, 44)
             }
@@ -128,6 +133,8 @@ extension SettingsView {
                     )
                 Text(title)
                     .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
                     .foregroundColor(selected ? Color(uiColor: .label) : Palette.secondary)
             }
         }
