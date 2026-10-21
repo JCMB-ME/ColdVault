@@ -439,11 +439,64 @@ extension WalletManager {
     /// up (addresses with thousands of tokens, like burn addresses), Ethplorer on Ethereum and
     /// Blockscout's lighter token list elsewhere. At most 300: priced ones first, by value.
     private func otherTokens(chain: EVMChain, owner: String, testnet: Bool) async -> [EVMAsset] {
-        var list = await blockscoutTokenBalances(chain: chain, owner: owner, testnet: testnet)
+        // With an Alchemy key: its token API (balances, names and prices in one answer) first.
+        var list = testnet ? nil : await alchemyTokens(chain: chain, owner: owner)
+        if list == nil { list = await blockscoutTokenBalances(chain: chain, owner: owner, testnet: testnet) }
         if list == nil, chain == .ethereum, !testnet { list = await ethplorerTokens(owner: owner) }
         if list == nil { list = await blockscoutTokenList(chain: chain, owner: owner, testnet: testnet) }
         let tokens = (list ?? []).filter { !KnownToken.isStablecoin($0.contract ?? "", chain: chain, testnet: testnet) }
         return Array(tokens.sorted { ($0.usdValue ?? -1) > ($1.usdValue ?? -1) }.prefix(300))
+    }
+
+    /// Alchemy's "tokens by address" (only with the user's key): up to 5 pages.
+    private func alchemyTokens(chain: EVMChain, owner: String) async -> [EVMAsset]? {
+        guard let key = ServiceKeys.key(.alchemy), let network = chain.alchemyDataNetwork,
+              let url = URL(string: "https://api.g.alchemy.com/data/v1/\(key)/assets/tokens/by-address") else { return nil }
+        var found = [EVMAsset]()
+        var pageKey: String?
+        for _ in 0..<5 {
+            var body: [String: Any] = ["addresses": [["address": owner, "networks": [network]]],
+                                       "withMetadata": true, "withPrices": true, "includeNativeTokens": false]
+            if let pageKey { body["pageKey"] = pageKey }
+            guard let data = await postJSON(url, body),
+                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let answer = object["data"] as? [String: Any],
+                  let tokens = answer["tokens"] as? [[String: Any]] else { return found.isEmpty ? nil : found }
+            for item in tokens {
+                guard let contract = item["tokenAddress"] as? String,
+                      let text = item["tokenBalance"] as? String else { continue }
+                let balance = text.hasPrefix("0x") ? UInt256(hex: text) : UInt256(decimal: text, decimals: 0)
+                guard let balance, !balance.isZero else { continue }
+                let metadata = item["tokenMetadata"] as? [String: Any]
+                let price = ((item["tokenPrices"] as? [[String: Any]]) ?? [])
+                    .first { ($0["currency"] as? String)?.lowercased() == "usd" }
+                    .flatMap { ($0["value"] as? String).flatMap(Double.init) ?? ($0["value"] as? NSNumber)?.doubleValue }
+                found.append(WalletManager.tokenAsset(chain: chain, contract: contract,
+                                                      symbol: metadata?["symbol"] as? String, name: metadata?["name"] as? String,
+                                                      decimals: (metadata?["decimals"] as? NSNumber)?.intValue,
+                                                      balance: balance, price: price.flatMap { $0 > 0 ? $0 : nil },
+                                                      icon: (metadata?["logo"] as? String).flatMap { URL(string: $0) }))
+            }
+            guard let next = answer["pageKey"] as? String, !next.isEmpty else { break }
+            pageKey = next
+        }
+        return found
+    }
+
+    /// A JSON POST (Alchemy's API), through Tor when it is on.
+    private func postJSON(_ url: URL, _ body: [String: Any]) async -> Data? {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = TorProxy.isEnabled ? 45 : 20
+        TorProxy.apply(to: config)
+        let session = URLSession(configuration: config)
+        defer { session.finishTasksAndInvalidate() }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        guard let (data, response) = try? await session.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return data
     }
 
     private func blockscoutTokenBalances(chain: EVMChain, owner: String, testnet: Bool) async -> [EVMAsset]? {

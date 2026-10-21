@@ -77,7 +77,39 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
     }
 
     /// Public JSON-RPC nodes, tried in order (the chain id is checked on each).
+    /// The nodes asked: Alchemy's first when its key is set (Settings › Advanced › API keys), then
+    /// the free public ones (also used when Alchemy does not answer).
     public func endpoints(testnet: Bool) -> [String] {
+        (alchemyEndpoint(testnet: testnet).map { [$0] } ?? []) + publicEndpoints(testnet: testnet)
+    }
+
+    /// Alchemy's node for this network, with the user's key.
+    public func alchemyEndpoint(testnet: Bool) -> String? {
+        guard let key = ServiceKeys.key(.alchemy) else { return nil }
+        let name: String
+        switch (self, testnet) {
+        case (.ethereum, false): name = "eth-mainnet"
+        case (.ethereum, true): name = "eth-sepolia"
+        case (.base, false): name = "base-mainnet"
+        case (.base, true): name = "base-sepolia"
+        case (.polygon, false): name = "polygon-mainnet"
+        case (.polygon, true): name = "polygon-amoy"
+        default: return nil
+        }
+        return "https://\(name).g.alchemy.com/v2/\(key)"
+    }
+
+    /// The network's name in Alchemy's token API (mainnet only).
+    public var alchemyDataNetwork: String? {
+        switch self {
+        case .ethereum: return "eth-mainnet"
+        case .base: return "base-mainnet"
+        case .polygon: return "matic-mainnet"
+        default: return nil
+        }
+    }
+
+    public func publicEndpoints(testnet: Bool) -> [String] {
         switch (self, testnet) {
         case (.ethereum, false): return ["https://ethereum-rpc.publicnode.com", "https://eth.drpc.org", "https://cloudflare-eth.com"]
         case (.ethereum, true): return ["https://ethereum-sepolia-rpc.publicnode.com", "https://sepolia.drpc.org"]

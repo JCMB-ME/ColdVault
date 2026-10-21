@@ -123,8 +123,8 @@ extension SettingsView {
                                     chevron: true, icon: "key.horizontal")
                     }
                 }
-                SettingsNote(text: t("Free keys that raise the request limits of Tron and TON (fewer \"busy\" errors). They identify the app to the service, not your wallet. The WalletConnect Project ID (free at cloud.reown.com) is what lets you connect to dApps.",
-                                     "Claves gratuitas que suben el límite de peticiones de Tron y TON (menos errores de \"ocupado\"). Identifican a la app ante el servicio, no a tu billetera. El Project ID de WalletConnect (gratis en cloud.reown.com) es lo que permite conectarte a dApps."))
+                SettingsNote(text: t("Free keys (create a free account on each site). Alchemy: faster balances, tokens with prices and fewer errors on Ethereum, Base and Polygon. Helius: faster Solana and its NFTs. TronGrid, toncenter, tonapi: fewer \"busy\" errors on Tron and TON. Without a key the app uses the free public services. The WalletConnect Project ID (free at cloud.reown.com) is what lets you connect to dApps. Keys stay in this iPhone's Keychain; the services see the addresses you look up, as the public ones do.",
+                                     "Claves gratuitas (crea una cuenta gratis en cada web). Alchemy: saldos más rápidos, tokens con precio y menos errores en Ethereum, Base y Polygon. Helius: Solana más rápido y sus NFTs. TronGrid, toncenter, tonapi: menos errores de \"ocupado\" en Tron y TON. Sin clave, la app usa los servicios públicos gratuitos. El Project ID de WalletConnect (gratis en cloud.reown.com) es lo que permite conectarte a dApps. Las claves quedan en el Keychain de este iPhone; los servicios ven las direcciones que consultas, igual que los públicos."))
             }
             Group {
                 SettingsSubheader(text: "Cold wallet")

@@ -18,6 +18,10 @@ public enum ServiceKeys {
         case tonapi = "tonapiKey"
         /// The free Project ID WalletConnect asks every app for (cloud.reown.com).
         case walletConnect = "walletConnectProjectId"
+        /// Alchemy (free plan): its nodes for Ethereum, Base and Polygon, and its token API.
+        case alchemy = "alchemyKey"
+        /// Helius (free plan): its Solana nodes, with the asset API (NFTs).
+        case helius = "heliusKey"
 
         public var id: String { rawValue }
 
@@ -27,6 +31,8 @@ public enum ServiceKeys {
             case .toncenter: return "toncenter"
             case .tonapi: return "tonapi"
             case .walletConnect: return "WalletConnect Project ID"
+            case .alchemy: return "Alchemy (ETH · Base · Polygon)"
+            case .helius: return "Helius (Solana)"
             }
         }
 
@@ -37,6 +43,8 @@ public enum ServiceKeys {
             case .toncenter: return "@tonapibot (Telegram)"
             case .tonapi: return "tonconsole.com"
             case .walletConnect: return "cloud.reown.com"
+            case .alchemy: return "alchemy.com"
+            case .helius: return "helius.dev"
             }
         }
     }

@@ -58,9 +58,15 @@ public final class SolanaAPI {
         session = SharedSession.get(timeout: TorProxy.isEnabled ? 45 : 20)
     }
 
+    /// Helius first when its key is set (Settings › Advanced › API keys): faster, and the only one of
+    /// these with the asset API (NFTs). Then the free public nodes.
     private var endpoints: [String] {
-        isTestnet ? ["https://api.devnet.solana.com", "https://solana-devnet-rpc.publicnode.com"]
-                  : ["https://api.mainnet-beta.solana.com", "https://solana-rpc.publicnode.com"]
+        let helius = ServiceKeys.key(.helius)
+            .flatMap { $0.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) }
+            .map { "https://\(isTestnet ? "devnet" : "mainnet").helius-rpc.com/?api-key=\($0)" }
+        let free = isTestnet ? ["https://api.devnet.solana.com", "https://solana-devnet-rpc.publicnode.com"]
+                             : ["https://api.mainnet-beta.solana.com", "https://solana-rpc.publicnode.com"]
+        return (helius.map { [$0] } ?? []) + free
     }
 
     private func call(_ method: String, _ params: [Any]) async throws -> Any {
