@@ -46,7 +46,8 @@ public enum CoinKind: String, Codable, CaseIterable, Identifiable {
     public var networks: [EVMChain] {
         switch self {
         case .bitcoin: return []
-        case .ethereum: return [.ethereum, .base]
+        // Same 0x address: Polygon too (its coin, POL, shows on its own while it is on screen).
+        case .ethereum: return [.ethereum, .base, .polygon]
         case .polygon: return [.polygon]
         case .tron: return [.tron]
         case .ton: return [.ton]

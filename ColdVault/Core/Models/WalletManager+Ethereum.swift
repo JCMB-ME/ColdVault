@@ -68,6 +68,11 @@ extension WalletManager {
         return whole + separator + (fraction < 10 ? "0" : "") + "\(fraction)"
     }
 
+    /// The coin the amounts on screen are in: the wallet's, or POL while an Ethereum wallet shows Polygon.
+    public var displayCoin: CoinKind {
+        activeCoin == .ethereum && activeNetwork == .polygon ? .polygon : activeCoin
+    }
+
     public func unitLabel(_ coin: CoinKind) -> String {
         coin == .bitcoin ? displayUnit.rawValue : coin.symbol
     }

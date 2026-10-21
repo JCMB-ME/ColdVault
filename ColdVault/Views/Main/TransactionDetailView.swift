@@ -135,19 +135,19 @@ struct TransactionDetailView: View {
                         .foregroundColor(Palette.secondary)
                         .lineLimit(1)
                 } else {
-                Text("\(received ? "+" : "−")\(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin))")
+                Text("\(received ? "+" : "−")\(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.displayCoin))")
                     .font(.system(size: 38, weight: .bold))
                     .foregroundColor(Color(uiColor: .label))
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
-                Text(walletManager.unitLabel(walletManager.activeCoin))
+                Text(walletManager.unitLabel(walletManager.displayCoin))
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(Palette.secondary)
                 }
             }
             if transaction.token != nil && transaction.net < 0 {
-                Text(t("Fee: \(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin)) \(walletManager.unitLabel(walletManager.activeCoin))",
-                       "Comisión: \(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin)) \(walletManager.unitLabel(walletManager.activeCoin))"))
+                Text(t("Fee: \(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.displayCoin)) \(walletManager.unitLabel(walletManager.displayCoin))",
+                       "Comisión: \(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.displayCoin)) \(walletManager.unitLabel(walletManager.displayCoin))"))
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(Palette.secondary)
             } else if transaction.token == nil, let fiat = walletManager.fiatText(units: UInt64(abs(transaction.net))) {
@@ -304,7 +304,7 @@ struct TransactionDetailView: View {
                         }
                         Spacer(minLength: 8)
                         VStack(alignment: .trailing, spacing: 2) {
-                            Text("\(walletManager.format(units: party.value, coin: walletManager.activeCoin)) \(walletManager.unitLabel(walletManager.activeCoin))")
+                            Text("\(walletManager.format(units: party.value, coin: walletManager.displayCoin)) \(walletManager.unitLabel(walletManager.displayCoin))")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(Color(uiColor: .label))
                                 .lineLimit(1)

@@ -1014,7 +1014,7 @@ public final class WalletManager: ObservableObject {
 
     // MARK: - Formatted Balance Display
     /// What can be spent now: received coins still waiting for a confirmation are shown apart.
-    public var formattedBalance: String { format(units: availableSats, coin: activeCoin) }
+    public var formattedBalance: String { format(units: availableSats, coin: displayCoin) }
 
     /// Exact sats → "0.00000000" string (no floating point).
     nonisolated public static func formatBTC(_ sats: UInt64) -> String {

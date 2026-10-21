@@ -47,14 +47,14 @@ extension WalletManager {
             return
         }
         evmAssets = assets
-        balanceSats = WalletManager.balanceUnits(assets, dollars: kind == .dollars)
+        balanceSats = WalletManager.balanceUnits(assets, dollars: kind == .dollars, coin: kind)
         balanceError = nil
         lastBalanceUpdate = Date()
     }
 
     /// Stable: every stablecoin's value in millionths of a dollar (6 or 18 decimals, EURC at
     /// the euro's price); otherwise the native coins.
-    nonisolated static func balanceUnits(_ assets: [EVMAsset], dollars: Bool) -> UInt64 {
+    nonisolated static func balanceUnits(_ assets: [EVMAsset], dollars: Bool, coin: CoinKind? = nil) -> UInt64 {
         if dollars {
             return assets.filter { !$0.isNative && $0.isStablecoin }.reduce(UInt64(0)) { total, asset in
                 let usd = asset.usdValue ?? asset.amount
@@ -62,7 +62,9 @@ extension WalletManager {
                 return total + UInt64(min(usd * 1_000_000, 9e15).rounded())
             }
         }
-        return assets.filter { $0.isNative }.reduce(UInt64(0)) { $0 + units($1.balance, chain: $1.chain) }
+        // Only the wallet's own coin: an Ethereum wallet also on Polygon does not add POL to its ETH.
+        return assets.filter { $0.isNative && (coin == nil || $0.chain.feeCoin == coin) }
+            .reduce(UInt64(0)) { $0 + units($1.balance, chain: $1.chain) }
     }
 
     func assets(on chain: EVMChain, owner: String, testnet: Bool, kind: CoinKind) async throws -> [EVMAsset] {
@@ -93,12 +95,43 @@ extension WalletManager {
                                      decimals: token.decimals, balance: value, usdPrice: stablePrice(token), iconURL: nil))
             }
         }
-        list += await others
+        list += await confirmedOnChain(await others, rpc: rpc, owner: owner)
         // Tokens added by hand: always listed, even at zero or without a price.
         for token in added where !list.contains(where: { $0.contract?.lowercased() == token.contract.lowercased() }) {
             if let asset = token.asset(balance: held[token.contract] ?? .zero) { list.append(asset) }
         }
         return list
+    }
+
+    /// Explorers index balances with a delay: a token just sent away (or burned) still shows. Each
+    /// balance is read again from the node (batched); a token now at zero is dropped. A failed read
+    /// keeps the explorer's figure.
+    private func confirmedOnChain(_ tokens: [EVMAsset], rpc: EthereumRPC, owner: String) async -> [EVMAsset] {
+        guard !tokens.isEmpty, let ownerBytes = EthereumAddress.parse(owner) else { return tokens }
+        let data = "0x" + ERC20.balanceOfData(ownerBytes).hexEncodedString
+        var result = [EVMAsset]()
+        for start in stride(from: 0, to: tokens.count, by: 100) {
+            let chunk = Array(tokens[start..<min(start + 100, tokens.count)])
+            let calls: [(method: String, params: [Any])] = chunk.map { token in
+                ("eth_call", [["to": token.contract ?? "", "data": data], "latest"])
+            }
+            guard let answers = try? await rpc.batch(calls), answers.count == chunk.count else {
+                result += chunk
+                continue
+            }
+            for (token, answer) in zip(chunk, answers) {
+                guard let hex = answer as? String,
+                      let value = hex == "0x" ? UInt256.zero : UInt256(hex: hex) else {
+                    result.append(token)
+                    continue
+                }
+                guard !value.isZero else { continue }
+                result.append(EVMAsset(chain: token.chain, contract: token.contract, symbol: token.symbol, name: token.name,
+                                       decimals: token.decimals, balance: value, usdPrice: token.usdPrice,
+                                       iconURL: token.iconURL))
+            }
+        }
+        return result
     }
 
     /// One coin in dollars: 1, or the euro's price for EURC.

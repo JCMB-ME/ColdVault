@@ -50,7 +50,8 @@ struct EthSendView: View {
         let held = walletManager.networkAssets
         if !held.isEmpty {
             let natives = held.filter { $0.isNative }
-            return natives + walletManager.orderedTokens(includeHidden: true)
+            // Hidden tokens (and likely spam) are left out; turn one on in Manage tokens to send it.
+            return natives + walletManager.orderedTokens()
         }
         // Not loaded yet: the native coin with the balance on screen.
         let chain = walletManager.activeNetwork
@@ -128,6 +129,12 @@ struct EthSendView: View {
     /// The address the payment goes to: the one typed, or the one the typed name points to ("" until it is known).
     private var effectiveRecipient: String { isNameInput ? (resolvedName?.address ?? "") : trimmedRecipient }
     private var tooMuch: Bool { amountUnits.map { asset.balance < $0 } ?? false }
+    /// Max: the whole token balance, or the coin's balance minus the fee estimate.
+    private var maxUnits: UInt256 {
+        guard asset.isNative, let fee = liveFee else { return asset.balance }
+        return asset.balance < fee ? .zero : (asset.balance.subtracting(fee) ?? .zero)
+    }
+    private var maxAmountText: String { maxUnits.formatted(decimals: asset.decimals, maxFraction: min(asset.decimals, 8)) }
     /// The network's coin held on this network (pays the fee).
     private var nativeBalance: UInt256 {
         walletManager.networkAssets.first { $0.isNative && $0.chain == asset.chain }?.balance ?? (asset.isNative ? asset.balance : .zero)
@@ -306,7 +313,8 @@ struct EthSendView: View {
     private var assetPicker: some View {
         AppMenuButton(items: {
             assets.map { item in
-                AppMenuItem(title: "\(item.symbol) · \(item.chain.name(testnet: walletManager.isTestnet)) — \(item.formatted())",
+                AppMenuItem(title: "\(item.symbol) — \(item.formatted())",
+                            image: AnyView(EVMAssetIcon(asset: item, size: 26).environmentObject(walletManager)),
                             selected: item.id == asset.id) {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                         assetID = item.id
@@ -354,14 +362,20 @@ struct EthSendView: View {
         VStack(spacing: 14) {
             VStack(spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    if sendAll {
+                        // Max: what will leave (the coin: balance minus the fee estimate).
+                        Text(maxAmountText)
+                            .font(.system(size: 48, weight: .bold))
+                            .lineLimit(1)
+                            .modifier(RollingDigits())
+                    } else {
                     TextField("0", text: $amountText)
                         .font(.system(size: 48, weight: .bold))
                         .multilineTextAlignment(.center)
                         .keyboardType(.decimalPad)
                         .fixedSize()
-                        .disabled(sendAll)
-                        .opacity(sendAll ? 0.3 : 1)
                         .modifier(RollingDigits())
+                    }
                     // Tap to type the amount in the coin or in money.
                     Button(action: toggleFiatInput) {
                         HStack(spacing: 3) {
@@ -392,9 +406,12 @@ struct EthSendView: View {
                     }
                 Group {
                     if sendAll {
-                        Text(asset.isNative ? t("Entire balance minus the network fee", "Todo el saldo menos la comisión de red")
-                                            : t("Entire balance (the fee is paid in \(asset.chain.nativeSymbol))",
-                                                "Todo el saldo (la comisión se paga en \(asset.chain.nativeSymbol))"))
+                        VStack(spacing: 4) {
+                            if let value = fiat(maxUnits, of: asset) { Text(value) }
+                            Text(asset.isNative ? t("Entire balance minus the network fee", "Todo el saldo menos la comisión de red")
+                                                : t("Entire balance (the fee is paid in \(asset.chain.nativeSymbol))",
+                                                    "Todo el saldo (la comisión se paga en \(asset.chain.nativeSymbol))"))
+                        }
                     } else if tooMuch {
                         Label(t("Not enough balance", "Saldo insuficiente"), systemImage: "exclamationmark.triangle.fill")
                             .foregroundColor(.red)

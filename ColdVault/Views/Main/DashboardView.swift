@@ -481,11 +481,11 @@ public struct DashboardView: View {
                 .modifier(RollingDigits())
 
             // The unit slides up and is replaced from below.
-            Text(walletManager.unitLabel(walletManager.activeCoin))
+            Text(walletManager.unitLabel(walletManager.displayCoin))
                 .font(.system(size: 22, weight: .medium, design: .default))
                 .foregroundColor(Palette.secondary)
                 .fixedSize()
-                .id(walletManager.unitLabel(walletManager.activeCoin))
+                .id(walletManager.unitLabel(walletManager.displayCoin))
                 .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
                                         removal: .move(edge: .top).combined(with: .opacity)))
         }
@@ -658,8 +658,8 @@ public struct DashboardView: View {
                     Image(systemName: "clock")
                         .font(.system(size: 12, weight: .semibold))
                     Text(t("Pending", "Pendiente") + " +"
-                         + walletManager.masked(walletManager.format(units: walletManager.pendingIncomingSats, coin: walletManager.activeCoin))
-                         + " " + walletManager.unitLabel(walletManager.activeCoin)
+                         + walletManager.masked(walletManager.format(units: walletManager.pendingIncomingSats, coin: walletManager.displayCoin))
+                         + " " + walletManager.unitLabel(walletManager.displayCoin)
                          // With Fiat value on, its value in money too.
                          + ((walletManager.homeShowFiat ? walletManager.fiatText(units: walletManager.pendingIncomingSats) : nil)
                              .map { " · ≈ " + walletManager.masked($0) } ?? ""))
@@ -1074,12 +1074,12 @@ struct TransactionCard: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
                     } else {
-                    Text("\(received ? "+" : "−")\(walletManager.masked(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.activeCoin)))")
+                    Text("\(received ? "+" : "−")\(walletManager.masked(walletManager.format(units: UInt64(abs(transaction.net)), coin: walletManager.displayCoin)))")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(uiColor: .label))
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
-                    Text(walletManager.unitLabel(walletManager.activeCoin)
+                    Text(walletManager.unitLabel(walletManager.displayCoin)
                          + ((walletManager.homeShowFiat ? walletManager.fiatText(units: UInt64(abs(transaction.net))) : nil)
                              .map { " · ≈ " + walletManager.masked($0) } ?? ""))
                         .font(.system(size: 12))

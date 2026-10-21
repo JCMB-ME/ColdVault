@@ -242,7 +242,7 @@ extension WalletManager {
 
     /// An amount of the wallet's coin (sats or gwei) in the chosen currency.
     public func fiatText(units: UInt64, coin: CoinKind? = nil) -> String? {
-        let kind = coin ?? activeCoin
+        let kind = coin ?? displayCoin
         let value: Double
         switch kind {
         case .dollars:
