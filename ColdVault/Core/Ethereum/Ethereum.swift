@@ -383,6 +383,9 @@ public enum EthereumError: LocalizedError {
     case server(String)
     case invalidAddress
     case insufficientFunds
+    /// The token's contract refuses the transfer (the node's simulation reverts): sending would
+    /// only burn the fee. Common in unsolicited airdrops built so they can't be moved or sold.
+    case transferRefused(String)
     case insufficientToken(String)
     /// A token payment needs the network's coin (ETH, POL, TRX, TON) for the fee.
     case noGas(String, String)
@@ -394,6 +397,10 @@ public enum EthereumError: LocalizedError {
         switch self {
         case .unavailable: return english ? "No Ethereum node answered. Try again." : "Ningún nodo de Ethereum respondió. Inténtalo de nuevo."
         case .server(let message): return (english ? "Ethereum node: " : "Nodo de Ethereum: ") + message
+        case .transferRefused(let symbol):
+            return english
+                ? "The \(symbol) contract refuses this transfer, so it would fail and only cost the fee. Tokens like this (unsolicited airdrops) are made so they can't be moved: hide it in Manage tokens instead."
+                : "El contrato de \(symbol) rechaza este envío: fallaría y solo te cobraría la comisión. Los tokens así (los que te envían sin pedirlos) están hechos para no poder moverse: mejor ocúltalo en Administrar tokens."
         case .invalidAddress: return english ? "Invalid Ethereum address (check the checksum)." : "Dirección de Ethereum inválida (revisa el checksum)."
         case .insufficientFunds: return english ? "Not enough balance for the amount plus the network fee." : "No hay saldo suficiente para el monto más la comisión de red."
         case .insufficientToken(let symbol): return english ? "Not enough \(symbol) for this amount." : "No tienes suficiente \(symbol) para este monto."

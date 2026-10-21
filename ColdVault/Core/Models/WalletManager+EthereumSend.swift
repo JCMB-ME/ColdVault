@@ -126,9 +126,18 @@ extension WalletManager {
         } else {
             estimateCall["data"] = "0x" + callData.hexEncodedString
         }
-        if let estimate = try? await rpc.call("eth_estimateGas", [estimateCall]) as? String,
-           let gas = UInt256(hex: estimate), gas < UInt256(1_000_000) {
-            gasLimit = asset.isNative ? max(21_000, gas.low64) : gas.low64 + gas.low64 / 5
+        // A node that answers the estimate with an error (a revert) is saying the transfer would fail:
+        // it is not sent (before, a default gas was used and the failed transaction still cost the fee).
+        do {
+            if let estimate = try await rpc.call("eth_estimateGas", [estimateCall]) as? String,
+               let gas = UInt256(hex: estimate), gas < UInt256(1_000_000) {
+                gasLimit = asset.isNative ? max(21_000, gas.low64) : gas.low64 + gas.low64 / 5
+            }
+        } catch EthereumError.server(let message) where message.lowercased().contains("revert") {
+            if asset.isNative { throw EthereumError.server(message) }
+            throw EthereumError.transferRefused(asset.symbol)
+        } catch {
+            // No node answered: keep the safe default.
         }
         guard let gasCost = maxFeePerGas.multiplied(by: gasLimit),
               let maxFee = gasCost.adding(chain.extraFeeReserve) else { throw EthereumError.unavailable }
