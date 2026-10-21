@@ -364,7 +364,7 @@ struct WalletsView: View {
 
     private func coinDockRow(logo: CGFloat, name style: DockName) -> some View {
         let showName = style != .none
-        HStack(spacing: 4) {
+        return HStack(spacing: 4) {
             ForEach(ownedCoins) { item in
                 let selected = item == coin
                 Button { select(item) } label: {
