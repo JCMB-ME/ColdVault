@@ -568,6 +568,11 @@ extension WalletManager {
     /// The NFT list of the account, from the phone when it is less than 15 minutes old
     /// (`force`: pull to refresh).
     public func loadNFTs(force: Bool = false) async -> [EVMNFT] {
+        let sent = recentlySentCollectibles
+        return await loadAllNFTs(force: force).filter { !sent.contains($0.id) }
+    }
+
+    private func loadAllNFTs(force: Bool) async -> [EVMNFT] {
         guard let record = activeRecord, record.coinKind.isAccountBased else { return [] }
         let name = WalletManager.collectiblesFile(record, kind: "nfts")
         // Kept 15 minutes: an NFT received shows soon; pull to refresh asks again at once.

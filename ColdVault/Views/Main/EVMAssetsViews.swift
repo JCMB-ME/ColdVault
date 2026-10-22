@@ -659,6 +659,8 @@ struct CollectiblesStrip: View {
                     HStack(spacing: 8) {
                         ForEach(0..<4, id: \.self) { index in
                             thumb(index < items.count ? items[index] : nil)
+                                .id(index < items.count ? items[index].id : "empty-\(index)")
+                                .transition(.collectibleVanish)
                         }
                     }
                 }

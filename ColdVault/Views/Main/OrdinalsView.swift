@@ -68,6 +68,7 @@ struct OrdinalsView: View {
                                             tile(item)
                                         }
                                         .buttonStyle(.plain)
+                                        .transition(.collectibleVanish)
                                     }
                                 }
                             }
@@ -86,6 +87,10 @@ struct OrdinalsView: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .task { await load() }
+        .onChange(of: walletManager.sentCollectibleCount) { _ in
+            let sent = walletManager.recentlySentCollectibles
+            withAnimation(.spring(response: 0.75, dampingFraction: 0.86)) { items.removeAll { sent.contains($0.id) } }
+        }
         .sheet(item: $selected) { item in
             InscriptionDetailView(item: item).environmentObject(walletManager)
         }
@@ -185,6 +190,7 @@ struct OrdinalsView: View {
 /// and the Download and Profile picture buttons (for pictures).
 struct InscriptionDetailView: View {
     @EnvironmentObject var walletManager: WalletManager
+    @Environment(\.presentationMode) private var presentationMode
     let item: Inscription
     @State private var showSend = false
 
@@ -233,7 +239,8 @@ struct InscriptionDetailView: View {
             }
         }
         .sheet(isPresented: $showSend) {
-            CollectibleSendView(item: .inscription(item)).environmentObject(walletManager)
+            CollectibleSendView(item: .inscription(item), onDone: { presentationMode.wrappedValue.dismiss() })
+                .environmentObject(walletManager)
         }
     }
 

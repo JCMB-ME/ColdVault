@@ -181,6 +181,11 @@ extension WalletManager {
     /// The inscriptions of the account, from the phone when the list is less than 15
     /// minutes old (`force`: pull to refresh).
     public func loadInscriptions(force: Bool = false) async throws -> [Inscription] {
+        let sent = recentlySentCollectibles
+        return try await loadAllInscriptions(force: force).filter { !sent.contains($0.id) }
+    }
+
+    private func loadAllInscriptions(force: Bool) async throws -> [Inscription] {
         guard let record = activeRecord, record.coinKind == .bitcoin, !record.isTestnet else { return [] }
         let name = WalletManager.collectiblesFile(record, kind: "inscriptions")
         // Kept 15 minutes, like the NFTs; pull to refresh asks again at once.

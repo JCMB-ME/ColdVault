@@ -18,6 +18,8 @@ struct CollectibleSendView: View {
     @EnvironmentObject var walletManager: WalletManager
     @Environment(\.presentationMode) var presentationMode
     let item: SendableCollectible
+    /// "Done": also closes the screen that opened this one (the NFT's detail).
+    var onDone: (() -> Void)? = nil
 
     @State private var recipient = ""
     @State private var showScanner = false
@@ -32,6 +34,13 @@ struct CollectibleSendView: View {
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+
+    private var itemID: String {
+        switch item {
+        case .nft(let nft): return nft.id
+        case .inscription(let inscription): return inscription.id
+        }
+    }
 
     private var title: String {
         switch item {
@@ -88,6 +97,15 @@ struct CollectibleSendView: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .interactiveDismissDisabled(isProcessing)
+        .onDisappear {
+            // Sent: once the sheets are gone, the item leaves its list (blurring away).
+            guard sentID != nil else { return }
+            let id = itemID
+            let manager = walletManager
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                withAnimation(.spring(response: 0.75, dampingFraction: 0.86)) { manager.markCollectibleSent(id) }
+            }
+        }
         .task {
             if isBitcoin, let loaded = try? await walletManager.recommendedFees() { fees = loaded }
         }
@@ -274,7 +292,9 @@ struct CollectibleSendView: View {
             .padding(.vertical, 26)
             .frame(maxWidth: .infinity)
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
-            PrimaryCapsuleButton(title: t("Done", "Listo")) { presentationMode.wrappedValue.dismiss() }
+            PrimaryCapsuleButton(title: t("Done", "Listo")) {
+                if let onDone { onDone() } else { presentationMode.wrappedValue.dismiss() }
+            }
         }
     }
 

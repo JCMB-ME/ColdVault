@@ -176,6 +176,8 @@ public final class WalletManager: ObservableObject {
     }
     /// What the home blocks show (nil = not loaded yet), and for which account.
     @Published public internal(set) var homeNFTs: [EVMNFT]?
+    /// Changes each time an NFT or inscription is sent (the open lists remove it, animated).
+    @Published public internal(set) var sentCollectibleCount = 0
     @Published public internal(set) var homeInscriptions: [Inscription]?
     var homeCollectiblesKey: String?
     var lastEthHistoryFetch: Date?

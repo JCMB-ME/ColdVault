@@ -93,6 +93,10 @@ struct NFTGalleryView: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .task { await load() }
+        .onChange(of: walletManager.sentCollectibleCount) { _ in
+            let sent = walletManager.recentlySentCollectibles
+            withAnimation(.spring(response: 0.75, dampingFraction: 0.86)) { items.removeAll { sent.contains($0.id) } }
+        }
         .sheet(item: $selected) { item in
             NFTDetailView(item: item).environmentObject(walletManager)
         }
@@ -122,6 +126,7 @@ struct NFTGalleryView: View {
             tile(item)
         }
         .buttonStyle(.plain)
+        .transition(.collectibleVanish)
     }
 
     private func tile(_ item: EVMNFT) -> some View {
@@ -382,6 +387,7 @@ final class NFTImageLoader {
 /// the Download and Profile picture buttons.
 struct NFTDetailView: View {
     @EnvironmentObject var walletManager: WalletManager
+    @Environment(\.presentationMode) private var presentationMode
     let item: EVMNFT
     @State private var showSend = false
 
@@ -440,7 +446,8 @@ struct NFTDetailView: View {
             }
         }
         .sheet(isPresented: $showSend) {
-            CollectibleSendView(item: .nft(item)).environmentObject(walletManager)
+            CollectibleSendView(item: .nft(item), onDone: { presentationMode.wrappedValue.dismiss() })
+                .environmentObject(walletManager)
         }
     }
 
