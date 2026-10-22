@@ -61,6 +61,31 @@ struct CollectibleSendView: View {
         }
     }
     private var isBitcoin: Bool { if case .inscription = item { return true } else { return false } }
+
+    /// Contacts with an address of this NFT's network (bitcoin for an ordinal).
+    private var contacts: [Contact] {
+        walletManager.contacts.filter { contact in
+            switch item {
+            case .nft(let nft): return nft.chain.isValidAddress(contact.address)
+            case .inscription: return BitcoinAddress.decode(contact.address) != nil
+            }
+        }
+    }
+
+    private var recipientContact: Contact? {
+        // TON: the same account written another way (bounceable or not) is the same contact.
+        if case .nft(let nft) = item, nft.chain == .ton, let target = TonAddress.parse(trimmed) {
+            return contacts.first { TonAddress.parse($0.address) == target }
+        }
+        return contacts.first { $0.address == trimmed }
+    }
+
+    /// The saved contact this recipient imitates (address poisoning), when it is not one of them.
+    private var lookalikeContact: Contact? {
+        guard recipientContact == nil,
+              let match = AddressLookalike.match(trimmed, known: contacts.map { $0.address }) else { return nil }
+        return contacts.first { $0.address == match }
+    }
     private var feeRate: UInt64 {
         UInt64(max(1, [fees.fastestFee, fees.halfHourFee, fees.hourFee][min(max(feeChoice, 0), 2)]))
     }
@@ -160,6 +185,33 @@ struct CollectibleSendView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                // Contacts one tap away, like Send.
+                if !contacts.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 14) {
+                            ForEach(contacts) { contact in
+                                let selected = contact.id == recipientContact?.id
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    recipient = selected ? "" : contact.address
+                                } label: {
+                                    VStack(spacing: 5) {
+                                        ContactAvatar(contact: contact, size: 46)
+                                            .overlay(Circle().stroke(Color(uiColor: .label), lineWidth: selected ? 2.5 : 0).padding(-3))
+                                        Text(contact.name)
+                                            .font(.system(size: 11, weight: selected ? .semibold : .medium))
+                                            .foregroundColor(selected ? Color(uiColor: .label) : Palette.secondary)
+                                            .lineLimit(1)
+                                            .frame(width: 60)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                    }
+                }
             }
             .padding(16)
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
@@ -215,6 +267,20 @@ struct CollectibleSendView: View {
 
     private var reviewCard: some View {
         VStack(spacing: 16) {
+            if let contact = recipientContact {
+                HStack(spacing: 10) {
+                    ContactAvatar(contact: contact, size: 40)
+                    Text(contact.name).font(.system(size: 16, weight: .semibold))
+                }
+            }
+            if let similar = lookalikeContact {
+                Label(t("This address looks like \(similar.name) but isn't the same. Compare every character before you send.",
+                        "Esta dirección se parece a \(similar.name) pero no es la misma. Compara cada carácter antes de enviar."),
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.orange)
+                    .multilineTextAlignment(.center)
+            }
             VStack(spacing: 0) {
                 row(t("To", "Para"), trimmed)
                 SettingsDivider(inset: 16)
