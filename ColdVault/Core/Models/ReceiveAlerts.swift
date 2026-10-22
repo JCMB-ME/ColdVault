@@ -20,8 +20,16 @@ enum ReceiveAlerts {
     private static let snapshotKey = "receiveAlertsSnapshot"
     private static let askedKey = "receiveAlertsAsked"
 
-    /// Set at launch: the background check reads the wallets through it.
-    static var manager: WalletManager?
+    /// The app's one wallet manager: made by the screen, or by the background check when iOS wakes
+    /// the app without a screen. Never before the launch ends (the Keychain answers "locked" then).
+    private(set) static var manager: WalletManager?
+
+    static func sharedManager() -> WalletManager {
+        if let manager { return manager }
+        let made = WalletManager()
+        manager = made
+        return made
+    }
 
     static var enabled: Bool { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
 
@@ -95,7 +103,9 @@ enum ReceiveAlerts {
 
     /// Reads every wallet and compares with the last look; with `notify`, what arrived is announced.
     static func check(notify: Bool) async {
-        guard enabled, let manager, !manager.library.isEmpty else { return }
+        guard enabled else { return }
+        let manager = sharedManager()
+        guard !manager.library.isEmpty else { return }
         var saved = UserDefaults.standard.dictionary(forKey: snapshotKey) as? [String: String] ?? [:]
         let english = manager.appLanguage == .english
         let hideAmounts = manager.balancesCensored

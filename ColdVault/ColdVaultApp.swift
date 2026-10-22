@@ -11,14 +11,12 @@ import UIKit
 @main
 struct ColdVaultApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var walletManager: WalletManager
+    /// Made once the app has launched (the Keychain can be read then); the background check of
+    /// ReceiveAlerts uses the same one.
+    @StateObject private var walletManager = ReceiveAlerts.sharedManager()
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        let manager = WalletManager()
-        _walletManager = StateObject(wrappedValue: manager)
-        // Payments and collectibles that arrive while the app is closed (no server).
-        ReceiveAlerts.manager = manager
         // The duress PIN is switched off (PinLock.duressEnabled): remove its stored hashes.
         PinLock.discardStoredConfigIfDisabled()
         // Exports left over from a share sheet that was never closed (the app was killed).

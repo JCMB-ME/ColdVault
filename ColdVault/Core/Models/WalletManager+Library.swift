@@ -156,23 +156,30 @@ extension WalletManager {
     }
 
     private static var protectedDataObserver: NSObjectProtocol?
+    private static var becameActiveObserver: NSObjectProtocol?
 
-    /// Loads wallets and contacts once the iPhone is unlocked (one-shot observer).
+    /// Loads wallets and contacts once the iPhone is unlocked (one-shot observers): when iOS says so,
+    /// or when the app comes to the screen and the Keychain can be read (the notice may have come
+    /// before anyone listened).
     static func reloadWhenProtectedDataAvailable(_ manager: WalletManager) {
         guard protectedDataObserver == nil else { return }
-        protectedDataObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main
-        ) { [weak manager] _ in
+        let reload: (Notification) -> Void = { [weak manager] _ in
             Task { @MainActor in
-                if let observer = WalletManager.protectedDataObserver {
+                guard UIApplication.shared.isProtectedDataAvailable, WalletManager.protectedDataObserver != nil else { return }
+                for observer in [WalletManager.protectedDataObserver, WalletManager.becameActiveObserver].compactMap({ $0 }) {
                     NotificationCenter.default.removeObserver(observer)
-                    WalletManager.protectedDataObserver = nil
                 }
+                WalletManager.protectedDataObserver = nil
+                WalletManager.becameActiveObserver = nil
                 manager?.loadContacts()
                 manager?.loadLabels()
                 manager?.loadStoredWallet()
             }
         }
+        protectedDataObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main, using: reload)
+        becameActiveObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main, using: reload)
     }
 
     // MARK: - Select
