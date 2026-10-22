@@ -682,7 +682,7 @@ extension WalletManager {
         return list
     }
 
-    /// The NFTs of a wallet (the one open, or another: the background check of ReceiveAlerts).
+    /// The NFTs of a wallet (the one open unless another is given).
     func fetchNFTs(for given: StoredWalletRecord? = nil) async -> [EVMNFT] {
         guard let record = given ?? activeRecord, record.coinKind.isAccountBased else { return [] }
         var result = [EVMNFT]()
