@@ -74,14 +74,20 @@ final class URLSessionWebSocket: NSObject, WebSocketConnecting, URLSessionWebSoc
                 }
                 self.receive(on: task)
             case .failure(let error):
-                self.closed(error)
+                self.closed(error, from: task)
             }
         }
     }
 
-    /// The socket ended (closed, failed, or cancelled here): tell the SDK once.
-    private func closed(_ error: Error?) {
+    /// The socket ended (closed, failed, or cancelled here): tell the SDK once. `from`: the connection a
+    /// notice is about; a late notice of an older connection (its session was already dropped) is
+    /// ignored instead of closing the new one.
+    private func closed(_ error: Error?, from ended: URLSessionTask? = nil) {
         lock.lock()
+        if let ended, ended !== task {
+            lock.unlock()
+            return
+        }
         let wasOpen = task != nil
         task = nil
         let old = session
@@ -97,18 +103,19 @@ final class URLSessionWebSocket: NSObject, WebSocketConnecting, URLSessionWebSoc
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                     didOpenWithProtocol protocol: String?) {
         lock.lock()
-        isConnected = true
+        let current = webSocketTask === task
+        if current { isConnected = true }
         lock.unlock()
-        onConnect?()
+        if current { onConnect?() }
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-        closed(nil)
+        closed(nil, from: webSocketTask)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error { closed(error) }
+        if let error { closed(error, from: task) }
     }
 }
 

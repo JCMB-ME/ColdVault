@@ -61,6 +61,13 @@ enum SecurePasteboard {
 
 // MARK: - App lock
 
+/// Whether the app lock covers the screen. Sheets show above it (they are presented over the whole
+/// window), so the ones a website can raise (WalletConnect requests) wait while it is locked.
+final class AppLockState: ObservableObject {
+    static let shared = AppLockState()
+    @Published var locked = false
+}
+
 /// Optional (Settings › Security): the app asks for Face ID / passcode when it opens
 /// and whenever it comes back from the background. Sending, signing and showing the
 /// phrase or keys ask for Face ID anyway; this also hides balances and history from
@@ -137,7 +144,11 @@ struct AppLockModifier: ViewModifier {
             }
         }
         // Face ID never starts on its own: the user taps "Unlock" when ready.
-        .onAppear { if locked && !enabled { locked = false } }
+        .onAppear {
+            if locked && !enabled { locked = false }
+            AppLockState.shared.locked = locked
+        }
+        .onChange(of: locked) { value in AppLockState.shared.locked = value }
         .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in lockForShake() }
         .onChange(of: scenePhase) { phase in
             if phase == .background, enabled {

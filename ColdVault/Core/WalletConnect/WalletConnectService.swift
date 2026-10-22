@@ -202,6 +202,9 @@ final class WalletConnectService: ObservableObject {
         if let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "uri" })?.value {
             text = value
         }
+        // A link that only brings the app forward (a dApp's reminder of a request, the way back from a
+        // site) carries no pairing key: there is nothing to pair, and no error to show.
+        guard text.lowercased().hasPrefix("wc:"), text.contains("symKey=") else { return }
         Task {
             do { try await pair(link: text) } catch {
                 await MainActor.run { notice = error.localizedDescription }
@@ -274,16 +277,23 @@ final class WalletConnectService: ObservableObject {
         let manager = walletManager
         switch item.request.method {
         case "eth_accounts", "eth_requestAccounts":
-            guard let address = await MainActor.run(body: { manager?.walletConnectAddress }) else {
+            // The address the session was approved with, not whichever wallet is on screen now (switching
+            // wallets must not hand a connected dApp the user's other addresses).
+            let bound = self.binding(for: item.request.topic)
+            guard let address = await MainActor.run(body: { () -> String? in
+                if let bound { return manager?.walletConnectAddress(for: bound) }
+                return manager?.walletConnectAddress
+            }) else {
                 await reject(item, code: 4100, message: "Unauthorized")
                 return
             }
             await respond(item, with: AnyCodable([address]))
         case "eth_chainId":
             await respond(item, with: AnyCodable("0x" + String(UInt64(item.request.chainId.reference) ?? 1, radix: 16)))
-        default:   // wallet_switchEthereumChain
+        default:   // wallet_switchEthereumChain: the network its parameters name ([{ chainId: "0x89" }])
+            let requested = WalletConnectService.switchTarget(item.request)
             let wanted = await MainActor.run(body: { () -> Bool in
-                guard let id = UInt64(item.request.chainId.reference) else { return false }
+                guard let id = requested else { return false }
                 return manager?.evmChain(forChainId: id) != nil
             })
             if wanted {
@@ -291,6 +301,34 @@ final class WalletConnectService: ObservableObject {
             } else {
                 await reject(item, code: 4902, message: "Unrecognized chain")
             }
+        }
+    }
+
+    /// The chain id a wallet_switchEthereumChain request asks for, from its parameters.
+    static func switchTarget(_ request: Request) -> UInt64? {
+        guard let data = try? request.params.getDataRepresentation(),
+              let list = (try? JSONSerialization.jsonObject(with: data)) as? [Any],
+              let first = list.first as? [String: Any], let text = first["chainId"] as? String else { return nil }
+        return UInt256(hex: text)?.low64
+    }
+
+    /// The site that really made a request, as the verification service saw it (a dApp can't choose it),
+    /// or else the address the dApp gives for itself.
+    static func requestHost(peerURL: String?, context: VerifyContext?) -> String? {
+        if let origin = context?.origin, !origin.isEmpty {
+            let text = origin.contains("://") ? origin : "https://" + origin
+            if let host = URL(string: text)?.host?.lowercased() { return host }
+        }
+        return peerURL.flatMap { URL(string: $0)?.host?.lowercased() }
+    }
+
+    /// Ends the connections made with a wallet that was deleted from this iPhone.
+    func disconnectSessions(boundTo slot: String) {
+        let topics = loadBindings().filter { $0.value.slot == slot }.map { $0.key }
+        guard started, !topics.isEmpty else { return }
+        Task {
+            for topic in topics { try? await Sign.instance.disconnect(topic: topic) }
+            await MainActor.run { self.update(sessions: Sign.instance.getSessions()) }
         }
     }
 

@@ -220,12 +220,14 @@ public enum ServiceKeys {
 
     /// Adds the key header a service expects (nothing when no key is set).
     static func authorize(_ request: inout URLRequest) {
-        guard let host = request.url?.host?.lowercased() else { return }
-        if host.hasSuffix("trongrid.io"), let key = key(.tronGrid) {
+        guard request.url?.scheme?.lowercased() == "https", let host = request.url?.host?.lowercased() else { return }
+        // The service itself or one of its subdomains, never a look-alike ("eviltonapi.io").
+        func on(_ domain: String) -> Bool { host == domain || host.hasSuffix("." + domain) }
+        if on("trongrid.io"), let key = key(.tronGrid) {
             request.setValue(key, forHTTPHeaderField: "TRON-PRO-API-KEY")
-        } else if host.hasSuffix("toncenter.com"), let key = key(.toncenter) {
+        } else if on("toncenter.com"), let key = key(.toncenter) {
             request.setValue(key, forHTTPHeaderField: "X-API-Key")
-        } else if host.hasSuffix("tonapi.io"), let key = key(.tonapi) {
+        } else if on("tonapi.io"), let key = key(.tonapi) {
             request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
         }
     }

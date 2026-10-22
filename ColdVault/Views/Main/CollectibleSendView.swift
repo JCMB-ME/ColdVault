@@ -379,6 +379,18 @@ struct CollectibleSendView: View {
             if let named = resolvedName, named.address == evmPlan?.recipient {
                 Text(named.name).font(.system(size: 16, weight: .semibold))
             }
+            if let plan = btcPlan, plan.otherInscriptions > 0 || plan.carriesRunes {
+                // The whole coin goes: everything else on it goes to the same recipient.
+                Label(plan.otherInscriptions > 0
+                      ? t("This coin also holds \(plan.otherInscriptions) more inscription(s)\(plan.carriesRunes ? " and runes" : ""): they all go to this recipient.",
+                          "Esta moneda guarda también \(plan.otherInscriptions) inscripción(es) más\(plan.carriesRunes ? " y runes" : ""): todas van a este destinatario.")
+                      : t("This coin also holds runes: they go to this recipient too.",
+                          "Esta moneda guarda también runes: van también a este destinatario."),
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.red)
+                    .multilineTextAlignment(.center)
+            }
             VStack(spacing: 0) {
                 row(t("To", "Para"), evmPlan?.recipient ?? trimmed)
                 SettingsDivider(inset: 16)

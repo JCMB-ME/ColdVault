@@ -148,14 +148,39 @@ public enum OrdinalsService {
     /// Whether an output carries an inscription or a rune: ordinals.com's page of the output lists
     /// them ("inscriptions", "runes"). A page that does not load is no answer (the coin stays aside).
     public static func outputHoldsAssets(_ outpoint: String) async throws -> Bool {
+        let page = try await outputPage(outpoint)
+        return page.contains("<dt>inscriptions</dt>") || page.contains("<dt>runes</dt>")
+            || page.contains("href=/inscription/") || page.contains("href=/rune/")
+    }
+
+    /// The inscriptions (ids) an output holds and whether it holds runes, as ordinals.com's page of it lists them.
+    public static func outputContents(_ outpoint: String) async throws -> (inscriptions: Set<String>, runes: Bool) {
+        let page = try await outputPage(outpoint)
+        return (inscriptionIDs(inOutputPage: page), page.contains("<dt>runes</dt>") || page.contains("href=/rune/"))
+    }
+
+    /// ordinals.com's page of an output ("txid:vout"). The page of any output names its value: a page
+    /// without it is not an answer.
+    private static func outputPage(_ outpoint: String) async throws -> String {
         let parts = outpoint.split(separator: ":")
         guard parts.count == 2, parts[0].count == 64, parts[0].allSatisfy({ $0.isHexDigit }), parts[1].allSatisfy({ $0.isNumber }),
               let url = URL(string: "\(base)/output/\(outpoint)") else { throw BlockchainError.invalidResponse }
         let page = String(decoding: try await data(url, accept: "text/html"), as: UTF8.self)
-        // The page of any output names its value: a page without it is not an answer.
         guard page.contains("<dt>value</dt>") else { throw BlockchainError.invalidResponse }
-        return page.contains("<dt>inscriptions</dt>") || page.contains("<dt>runes</dt>")
-            || page.contains("href=/inscription/") || page.contains("href=/rune/")
+        return page
+    }
+
+    /// Every inscription id an output page links to ("/inscription/<txid>i<n>").
+    static func inscriptionIDs(inOutputPage page: String) -> Set<String> {
+        var ids = Set<String>()
+        var rest = page[...]
+        while let range = rest.range(of: "/inscription/") {
+            let tail = rest[range.upperBound...]
+            let candidate = String(tail.prefix(while: { $0.isHexDigit || $0 == "i" }))
+            if isInscriptionID(candidate) { ids.insert(candidate.lowercased()) }
+            rest = tail
+        }
+        return ids
     }
 }
 

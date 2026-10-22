@@ -345,6 +345,8 @@ extension WalletManager {
         forgetContacts(matching: ownAddresses)
         purgeLabels(for: transactions.map { $0.txid })
         Task { await LightningManager.shared.forget(slot: slot) }
+        // dApps connected with it are disconnected (they would keep asking a wallet that is gone).
+        WalletConnectService.shared.disconnectSessions(boundTo: slot)
         library.removeAll { $0.slot == slot }
         setWalletImage(slot: slot, data: nil)
         balanceSats = 0

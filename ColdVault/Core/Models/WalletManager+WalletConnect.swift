@@ -15,6 +15,7 @@ enum DappError: LocalizedError {
     case wrongAddress
     case wrongWallet
     case unsupportedChain
+    case otherChain
     case contractCreation
     case wouldFail(String)
 
@@ -33,6 +34,9 @@ enum DappError: LocalizedError {
                            : "Esta conexión pertenece a otra billetera. Cambia a ella para continuar."
         case .unsupportedChain:
             return english ? "That network is not available in ColdVault." : "Esa red no está disponible en ColdVault."
+        case .otherChain:
+            return english ? "This transaction was made for another network than the one selected. Nothing was signed."
+                           : "Esta transacción se hizo para otra red distinta de la elegida. No se firmó nada."
         case .contractCreation:
             return english ? "Deploying a contract is not supported." : "Crear un contrato no está admitido."
         case .wouldFail(let reason):
@@ -79,6 +83,40 @@ extension WalletManager {
         [EVMChain.ethereum, .base, .polygon].first { $0.chainId(testnet: isTestnet) == id }
     }
 
+    /// The 0x address of the wallet (and account) a WalletConnect session was approved with, even when
+    /// another wallet is on screen: the dApp only ever hears that one.
+    func walletConnectAddress(for binding: DappWalletBinding) -> String? {
+        guard let wallet = library.first(where: { $0.slot == binding.slot }),
+              wallet.bundle.accounts.indices.contains(binding.account) else { return nil }
+        let record = wallet.bundle.accounts[binding.account].record
+        guard record.type != .watchOnly else { return nil }
+        switch record.coinKind {
+        case .ethereum, .polygon, .dollars: return address(on: .ethereum, record: record)
+        default: return nil
+        }
+    }
+
+    /// The most a dApp's transaction can cost in fees is above $50, or above a tenth of the coin it
+    /// sends (and over $1): shown as a warning on the review.
+    func dappFeeLooksHigh(_ plan: DappTransactionPlan) -> Bool {
+        guard let price = nativeUsdPrice(plan.chain.nativeSymbol), price > 0 else { return false }
+        let scale = pow(10, Double(plan.chain.nativeDecimals))
+        let feeUSD = plan.maxFee.doubleValue / scale * price
+        if feeUSD > 50 { return true }
+        let sentUSD = plan.value.doubleValue / scale * price
+        return sentUSD > 0 && feeUSD > 1 && feeUSD > sentUSD / 10
+    }
+
+    /// A quantity of a dApp's transaction: a "0x" hex string, as EIP-1193 asks. Missing: nil. Anything else
+    /// (a decimal string, a number) is refused rather than read some other way.
+    nonisolated static func dappQuantity(_ value: Any?) throws -> UInt256? {
+        guard let value, !(value is NSNull) else { return nil }
+        guard let text = value as? String, text.lowercased().hasPrefix("0x"), let parsed = UInt256(hex: text) else {
+            throw DappError.invalidParams
+        }
+        return parsed
+    }
+
     // MARK: - Signing
 
     /// The key of the wallet on screen, after Face ID, only if it is the key of `address`.
@@ -116,7 +154,8 @@ extension WalletManager {
         if let requested = params["from"] as? String, requested.lowercased() != from.lowercased() { throw DappError.wrongAddress }
         guard let toText = params["to"] as? String, !toText.isEmpty else { throw DappError.contractCreation }
         guard let to = EthereumAddress.parse(toText) else { throw DappError.invalidParams }
-        let value = (params["value"] as? String).flatMap { UInt256(hex: $0) } ?? .zero
+        let value = try WalletManager.dappQuantity(params["value"]) ?? .zero
+        let givenGas = try WalletManager.dappQuantity(params["gas"] ?? params["gasLimit"])
         let dataText = (params["data"] as? String) ?? (params["input"] as? String) ?? "0x"
         guard dataText.hasPrefix("0x"), let data = String(dataText.dropFirst(2)).hexDecoded else { throw DappError.invalidParams }
         let toChecksummed = EthereumAddress.checksummed(to)
@@ -132,22 +171,22 @@ extension WalletManager {
             throw EthereumError.unavailable
         }
 
-        // Gas: the dApp's own limit, or the node's estimate with a margin. A transaction the node says
-        // would revert is never offered for signing.
-        var gasLimit: UInt64 = 0
-        if let text = (params["gas"] as? String) ?? (params["gasLimit"] as? String),
-           let given = UInt256(hex: text), given < UInt256(30_000_000) {
+        // The node always simulates it first (also when the dApp names its own gas): a transaction it says
+        // would revert is never offered for signing. Gas: the dApp's limit when it covers the estimate
+        // (some calls need room), otherwise the estimate with a margin.
+        var call: [String: Any] = ["from": from, "to": toChecksummed, "value": value.hexQuantity]
+        if !data.isEmpty { call["data"] = "0x" + data.hexEncodedString }
+        let estimated: UInt64
+        do {
+            guard let estimate = try await rpc.call("eth_estimateGas", [call]) as? String,
+                  let gas = UInt256(hex: estimate), gas < UInt256(30_000_000) else { throw EthereumError.unavailable }
+            estimated = gas.low64
+        } catch EthereumError.server(let reason) {
+            throw DappError.wouldFail(reason)
+        }
+        var gasLimit = estimated + estimated / 5
+        if let given = givenGas, given < UInt256(30_000_000), given.low64 >= estimated {
             gasLimit = given.low64
-        } else {
-            var call: [String: Any] = ["from": from, "to": toChecksummed, "value": value.hexQuantity]
-            if !data.isEmpty { call["data"] = "0x" + data.hexEncodedString }
-            do {
-                guard let estimate = try await rpc.call("eth_estimateGas", [call]) as? String,
-                      let gas = UInt256(hex: estimate), gas < UInt256(30_000_000) else { throw EthereumError.unavailable }
-                gasLimit = gas.low64 + gas.low64 / 5
-            } catch EthereumError.server(let reason) {
-                throw DappError.wouldFail(reason)
-            }
         }
         guard gasLimit >= 21_000, let gasCost = maxFeePerGas.multiplied(by: gasLimit),
               let maxFee = gasCost.adding(chain.extraFeeReserve),

@@ -73,6 +73,8 @@ extension WalletManager {
                       let known = KnownToken.find(contract, chain: chain, testnet: record.isTestnet),
                       let total = item["total"] as? [String: Any],
                       let raw = UInt256(decimal: total["value"] as? String ?? "", decimals: 0),
+                      // A zero transfer only plants a look-alike address in the history (address poisoning).
+                      !raw.isZero,
                       let value = stableMicros(raw, token: known) else { continue }
                 let from = ((item["from"] as? [String: Any])?["hash"] as? String)?.lowercased()
                 let to = ((item["to"] as? [String: Any])?["hash"] as? String)?.lowercased()
@@ -82,7 +84,7 @@ extension WalletManager {
                 let date = (item["timestamp"] as? String).flatMap { iso.date(from: $0) }
                 byHash[hash] = WalletTransaction(txid: hash, net: net, date: date, confirmed: true, chain: chain.rawValue)
             }
-            return Array(byHash.values)
+            return byHash.values.filter { $0.net != 0 }
         }
         guard let url = URL(string: "\(base)/api/v2/addresses/\(owner)/transactions"),
               let data = await blockscoutData(url),
@@ -110,7 +112,10 @@ extension WalletManager {
             return transaction
         }
         let listed = Set(list.map { $0.txid.lowercased() })
-        for (hash, found) in moves where !listed.contains(hash) {
+        // A token leaving this account in a transaction it did not send is how address poisoning fakes
+        // "you paid this look-alike address" (a zero transferFrom anyone can call): only incoming ones
+        // get their own row.
+        for (hash, found) in moves where !listed.contains(hash) && found.move.incoming {
             var transaction = WalletTransaction(txid: found.hash, net: 0, date: found.date, confirmed: true, chain: chain.rawValue)
             transaction.token = found.move
             list.append(transaction)
@@ -139,6 +144,8 @@ extension WalletManager {
             let total = item["total"] as? [String: Any]
             let isNFT = type != "ERC-20"
             let raw = isNFT ? ((total?["value"] as? String) ?? "1") : ((total?["value"] as? String) ?? "0")
+            // A zero-value transfer moves nothing: it only puts an address in the history (poisoning).
+            guard isNFT || raw.contains(where: { $0 != "0" }) else { continue }
             let symbol = KnownToken.cleanText((token["symbol"] as? String) ?? (token["name"] as? String) ?? "?", limit: 11)
             let decimals = min(max(Int((total?["decimals"] as? String) ?? (token["decimals"] as? String) ?? "") ?? 18, 0), 36)
             let date = (item["timestamp"] as? String).flatMap { iso.date(from: $0) }
@@ -158,6 +165,9 @@ extension WalletManager {
                       let contract = (item["token_info"] as? [String: Any])?["address"] as? String,
                       let known = KnownToken.find(contract, chain: .tron, testnet: record.isTestnet),
                       let raw = UInt256(decimal: (item["value"] as? String) ?? "", decimals: 0),
+                      // A zero transfer (anyone can make one "from" this account) only plants a look-alike
+                      // address in the history: address poisoning.
+                      !raw.isZero,
                       let value = stableMicros(raw, token: known) else { continue }
                 var net = byID[id]?.net ?? 0
                 if (item["to"] as? String) == owner { net += Int64(value.low64) }
@@ -165,7 +175,7 @@ extension WalletManager {
                 let date = (item["block_timestamp"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
                 byID[id] = WalletTransaction(txid: id, net: net, date: date, confirmed: true, chain: EVMChain.tron.rawValue)
             }
-            return Array(byID.values)
+            return byID.values.filter { $0.net != 0 }
         }
         guard let items = try? await api.transactions(owner),
               let ownerBytes = TronAddress.parse(owner) else { return nil }

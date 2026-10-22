@@ -28,11 +28,11 @@ struct BrowserChainRequest: Identifiable {
     let pageTitle: String
     let method: String
     let params: [Any]
+    /// The page that asked: the answer goes only there.
+    let page: BrowserPage
 }
 
 extension BrowserWebModel {
-
-    func chainKey(_ chain: String, _ host: String) -> String { "\(chain):\(host.lowercased())" }
 
     /// The address shown to Bitcoin sites: the first Taproot receive address of the wallet on
     /// screen (SegWit when there is no Taproot account).
@@ -49,26 +49,32 @@ extension BrowserWebModel {
     }
 
     /// The value as JavaScript (JSON is valid JavaScript).
-    func resolveValue(_ callId: Int, _ value: Any) {
+    func resolveValue(_ callId: Int, _ value: Any, page: BrowserPage? = nil) {
         guard let data = try? JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed]),
               var text = String(data: data, encoding: .utf8), text.count >= 2 else {
-            resolveJS(callId: callId, resultJSON: "null")
+            resolveJS(callId: callId, resultJSON: "null", page: page)
             return
         }
         text.removeFirst()
         text.removeLast()
-        resolveJS(callId: callId, resultJSON: text)
+        resolveJS(callId: callId, resultJSON: text, page: page)
     }
 
     private func solanaAccountValue(_ address: String) -> [String: String] {
         ["address": address, "publicKey": (SolanaAddress.decode(address) ?? Data()).base64EncodedString()]
     }
 
-    func handleChainRPC(callId: Int, host: String, method: String, params: [Any]) {
+    func handleChainRPC(callId: Int, host: String, method: String, params: [Any], page: BrowserPage) {
         let english = walletManager?.appLanguage == .english
-        let btcConnected = connectedHosts.contains(chainKey("btc", host))
-        let solConnected = connectedHosts.contains(chainKey("sol", host))
+        let btcConnected = isConnected("btc", host: host)
+        let solConnected = isConnected("sol", host: host)
         func notConnected() { rejectJS(callId: callId, code: 4100, message: "Not connected: ask for the account first") }
+        /// A review is already open: a site can't stack another one (or swap the one being read).
+        func busy() -> Bool {
+            guard hasPrompt else { return false }
+            rejectJS(callId: callId, code: -32002, message: "A request is already waiting for the user")
+            return true
+        }
 
         switch method {
         // MARK: Bitcoin
@@ -79,7 +85,8 @@ extension BrowserWebModel {
                 return
             }
             if btcConnected { resolveValue(callId, [account.address]) } else {
-                connectPrompt = BrowserConnectRequest(callId: callId, host: host, pageTitle: pageTitle, chain: "btc")
+                guard !busy() else { return }
+                connectPrompt = BrowserConnectRequest(callId: callId, host: host, pageTitle: pageTitle, page: page, chain: "btc")
             }
         case "btc_getAccounts":
             resolveValue(callId, btcConnected ? [bitcoinAccount?.address].compactMap { $0 } : [String]())
@@ -106,14 +113,15 @@ extension BrowserWebModel {
                         tx = try Transaction.parse(bytes)
                     }
                     let txid = try await BlockchainService.shared.broadcast(tx, isTestnet: testnet)
-                    resolveValue(callId, txid)
+                    resolveValue(callId, txid, page: page)
                 } catch {
-                    rejectJS(callId: callId, code: -32603, message: error.localizedDescription)
+                    rejectJS(callId: callId, code: -32603, message: error.localizedDescription, page: page)
                 }
             }
         case "btc_signPsbt", "btc_sendBitcoin", "btc_signMessage":
             guard btcConnected, bitcoinAccount != nil else { return notConnected() }
-            chainPrompt = BrowserChainRequest(callId: callId, host: host, pageTitle: pageTitle, method: method, params: params)
+            guard !busy() else { return }
+            chainPrompt = BrowserChainRequest(callId: callId, host: host, pageTitle: pageTitle, method: method, params: params, page: page)
 
         // MARK: Solana
         case "sol_account":
@@ -129,15 +137,19 @@ extension BrowserWebModel {
                 return
             }
             if solConnected { resolveValue(callId, solanaAccountValue(address)) } else {
-                connectPrompt = BrowserConnectRequest(callId: callId, host: host, pageTitle: pageTitle, chain: "sol")
+                guard !busy() else { return }
+                connectPrompt = BrowserConnectRequest(callId: callId, host: host, pageTitle: pageTitle, page: page, chain: "sol")
             }
         case "sol_disconnect":
-            connectedHosts.remove(chainKey("sol", host))
-            saveConnectedHosts()
+            if let address = solanaAddress {
+                connectedHosts.remove(connectionKey("sol", address: address, host: host))
+                saveConnectedHosts()
+            }
             resolveValue(callId, NSNull())
         case "sol_signMessage", "sol_signTransaction", "sol_signAndSendTransaction":
             guard solConnected, solanaAddress != nil else { return notConnected() }
-            chainPrompt = BrowserChainRequest(callId: callId, host: host, pageTitle: pageTitle, method: method, params: params)
+            guard !busy() else { return }
+            chainPrompt = BrowserChainRequest(callId: callId, host: host, pageTitle: pageTitle, method: method, params: params, page: page)
 
         default:
             rejectJS(callId: callId, code: 4200, message: "Unsupported method: \(method)")
@@ -331,6 +343,174 @@ enum SolanaWire {
         bytes.replaceSubrange(start..<(start + 64), with: [UInt8](signature))
         return (Data(bytes), signature)
     }
+
+    // MARK: Reading the message
+
+    /// One instruction: the program (an index into the keys), its accounts (indexes; v0 messages can
+    /// point past the keys, into lookup tables) and its data.
+    struct Instruction {
+        let program: Int
+        let accounts: [Int]
+        let data: Data
+    }
+
+    /// A message (what a transaction's signatures cover), legacy or v0.
+    struct Message {
+        let requiredSigners: Int
+        let keys: [Data]
+        let instructions: [Instruction]
+        /// v0: more accounts come from lookup tables, which are not resolved here.
+        let usesLookupTables: Bool
+
+        var signers: ArraySlice<Data> { keys.prefix(requiredSigners) }
+        func key(_ index: Int) -> Data? { keys.indices.contains(index) ? keys[index] : nil }
+    }
+
+    /// Reads a message, or nil when the bytes are not exactly one (nothing may be left over). Also
+    /// used to refuse a "message to sign" that is in fact a transaction: signing it would authorize it.
+    static func parseMessage(_ message: Data) -> Message? {
+        let bytes = [UInt8](message)
+        var index = 0
+        guard let first = bytes.first else { return nil }
+        var versioned = false
+        if first & 0x80 != 0 {
+            guard first == 0x80 else { return nil }
+            versioned = true
+            index = 1
+        }
+        guard index + 3 <= bytes.count else { return nil }
+        let required = Int(bytes[index])
+        index += 3
+        guard required >= 1, let keyCount = compact(bytes, &index), keyCount >= required,
+              index + 32 * keyCount + 32 <= bytes.count else { return nil }
+        let keys = (0..<keyCount).map { Data(bytes[(index + 32 * $0)..<(index + 32 * $0 + 32)]) }
+        index += 32 * keyCount + 32
+        guard let count = compact(bytes, &index), count <= 64 else { return nil }
+        var instructions = [Instruction]()
+        for _ in 0..<count {
+            guard index < bytes.count else { return nil }
+            let program = Int(bytes[index])
+            index += 1
+            guard program < keyCount, let accountCount = compact(bytes, &index), index + accountCount <= bytes.count else { return nil }
+            let accounts = bytes[index..<(index + accountCount)].map { Int($0) }
+            index += accountCount
+            guard let length = compact(bytes, &index), index + length <= bytes.count else { return nil }
+            instructions.append(Instruction(program: program, accounts: accounts, data: Data(bytes[index..<(index + length)])))
+            index += length
+        }
+        var tables = 0
+        if versioned {
+            guard let found = compact(bytes, &index) else { return nil }
+            tables = found
+            for _ in 0..<found {
+                guard index + 32 <= bytes.count else { return nil }
+                index += 32
+                for _ in 0..<2 {
+                    guard let listed = compact(bytes, &index), index + listed <= bytes.count else { return nil }
+                    index += listed
+                }
+            }
+        }
+        guard index == bytes.count else { return nil }
+        return Message(requiredSigners: required, keys: keys, instructions: instructions, usesLookupTables: tables > 0)
+    }
+
+    static let systemProgram = Data(repeating: 0, count: 32)
+    static let tokenPrograms: [Data] = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]
+        .compactMap { SolanaAddress.decode($0) }
+
+    private static func uint64(_ data: Data, at offset: Int) -> UInt64? {
+        guard data.count >= offset + 8 else { return nil }
+        return data[(data.startIndex + offset)..<(data.startIndex + offset + 8)].reversed().reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+    }
+
+    private static func uint32(_ data: Data, at offset: Int) -> UInt32? {
+        guard data.count >= offset + 4 else { return nil }
+        return data[(data.startIndex + offset)..<(data.startIndex + offset + 4)].reversed().reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
+    }
+
+    /// What the instructions do, as far as ColdVault can read them: SOL leaving this wallet, token
+    /// transfers, and the moves drainers use (handing the account to a program, a token delegate, a new
+    /// authority, closing a token account to someone else) as `danger`. Other programs are named, not explained.
+    static func describe(_ message: Message, owner: Data, english: Bool) -> (lines: [String], danger: [String]) {
+        func t(_ en: String, _ es: String) -> String { english ? en : es }
+        func name(_ key: Data?) -> String {
+            guard let key else { return t("an account from a lookup table", "una cuenta de una tabla de búsqueda") }
+            let text = SolanaKeys.address(publicKey: key)
+            return key == owner ? t("this wallet", "esta billetera") : "\(text.prefix(4))…\(text.suffix(4))"
+        }
+        func sol(_ lamports: UInt64) -> String { UInt256(lamports).formatted(decimals: 9, maxFraction: 9) + " SOL" }
+        /// The signer an instruction names is this wallet, or may be (an account the message can't show).
+        func mine(_ index: Int?) -> Bool {
+            guard let index else { return false }
+            guard let key = message.key(index) else { return true }
+            return key == owner
+        }
+        var lines = [String]()
+        var danger = [String]()
+        for instruction in message.instructions {
+            guard let program = message.key(instruction.program) else { continue }
+            let accounts = instruction.accounts
+            func account(_ position: Int) -> Int? { accounts.indices.contains(position) ? accounts[position] : nil }
+            let data = instruction.data
+            if program == systemProgram, let kind = uint32(data, at: 0) {
+                switch kind {
+                case 2 where mine(account(0)):                                         // Transfer
+                    if let lamports = uint64(data, at: 4) {
+                        lines.append(t("Sends \(sol(lamports)) to \(name(account(1).flatMap { message.key($0) }))",
+                                       "Envía \(sol(lamports)) a \(name(account(1).flatMap { message.key($0) }))"))
+                    }
+                case 11 where mine(account(1)):                                        // TransferWithSeed
+                    if let lamports = uint64(data, at: 4) {
+                        lines.append(t("Sends \(sol(lamports)) to \(name(account(2).flatMap { message.key($0) }))",
+                                       "Envía \(sol(lamports)) a \(name(account(2).flatMap { message.key($0) }))"))
+                    }
+                case 0 where mine(account(0)):                                         // CreateAccount
+                    if let lamports = uint64(data, at: 4) {
+                        lines.append(t("Pays \(sol(lamports)) to open a new account", "Paga \(sol(lamports)) para abrir una cuenta nueva"))
+                    }
+                case 1 where mine(account(0)), 10 where mine(account(1)):              // Assign, AssignWithSeed
+                    danger.append(t("Hands this wallet's account over to another program: it could take everything in it.",
+                                    "Entrega la cuenta de esta billetera a otro programa: podría quedarse con todo lo que tiene."))
+                default:
+                    break
+                }
+            } else if tokenPrograms.contains(program), let tag = data.first {
+                switch tag {
+                case 3 where mine(account(2)):                                         // Transfer
+                    lines.append(t("Moves tokens to \(name(account(1).flatMap { message.key($0) }))",
+                                   "Mueve tokens a \(name(account(1).flatMap { message.key($0) }))"))
+                case 12 where mine(account(3)):                                        // TransferChecked
+                    var amount = ""
+                    if let raw = uint64(data, at: 1), data.count >= 10 {
+                        amount = UInt256(raw).formatted(decimals: Int(data[data.startIndex + 9]), maxFraction: 9) + " "
+                    }
+                    lines.append(t("Moves \(amount)tokens to \(name(account(2).flatMap { message.key($0) }))",
+                                   "Mueve \(amount)tokens a \(name(account(2).flatMap { message.key($0) }))"))
+                case 4 where mine(account(2)), 13 where mine(account(3)):              // Approve, ApproveChecked
+                    let delegate = tag == 4 ? account(1) : account(2)
+                    danger.append(t("Lets \(name(delegate.flatMap { message.key($0) })) move your tokens later, without asking you again.",
+                                    "Deja que \(name(delegate.flatMap { message.key($0) })) mueva tus tokens más adelante, sin volver a preguntarte."))
+                case 6 where mine(account(1)):                                         // SetAuthority
+                    danger.append(t("Gives control of one of your token accounts to someone else.",
+                                    "Da el control de una de tus cuentas de tokens a otra persona."))
+                case 9 where mine(account(2)):                                         // CloseAccount
+                    let destination = account(1).flatMap { message.key($0) }
+                    if destination != owner {
+                        danger.append(t("Closes one of your token accounts and sends what it holds in SOL to \(name(destination)).",
+                                        "Cierra una de tus cuentas de tokens y envía su SOL a \(name(destination))."))
+                    }
+                default:
+                    break
+                }
+            } else {
+                let id = SolanaKeys.address(publicKey: program)
+                lines.append(t("Uses program \(id.prefix(6))…\(id.suffix(4))", "Usa el programa \(id.prefix(6))…\(id.suffix(4))"))
+            }
+        }
+        var seen = Set<String>()
+        return (lines.filter { seen.insert($0).inserted }, danger.filter { seen.insert($0).inserted })
+    }
 }
 
 // MARK: - Bitcoin messages
@@ -385,6 +565,8 @@ struct BrowserChainSignSheet: View {
 
     @State private var rows: [(String, String)] = []
     @State private var warning: String?
+    /// What could cost the user (an ordinal spent, a high fee, a drainer's instruction), in red.
+    @State private var danger: [String] = []
     @State private var detail: String?
     @State private var errorText: String?
     @State private var isWorking = false
@@ -416,17 +598,14 @@ struct BrowserChainSignSheet: View {
             GlassAmbientBackground()
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 18) {
-                    VStack(spacing: 8) {
-                        Image(systemName: "lock.shield")
-                            .font(.system(size: 26, weight: .semibold))
-                            .frame(width: 60, height: 60)
-                            .background(Circle().fill(SettingsStyle.groupFill))
-                        Text(request.pageTitle.isEmpty ? request.host : request.pageTitle)
-                            .font(.system(size: 19, weight: .bold))
-                            .multilineTextAlignment(.center)
-                        Label(request.host, systemImage: "lock.fill")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.green)
+                    BrowserRequestHeader(host: request.host, pageTitle: request.pageTitle)
+                    ForEach(danger, id: \.self) { text in
+                        Label(text, systemImage: "exclamationmark.octagon.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.red)
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.red.opacity(0.12)))
                     }
                     if let warning {
                         Label(warning, systemImage: "exclamationmark.triangle.fill")
@@ -478,7 +657,7 @@ struct BrowserChainSignSheet: View {
                         }
                         Button {
                             webModel.chainPrompt = nil
-                            webModel.rejectJS(callId: request.callId, code: 4001, message: "User rejected the request")
+                            webModel.rejectJS(callId: request.callId, code: 4001, message: "User rejected the request", page: request.page)
                         } label: {
                             Text(t("Reject", "Rechazar")).font(.system(size: 15, weight: .semibold)).foregroundColor(.red)
                         }
@@ -496,12 +675,19 @@ struct BrowserChainSignSheet: View {
         .presentationDragIndicator(.visible)
         .interactiveDismissDisabled(isWorking)
         .task { await prepare() }
+        .onDisappear {
+            // Private keys go as soon as the sheet does; a request left without an answer is refused.
+            keyring = nil
+            webModel.promptClosed(request.id, callId: request.callId, page: request.page)
+        }
     }
 
     private func fail(_ error: Error) {
         errorText = error.localizedDescription
         UINotificationFeedbackGenerator().notificationOccurred(.error)
     }
+
+    private var solanaKey: Data? { walletManager.address(on: .solana).flatMap { SolanaAddress.decode($0) } }
 
     private func prepare() async {
         let list = request.params
@@ -515,20 +701,50 @@ struct BrowserChainSignSheet: View {
                 warning = t("A site's transaction can spend your coins and ordinals. Review it with Face ID: you will see where every output goes before signing.",
                             "Una transacción de una web puede gastar tus monedas y ordinals. Revísala con Face ID: verás a dónde va cada salida antes de firmar.")
             case "btc_sendBitcoin":
-                guard list.count >= 2, let to = list[0] as? String,
-                      let sats = (list[1] as? NSNumber)?.uint64Value, sats > 0 else { throw DappError.invalidParams }
+                guard list.count >= 2, let to = list[0] as? String, let number = list[1] as? NSNumber,
+                      CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue >= 1, number.doubleValue <= 2.1e15,
+                      number.doubleValue.rounded() == number.doubleValue else { throw DappError.invalidParams }
+                let sats = number.uint64Value
                 let options = list.count > 2 ? list[2] as? [String: Any] : nil
-                var rate = (options?["feeRate"] as? NSNumber)?.uint64Value ?? 0
-                if rate == 0 { rate = UInt64((try? await walletManager.recommendedFees())?.halfHourFee ?? 5) }
+                // The site may suggest a rate, never above twice the fastest one (at most the app's ceiling):
+                // a hostile site would otherwise burn the coins as fee.
+                let fees = (try? await walletManager.recommendedFees()).map(FeePolicy.capped)
+                let fastest = UInt64(max(1, fees?.fastestFee ?? 50))
+                let ceiling = min(UInt64(FeePolicy.rateCeiling), max(fastest * 2, 10))
+                var rate = UInt64(max(1, fees?.halfHourFee ?? 5))
+                if let asked = options?["feeRate"] as? NSNumber, CFGetTypeID(asked) != CFBooleanGetTypeID(),
+                   asked.doubleValue >= 1, asked.doubleValue <= 100_000 {
+                    rate = min(UInt64(asked.doubleValue.rounded(.up)), ceiling)
+                }
                 let plan = try await walletManager.prepareSend(to: to, amount: sats, feeRate: rate)
                 sendPlan = plan
                 rows = [(t("To", "Para"), to), (t("Amount", "Monto"), "\(sats) sats"),
                         (t("Fee", "Comisión"), "\(plan.fee) sats · \(plan.feeRate) sat/vB")]
+                if FeePolicy.isStrong(fee: plan.fee) || plan.fee > sats / 10 {
+                    danger.append(t("The fee is unusually high for this payment.", "La comisión es inusualmente alta para este pago."))
+                }
             case "btc_signMessage", "sol_signMessage":
                 guard let first = list.first as? String else { throw DappError.invalidParams }
-                messageData = request.method == "sol_signMessage" ? (Data(base64Encoded: first) ?? Data()) : Data(first.utf8)
-                let readable = String(data: messageData, encoding: .utf8)
-                detail = readable ?? ("0x" + messageData.hexEncodedString)
+                if request.method == "sol_signMessage" {
+                    guard let decoded = Data(base64Encoded: first) else { throw DappError.invalidParams }
+                    // A Solana signature covers raw bytes: a "message" that is a transaction naming this wallet
+                    // as a signer would be approved by signing it, without its review. Refused.
+                    if let parsed = SolanaWire.parseMessage(decoded), let mine = solanaKey, parsed.signers.contains(mine) {
+                        throw BrowserMessage(t("This \"message\" is a Solana transaction for this wallet: signing it would approve it without showing what it does. ColdVault refused it.",
+                                               "Este \"mensaje\" es una transacción de Solana para esta billetera: firmarlo la aprobaría sin mostrar qué hace. ColdVault la rechazó."))
+                    }
+                    messageData = decoded
+                } else {
+                    messageData = Data(first.utf8)
+                }
+                if let readable = String(data: messageData, encoding: .utf8),
+                   readable.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.subtracting(.newlines).contains($0) }) {
+                    detail = readable
+                } else {
+                    detail = "0x" + messageData.hexEncodedString
+                    warning = t("This is binary data, not readable text. Only sign it if you know what it is.",
+                                "Son datos binarios, no texto legible. Fírmalo solo si sabes qué es.")
+                }
                 rows = [(t("Network", "Red"), isBitcoin ? "Bitcoin" : "Solana")]
                 if isBitcoin, list.count > 1, let type = list[1] as? String {
                     rows.append((t("Type", "Tipo"), type == "bip322-simple" ? "BIP-322" : "ECDSA"))
@@ -537,13 +753,22 @@ struct BrowserChainSignSheet: View {
                 guard let text = list.first as? String, let data = Data(base64Encoded: text),
                       let parsed = SolanaWire.parse(data) else { throw DappError.invalidParams }
                 transaction = data
-                let mine = walletManager.address(on: .solana).flatMap { SolanaAddress.decode($0) }
+                let mine = solanaKey
                 rows = [(t("Network", "Red"), walletManager.isTestnet ? "Solana Devnet" : "Solana"),
                         (t("Instructions", "Instrucciones"), parsed.instructions.map { "\($0)" } ?? "?"),
                         (t("Accounts involved", "Cuentas que toca"), "\(parsed.keys.count)"),
                         (t("You pay the fee", "Pagas la comisión"), parsed.keys.first == mine ? t("Yes", "Sí") : t("No", "No"))]
-                warning = t("ColdVault can't read what this Solana transaction does in detail. Sign it only on sites you trust: a malicious one can move your tokens and NFTs.",
-                            "ColdVault no puede leer en detalle qué hace esta transacción de Solana. Fírmala solo en webs de confianza: una maliciosa puede mover tus tokens y NFTs.")
+                if let mine, let message = SolanaWire.parseMessage(Data(data[(data.startIndex + parsed.messageStart)...])) {
+                    let read = SolanaWire.describe(message, owner: mine, english: lang == .english)
+                    danger = read.danger
+                    var lines = read.lines.map { "• " + $0 }
+                    if message.usesLookupTables {
+                        lines.append(t("• Some accounts come from lookup tables (not shown).", "• Algunas cuentas vienen de tablas de búsqueda (no se muestran)."))
+                    }
+                    if !lines.isEmpty { detail = lines.joined(separator: "\n") }
+                }
+                warning = t("ColdVault reads only part of what a Solana transaction does. Sign it only on sites you trust: a malicious one can move your tokens and NFTs.",
+                            "ColdVault solo lee parte de lo que hace una transacción de Solana. Fírmala solo en webs de confianza: una maliciosa puede mover tus tokens y NFTs.")
             default:
                 throw DappError.unsupportedMethod(request.method)
             }
@@ -551,6 +776,17 @@ struct BrowserChainSignSheet: View {
         } catch {
             fail(error)
         }
+    }
+
+    /// This wallet's inputs in the PSBT (the ones it signs), with their "txid:vout".
+    private func ownInputs(_ psbt: PSBT, keyring: WalletKeyring) -> [(index: Int, outpoint: String)] {
+        var found = [(index: Int, outpoint: String)]()
+        for (index, input) in psbt.unsignedTx.inputs.enumerated() {
+            guard let prevout = try? psbt.prevout(index),
+                  PSBTSigner.signingKey(psbt: psbt, index: index, prevout: prevout, keyring: keyring) != nil else { continue }
+            found.append((index: index, outpoint: "\(input.prevTxidHex):\(input.vout)"))
+        }
+        return found
     }
 
     private func unlockPSBT() async {
@@ -565,15 +801,52 @@ struct BrowserChainSignSheet: View {
                 throw BrowserMessage(t("This transaction has no input of this wallet to sign.",
                                        "Esta transacción no tiene ninguna entrada de esta billetera para firmar."))
             }
-            keyring = unlocked
             var list = [(t("Network", "Red"), walletManager.isTestnet ? "Bitcoin Testnet4" : "Bitcoin"),
                         (t("Your inputs it signs", "Entradas tuyas que firma"), "\(summary.signableInputs) / \(summary.totalInputs)")]
             for output in summary.outputs {
                 list.append((output.isChange ? t("Back to you", "Vuelve a ti") : t("Pays", "Paga"),
-                             "\(output.value) sats → \(output.address ?? "?")"))
+                             "\(output.value) sats → \(output.address ?? t("non-standard script", "script no estándar"))"))
             }
-            if let fee = summary.fee { list.append((t("Fee", "Comisión"), "\(fee) sats")) }
+            var alerts = [String]()
+            if let fee = summary.fee {
+                list.append((t("Fee", "Comisión"), "\(fee) sats"))
+                let external = summary.externalTotal
+                if external > 0 ? fee > external / 10 : FeePolicy.isStrong(fee: fee) {
+                    alerts.append(t("The fee is unusually high: \(fee) sats.", "La comisión es inusualmente alta: \(fee) sats."))
+                }
+            } else {
+                alerts.append(t("Fee unknown: the transaction does not say what all its inputs are worth.",
+                                "Comisión desconocida: la transacción no dice cuánto valen todas sus entradas."))
+            }
+            if let lock = PSBTTimeLock.describe(psbt.unsignedTx, english: lang == .english) {
+                if lock.warning { alerts.append(lock.text) } else { list.append((t("Time lock", "Bloqueo de tiempo"), lock.text)) }
+            }
+            // Ordinals and runes: the payment check never spends a coin that holds one, but a site's
+            // transaction can include it. Each coin of this wallet in it is asked about (ordinals.com).
+            if !walletManager.isTestnet {
+                var holding = [Int]()
+                var unknown = [Int]()
+                for input in ownInputs(psbt, keyring: unlocked) {
+                    switch try? await OrdinalsService.outputHoldsAssets(input.outpoint) {
+                    case .some(true): holding.append(input.index)
+                    case .some(false): break
+                    case .none: unknown.append(input.index)
+                    }
+                }
+                if !holding.isEmpty {
+                    let numbers = holding.map { "#\($0)" }.joined(separator: ", ")
+                    alerts.append(t("Input \(numbers) of this wallet holds an inscription or a rune: it goes wherever the outputs above say. Sign only if that is what you want.",
+                                    "La entrada \(numbers) de esta billetera guarda una inscripción o una rune: irá a donde digan las salidas de arriba. Firma solo si es lo que quieres."))
+                }
+                if !unknown.isEmpty {
+                    let numbers = unknown.map { "#\($0)" }.joined(separator: ", ")
+                    alerts.append(t("ordinals.com did not answer for input \(numbers): it may hold an inscription.",
+                                    "ordinals.com no respondió por la entrada \(numbers): podría guardar una inscripción."))
+                }
+            }
+            keyring = unlocked
             rows = list
+            danger = alerts
         } catch {
             fail(error)
         }
@@ -581,6 +854,11 @@ struct BrowserChainSignSheet: View {
     }
 
     private func approve() async {
+        // The page that asked must still be the one open: an answer never goes to another page.
+        guard webModel.isCurrent(request.page) else {
+            fail(BrowserMessage(t("The page changed. Nothing was signed.", "La página cambió. No se firmó nada.")))
+            return
+        }
         isWorking = true
         errorText = nil
         do {
@@ -589,6 +867,7 @@ struct BrowserChainSignSheet: View {
             case "btc_signPsbt":
                 guard let psbt, let keyring else { throw DappError.invalidParams }
                 let signed = try await walletManager.sign(psbt, keyring: keyring)
+                self.keyring = nil
                 result = signed.psbt.serialized().hexEncodedString
             case "btc_sendBitcoin":
                 guard let plan = sendPlan, let to = request.params.first as? String else { throw DappError.invalidParams }
@@ -602,7 +881,7 @@ struct BrowserChainSignSheet: View {
             }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             webModel.chainPrompt = nil
-            webModel.resolveValue(request.callId, result)
+            webModel.resolveValue(request.callId, result, page: request.page)
         } catch {
             fail(error)
         }

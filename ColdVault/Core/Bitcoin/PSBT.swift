@@ -379,11 +379,48 @@ public struct PSBTSummary {
     public let virtualSizeEstimate: Int?
 
     public var externalTotal: UInt64 {
-        outputs.filter { !$0.isChange }.reduce(0) { $0 + $1.value }
+        // Values come from whoever made the PSBT: a sum that overflows stays at the maximum, never traps.
+        outputs.filter { !$0.isChange }.reduce(UInt64(0)) { total, output in
+            let (sum, overflow) = total.addingReportingOverflow(output.value)
+            return overflow ? UInt64.max : sum
+        }
     }
     public var feeRate: Double? {
         guard let fee = fee, let vsize = virtualSizeEstimate, vsize > 0 else { return nil }
         return Double(fee) / Double(vsize)
+    }
+}
+
+// MARK: - Time locks
+
+/// nLockTime and BIP-68 relative locks: the transaction cannot be mined before then. A block height
+/// near the tip is normal (anti fee-sniping); a future date or a relative lock is flagged. Shown by
+/// Sign PSBT and by the browser's review of a site's transaction.
+public enum PSBTTimeLock {
+    public static func describe(_ tx: Transaction, english: Bool) -> (text: String, warning: Bool)? {
+        func t(_ en: String, _ es: String) -> String { english ? en : es }
+        var parts = [String]()
+        var warning = false
+        let enforced = tx.inputs.contains { $0.sequence != 0xffff_ffff }
+        if tx.lockTime > 0 && enforced {
+            if tx.lockTime < 500_000_000 {
+                parts.append(t("block \(tx.lockTime)", "bloque \(tx.lockTime)"))
+            } else {
+                let date = Date(timeIntervalSince1970: TimeInterval(tx.lockTime))
+                let text = date.formatted(date: .abbreviated, time: .shortened)
+                if date > Date() {
+                    warning = true
+                    parts.append(t("Can't be confirmed before \(text)", "No se podrá confirmar antes del \(text)"))
+                } else {
+                    parts.append(text)
+                }
+            }
+        }
+        if tx.version >= 2 && tx.inputs.contains(where: { $0.sequence & 0x8000_0000 == 0 }) {
+            warning = true
+            parts.append(t("an input has a relative time lock", "una entrada tiene un bloqueo de tiempo relativo"))
+        }
+        return parts.isEmpty ? nil : (parts.joined(separator: " · "), warning)
     }
 }
 
@@ -469,10 +506,21 @@ public enum PSBTSigner {
             }
         }
         let allKnown = prevouts.allSatisfy { $0 != nil }
-        let inputTotal: UInt64? = allKnown ? prevouts.reduce(UInt64(0)) { $0 + ($1?.value ?? 0) } : nil
-        let outputTotal = psbt.unsignedTx.outputs.reduce(UInt64(0)) { $0 + $1.value }
+        // Amounts written by whoever made the PSBT (a website, a coordinator): a total that overflows
+        // is unknown, never a crash.
+        func total(_ values: [UInt64]) -> UInt64? {
+            var sum: UInt64 = 0
+            for value in values {
+                let (next, overflow) = sum.addingReportingOverflow(value)
+                if overflow { return nil }
+                sum = next
+            }
+            return sum
+        }
+        let inputTotal: UInt64? = allKnown ? total(prevouts.map { $0?.value ?? 0 }) : nil
+        let outputTotal = total(psbt.unsignedTx.outputs.map { $0.value })
         var fee: UInt64?
-        if let inputTotal = inputTotal, inputTotal >= outputTotal { fee = inputTotal - outputTotal }
+        if let inputTotal, let outputTotal, inputTotal >= outputTotal { fee = inputTotal - outputTotal }
 
         let outputs = psbt.unsignedTx.outputs.enumerated().map { i, out in
             PSBTOutputSummary(id: i,

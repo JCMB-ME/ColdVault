@@ -616,6 +616,9 @@ public struct TransactionPlan {
     /// True when a speed-up (RBF) takes the extra fee out of the payment itself, because there is no
     /// change output to pay it. The recipient then gets less than before.
     public var feeFromPayment: Bool = false
+    /// Sending an inscription: other inscriptions, and runes, that sit on the same coin and go with it.
+    public var otherInscriptions: Int = 0
+    public var carriesRunes: Bool = false
 
     public var totalSpent: UInt64 { amount + fee }
 }

@@ -15,6 +15,7 @@ public enum CollectibleError: LocalizedError {
     case notHere
     case refused(String)
     case postageTooSmall
+    case unverified
 
     public var errorDescription: String? {
         let english = AppLanguage.current == .english
@@ -30,6 +31,9 @@ public enum CollectibleError: LocalizedError {
         case .postageTooSmall:
             return english ? "The coin holding this inscription is too small to send on its own."
                            : "La moneda que guarda esta inscripción es demasiado pequeña para enviarla sola."
+        case .unverified:
+            return english ? "ordinals.com did not confirm what this coin holds, so nothing was prepared. Try again in a moment."
+                           : "ordinals.com no confirmó qué guarda esta moneda, así que no se preparó nada. Inténtalo de nuevo en un momento."
         }
     }
 }
@@ -154,6 +158,17 @@ extension WalletManager {
             throw CollectibleError.notHere
         }
         guard carrier.value >= 330 else { throw CollectibleError.postageTooSmall }
+        // The list of inscriptions comes from one index (Xverse); ordinals.com must agree that this coin
+        // holds this one, or a wrong list could send another (more valuable) inscription. Whatever else
+        // sits on the coin goes with it: the review says so.
+        var others = 0
+        var runes = false
+        if !record.isTestnet {
+            guard let contents = try? await OrdinalsService.outputContents(outpoint) else { throw CollectibleError.unverified }
+            guard contents.inscriptions.contains(inscription.id.lowercased()) else { throw CollectibleError.notHere }
+            others = contents.inscriptions.count - 1
+            runes = contents.runes
+        }
         let payers = await withoutInscriptions(all.filter { $0.id.lowercased() != outpoint }, isTestnet: record.isTestnet)
             .filter { $0.type.isSpendable }
             .sorted { ($0.confirmed ? 1 : 0, $0.value) > ($1.confirmed ? 1 : 0, $1.value) }
@@ -187,16 +202,22 @@ extension WalletManager {
             let sizeWithChange = try vsize(selected, withChange: true)
             let feeWithChange = UInt64(sizeWithChange) * feeRate
             if extra >= feeWithChange + TransactionBuilder.dustLimit {
-                return inscriptionPlan(selected, recipient: destination.scriptPubKey, postage: carrier.value,
-                                       change: (changeScript, extra - feeWithChange), fee: feeWithChange,
-                                       feeRate: feeRate, vsize: sizeWithChange)
+                var plan = inscriptionPlan(selected, recipient: destination.scriptPubKey, postage: carrier.value,
+                                           change: (changeScript, extra - feeWithChange), fee: feeWithChange,
+                                           feeRate: feeRate, vsize: sizeWithChange)
+                plan.otherInscriptions = others
+                plan.carriesRunes = runes
+                return plan
             }
             let sizeAlone = try vsize(selected, withChange: false)
             let feeAlone = UInt64(sizeAlone) * feeRate
             if extra >= feeAlone {
                 // What is left is too small for a change output: it goes to the fee.
-                return inscriptionPlan(selected, recipient: destination.scriptPubKey, postage: carrier.value,
-                                       change: nil, fee: extra, feeRate: feeRate, vsize: sizeAlone)
+                var plan = inscriptionPlan(selected, recipient: destination.scriptPubKey, postage: carrier.value,
+                                           change: nil, fee: extra, feeRate: feeRate, vsize: sizeAlone)
+                plan.otherInscriptions = others
+                plan.carriesRunes = runes
+                return plan
             }
         }
         let size = try vsize(selected, withChange: false)

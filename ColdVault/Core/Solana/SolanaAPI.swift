@@ -13,6 +13,7 @@ public enum SolanaError: LocalizedError {
     case server(String)
     case invalidAddress
     case insufficientFunds
+    case rentReserve
 
     public var errorDescription: String? {
         let english = AppLanguage.current == .english
@@ -25,6 +26,9 @@ public enum SolanaError: LocalizedError {
             return english ? "Invalid Solana address." : "Dirección de Solana inválida."
         case .insufficientFunds:
             return english ? "Not enough SOL for the amount and the fee." : "No hay suficiente SOL para el monto y la comisión."
+        case .rentReserve:
+            return english ? "Solana keeps at least 0.00089 SOL in an account: send a little less, or send everything."
+                           : "Solana deja al menos 0,00089 SOL en una cuenta: envía un poco menos, o envíalo todo."
         }
     }
 }

@@ -73,7 +73,10 @@ final class DappRequestModel: ObservableObject {
         let lang = walletManager.appLanguage
         func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
-        if let binding = service.binding(for: item.request.topic), binding.slot != walletManager.activeSlot {
+        // The wallet and the account the session was approved with (another account of the same
+        // wallet has another address).
+        if let binding = service.binding(for: item.request.topic),
+           binding.slot != walletManager.activeSlot || binding.account != (walletManager.activeWallet?.bundle.selected ?? 0) {
             switchTo = binding
             state = .failed(DappError.wrongWallet.localizedDescription)
             return
@@ -86,7 +89,8 @@ final class DappRequestModel: ObservableObject {
         do {
             let data = try item.request.params.getDataRepresentation()
             guard let list = try JSONSerialization.jsonObject(with: data) as? [Any] else { throw DappError.invalidParams }
-            let host = service.session(for: item).flatMap { URL(string: $0.peer.url)?.host }
+            // The site that really asked (verification service), else the one the dApp names.
+            let host = WalletConnectService.requestHost(peerURL: service.session(for: item)?.peer.url, context: item.context)
 
             switch method {
             case "personal_sign":
@@ -120,16 +124,23 @@ final class DappRequestModel: ObservableObject {
                 }
                 let typed = try EIP712TypedData(json: json)
                 _ = try typed.signingHash()                      // bad data fails here, before anything is shown
-                if let domainChain = typed.domainSummary.chainId, domainChain != chainReference {
+                if let domainChain = typed.domainChainId, String(domainChain) != chainReference {
                     warnings.append(t("This data is for network \(domainChain), not for the one the request names (\(chainReference)).",
                                       "Estos datos son para la red \(domainChain), no para la que nombra la solicitud (\(chainReference))."))
+                }
+                if !typed.unsignedKeys.isEmpty {
+                    warnings.append(t("The site also sent fields that are not signed, so they are not shown: \(typed.unsignedKeys.joined(separator: ", ")).",
+                                      "El sitio también envió campos que no se firman, así que no se muestran: \(typed.unsignedKeys.joined(separator: ", "))."))
                 }
                 state = .ready(.typedData(typed))
 
             case "eth_sendTransaction":
                 guard let object = list.first as? [String: Any] else { throw DappError.invalidParams }
                 guard let id = UInt64(chainReference), let chain = walletManager.evmChain(forChainId: id) else { throw DappError.unsupportedChain }
-                if let named = object["chainId"] as? String, UInt256(hex: named)?.low64 != id { throw DappError.unsupportedChain }
+                if let named = object["chainId"], !(named is NSNull) {
+                    let given = (named as? String).flatMap { UInt256(hex: $0)?.low64 } ?? (named as? NSNumber)?.uint64Value
+                    guard given == id else { throw DappError.otherChain }
+                }
                 let plan = try await walletManager.prepareDappTransaction(chain: chain, params: object, from: ours)
                 state = .ready(.transaction(plan))
 

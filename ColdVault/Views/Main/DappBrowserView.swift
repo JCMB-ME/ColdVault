@@ -122,11 +122,20 @@ struct CuratedDapp: Identifiable {
     ]
 }
 
+/// The page a request came from: its tab and that tab's page load (a new number each time a page
+/// commits). An answer only reaches that page, and a review whose page went away (another address,
+/// a reload, the tab closed) can't be approved.
+struct BrowserPage: Equatable {
+    let view: ObjectIdentifier
+    let generation: Int
+}
+
 struct BrowserConnectRequest: Identifiable {
     let id = UUID()
     let callId: Int
     let host: String
     let pageTitle: String
+    let page: BrowserPage
     /// "evm" (Ethereum, Base, Polygon), "btc" or "sol".
     var chain = "evm"
 }
@@ -138,6 +147,17 @@ struct BrowserSignRequest: Identifiable {
     let pageTitle: String
     let method: String
     let params: [Any]
+    let page: BrowserPage
+}
+
+/// Text for JavaScript: a string as a literal (JSON escapes quotes, backslashes and line breaks), so
+/// an answer from a node or an error can never break out of the call it is passed to.
+enum JSLiteral {
+    static func string(_ text: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: [text]),
+              let array = String(data: data, encoding: .utf8), array.count >= 2 else { return "\"\"" }
+        return String(array.dropFirst().dropLast())
+    }
 }
 
 // MARK: - WebView Coordinator & EIP-1193 Engine
@@ -160,7 +180,19 @@ final class BrowserWebModel: NSObject, ObservableObject {
 
     @Published var bookmarks: [BrowserBookmark] = []
     @Published var recents: [BrowserBookmark] = []
+    /// Sites the user connected, each with the address it saw ("evm:0x…@app.uniswap.org"): a site
+    /// connected with one wallet learns nothing about another one.
     @Published var connectedHosts: Set<String> = []
+    /// The network a site switched the browser to (wallet_switchEthereumChain), for the wallet it was
+    /// asked with. It never changes the wallet's network on the home screen.
+    @Published var siteChain: EVMChain?
+    var siteChainSlot: String?
+    /// Page loads per tab: answers go only to the page that asked. Numbers come from one counter, so a
+    /// page of a new tab never shares one with a page of a closed tab.
+    private(set) var pageGenerations: [ObjectIdentifier: Int] = [:]
+    private var generationCounter = 0
+    /// Whether each page view was built with Tor on (its proxy can't change afterwards).
+    private var torOfView: [ObjectIdentifier: Bool] = [:]
 
     /// The open tabs; the one on screen is `activeTabID` (its page is `webView`).
     @Published var tabs: [BrowserTab]
@@ -195,7 +227,8 @@ final class BrowserWebModel: NSObject, ObservableObject {
             recents = decoded
         }
         if let list = defaults.stringArray(forKey: Self.connectedHostsKey) {
-            connectedHosts = Set(list)
+            // Older entries named only the site (for whichever wallet was open): dropped, the site asks again.
+            connectedHosts = Set(list.filter { $0.contains("@") })
         }
     }
 
@@ -243,12 +276,75 @@ final class BrowserWebModel: NSObject, ObservableObject {
     }
 
     func disconnectHost(_ host: String) {
-        let key = host.lowercased()
-        connectedHosts.remove(key)
-        connectedHosts.remove("btc:" + key)
-        connectedHosts.remove("sol:" + key)
+        let key = "@" + host.lowercased()
+        connectedHosts = connectedHosts.filter { !$0.hasSuffix(key) }
         saveConnectedHosts()
         syncProviderState()
+    }
+
+    // MARK: - Connections (per site and address)
+
+    func connectionKey(_ chain: String, address: String, host: String) -> String {
+        "\(chain):\(address.lowercased())@\(host.lowercased())"
+    }
+
+    /// The address the wallet on screen shows on a network family ("evm", "btc", "sol").
+    func currentAddress(_ chain: String) -> String? {
+        switch chain {
+        case "btc": return bitcoinAccount?.address
+        case "sol": return solanaAddress
+        default: return walletManager?.walletConnectAddress
+        }
+    }
+
+    /// The site was connected with the address the wallet on screen has on that network family.
+    func isConnected(_ chain: String, host: String) -> Bool {
+        guard let address = currentAddress(chain) else { return false }
+        return connectedHosts.contains(connectionKey(chain, address: address, host: host))
+    }
+
+    /// Connected with the wallet on screen on any network family (the green dot, "Disconnect").
+    func isConnectedAnywhere(_ host: String) -> Bool {
+        ["evm", "btc", "sol"].contains { isConnected($0, host: host) }
+    }
+
+    func connect(_ chain: String, address: String, host: String) {
+        connectedHosts.insert(connectionKey(chain, address: address, host: host))
+        saveConnectedHosts()
+    }
+
+    // MARK: - Pages and reviews
+
+    func page(of view: WKWebView) -> BrowserPage {
+        BrowserPage(view: ObjectIdentifier(view), generation: pageGenerations[ObjectIdentifier(view)] ?? 0)
+    }
+
+    /// The page that asked is still the one on screen (same tab, same page load).
+    func isCurrent(_ page: BrowserPage) -> Bool {
+        guard let view = webView else { return false }
+        return self.page(of: view) == page
+    }
+
+    /// A review is open.
+    var hasPrompt: Bool { connectPrompt != nil || signPrompt != nil || chainPrompt != nil }
+
+    /// A review sheet went away. Not answered (swiped down, the app locked, its page left): the site
+    /// hears "rejected" (a request already answered ignores it).
+    func promptClosed(_ id: UUID, callId: Int, page: BrowserPage) {
+        if connectPrompt?.id == id { connectPrompt = nil }
+        if signPrompt?.id == id { signPrompt = nil }
+        if chainPrompt?.id == id { chainPrompt = nil }
+        rejectJS(callId: callId, code: 4001, message: "User rejected the request", page: page)
+    }
+
+    /// Tabs built before Tor was switched on (or off) keep their old way out: they are closed, so no
+    /// page keeps loading around Tor while the app says it is on.
+    func closeTabsBuiltWithOtherTor() {
+        let stale = tabs.filter { tab in
+            guard let view = tab.webView else { return false }
+            return torOfView[ObjectIdentifier(view)] != TorProxy.isEnabled
+        }
+        for tab in stale { closeTab(tab.id) }
     }
 
     private func recordRecent(url: URL, title: String) {
@@ -269,7 +365,15 @@ final class BrowserWebModel: NSObject, ObservableObject {
     var activeEVMChain: EVMChain {
         guard let manager = walletManager else { return .ethereum }
         if manager.activeCoin == .polygon { return .polygon }
+        if let siteChain, siteChainSlot == manager.activeSlot { return siteChain }
         return manager.evmNetwork.isEVM ? manager.evmNetwork : .ethereum
+    }
+
+    /// The user picked a network in the browser: the wallet's own setting, and no site switch on top.
+    func chooseNetwork(_ chain: EVMChain) {
+        siteChain = nil
+        walletManager?.evmNetwork = chain
+        syncProviderState()
     }
 
     var activeChainId: UInt64 {
@@ -281,7 +385,7 @@ final class BrowserWebModel: NSObject, ObservableObject {
     }
 
     func addressForHost(_ host: String?) -> String? {
-        guard let host = host?.lowercased(), connectedHosts.contains(host) else { return nil }
+        guard let host = host?.lowercased(), isConnected("evm", host: host) else { return nil }
         return walletManager?.walletConnectAddress
     }
 
@@ -366,6 +470,12 @@ final class BrowserWebModel: NSObject, ObservableObject {
                                                                                       testnet: walletManager?.isTestnet ?? false,
                                                                                       icon: icon),
                                                      injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        if TorProxy.isEnabled {
+            // WebRTC opens its own connections, outside the proxy, and can show a site the real IP
+            // address: it is taken away from every page and frame while Tor is on.
+            let noRTC = "(function(){['RTCPeerConnection','webkitRTCPeerConnection','RTCDataChannel','RTCIceCandidate','RTCSessionDescription','RTCRtpSender','RTCRtpReceiver'].forEach(function(n){try{Object.defineProperty(window,n,{value:undefined,writable:false,configurable:false});}catch(e){}});})();"
+            contentController.addUserScript(WKUserScript(source: noRTC, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+        }
         contentController.add(WeakScriptMessageHandler(target: self), name: Self.handlerName)
         config.userContentController = contentController
 
@@ -376,6 +486,7 @@ final class BrowserWebModel: NSObject, ObservableObject {
         view.isOpaque = false
         view.backgroundColor = .clear
         view.scrollView.backgroundColor = .clear
+        torOfView[ObjectIdentifier(view)] = TorProxy.isEnabled
 
         bind(view)
         self.webView = view
@@ -469,6 +580,13 @@ final class BrowserWebModel: NSObject, ObservableObject {
     func closeTab(_ id: UUID) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         if let view = tabs[index].webView {
+            // Its open review goes with it (its page is gone).
+            let key = ObjectIdentifier(view)
+            if connectPrompt?.page.view == key { connectPrompt = nil }
+            if signPrompt?.page.view == key { signPrompt = nil }
+            if chainPrompt?.page.view == key { chainPrompt = nil }
+            pageGenerations[key] = nil
+            torOfView[key] = nil
             view.stopLoading()
             view.navigationDelegate = nil
             view.uiDelegate = nil
@@ -513,17 +631,17 @@ final class BrowserWebModel: NSObject, ObservableObject {
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
-    func resolveJS(callId: Int, resultJSON: String) {
+    /// Answers a request. With `page`, only that page gets it: if the tab now shows another page (or
+    /// another tab is open), the answer is dropped instead of reaching a page that never asked.
+    func resolveJS(callId: Int, resultJSON: String, page: BrowserPage? = nil) {
+        if let page, !isCurrent(page) { return }
         let js = "window.__coldvaultResolve && window.__coldvaultResolve(\(callId), \(resultJSON));"
         webView?.evaluateJavaScript(js, completionHandler: nil)
     }
 
-    func rejectJS(callId: Int, code: Int, message: String) {
-        let escaped = message
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "'", with: "\\'")
-            .replacingOccurrences(of: "\n", with: " ")
-        let js = "window.__coldvaultReject && window.__coldvaultReject(\(callId), \(code), '\(escaped)');"
+    func rejectJS(callId: Int, code: Int, message: String, page: BrowserPage? = nil) {
+        if let page, !isCurrent(page) { return }
+        let js = "window.__coldvaultReject && window.__coldvaultReject(\(callId), \(code), \(JSLiteral.string(message)));"
         webView?.evaluateJavaScript(js, completionHandler: nil)
     }
 
@@ -531,41 +649,40 @@ final class BrowserWebModel: NSObject, ObservableObject {
 
     func approveConnect(_ request: BrowserConnectRequest) {
         connectPrompt = nil
+        // The page that asked must still be open: the connection (and the address) is for that site only.
+        guard isCurrent(request.page) else { return }
         switch request.chain {
         case "btc":
             guard let account = bitcoinAccount else {
-                rejectJS(callId: request.callId, code: 4100, message: "No Bitcoin wallet")
+                rejectJS(callId: request.callId, code: 4100, message: "No Bitcoin wallet", page: request.page)
                 return
             }
-            connectedHosts.insert(chainKey("btc", request.host))
-            saveConnectedHosts()
-            resolveValue(request.callId, [account.address])
+            connect("btc", address: account.address, host: request.host)
+            resolveValue(request.callId, [account.address], page: request.page)
             return
         case "sol":
             guard let address = solanaAddress, let key = SolanaAddress.decode(address) else {
-                rejectJS(callId: request.callId, code: 4100, message: "No Solana wallet")
+                rejectJS(callId: request.callId, code: 4100, message: "No Solana wallet", page: request.page)
                 return
             }
-            connectedHosts.insert(chainKey("sol", request.host))
-            saveConnectedHosts()
-            resolveValue(request.callId, ["address": address, "publicKey": key.base64EncodedString()])
+            connect("sol", address: address, host: request.host)
+            resolveValue(request.callId, ["address": address, "publicKey": key.base64EncodedString()], page: request.page)
             return
         default:
             break
         }
         guard let address = walletManager?.walletConnectAddress else {
-            rejectJS(callId: request.callId, code: 4100, message: WalletConnectError.noEVMWallet.localizedDescription)
+            rejectJS(callId: request.callId, code: 4100, message: WalletConnectError.noEVMWallet.localizedDescription, page: request.page)
             return
         }
-        connectedHosts.insert(request.host.lowercased())
-        saveConnectedHosts()
+        connect("evm", address: address, host: request.host)
         syncProviderState()
-        resolveJS(callId: request.callId, resultJSON: "['\(address)']")
+        resolveValue(request.callId, [address], page: request.page)
     }
 
     func rejectConnect(_ request: BrowserConnectRequest) {
         connectPrompt = nil
-        rejectJS(callId: request.callId, code: 4001, message: "User rejected the request")
+        rejectJS(callId: request.callId, code: 4001, message: "User rejected the request", page: request.page)
     }
 
     /// The ColdVault mark shown by sites next to the wallet's name.
@@ -730,6 +847,18 @@ extension BrowserWebModel: WKNavigationDelegate, WKUIDelegate {
         decisionHandler(.allow)
     }
 
+    /// A new page took over the tab: the requests of the page before it are no longer answered, and its
+    /// open review closes (nothing is signed for a page that is gone).
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        generationCounter += 1
+        pageGenerations[ObjectIdentifier(webView)] = generationCounter
+        if webView === self.webView {
+            connectPrompt = nil
+            signPrompt = nil
+            chainPrompt = nil
+        }
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         syncProviderState()
         if let url = webView.url {
@@ -770,6 +899,9 @@ extension BrowserWebModel: WKNavigationDelegate, WKUIDelegate {
             rejectJS(callId: callId, code: 4100, message: "HTTPS required")
             return
         }
+        // A message the previous page sent just before it left can arrive after the next one took over:
+        // it must come from the site the tab shows now.
+        guard sender.url?.host?.lowercased() == host else { return }
 
         let params: [Any]
         if let array = body["params"] as? [Any] {
@@ -780,10 +912,17 @@ extension BrowserWebModel: WKNavigationDelegate, WKUIDelegate {
             params = []
         }
 
-        handleRPC(callId: callId, host: host, method: method, params: params)
+        handleRPC(callId: callId, host: host, method: method, params: params, page: page(of: sender))
     }
 
-    private func handleRPC(callId: Int, host: String, method: String, params: [Any]) {
+    /// A review is already open: a site can't stack another one or swap the one being read.
+    private func refuseWhileBusy(_ callId: Int) -> Bool {
+        guard hasPrompt else { return false }
+        rejectJS(callId: callId, code: -32002, message: "A request is already waiting for the user")
+        return true
+    }
+
+    private func handleRPC(callId: Int, host: String, method: String, params: [Any], page: BrowserPage) {
         switch method {
         case "eth_chainId":
             resolveJS(callId: callId, resultJSON: "'\(activeChainHex)'")
@@ -810,7 +949,8 @@ extension BrowserWebModel: WKNavigationDelegate, WKUIDelegate {
                 resolveJS(callId: callId, resultJSON: "['\(address)']")
                 return
             }
-            connectPrompt = BrowserConnectRequest(callId: callId, host: host, pageTitle: pageTitle)
+            guard !refuseWhileBusy(callId) else { return }
+            connectPrompt = BrowserConnectRequest(callId: callId, host: host, pageTitle: pageTitle, page: page)
 
         case "wallet_getPermissions":
             if addressForHost(host) != nil {
@@ -820,14 +960,19 @@ extension BrowserWebModel: WKNavigationDelegate, WKUIDelegate {
             }
 
         case "wallet_switchEthereumChain":
-            guard let first = params.first as? [String: Any],
+            // Only the browser follows the site: the wallet's network on the home screen stays as the
+            // user left it (a site must not change where the next payment from the app goes).
+            guard let manager = walletManager,
+                  let first = params.first as? [String: Any],
                   let hex = first["chainId"] as? String,
                   let id = UInt256(hex: hex)?.low64,
-                  let chain = walletManager?.evmChain(forChainId: id) else {
+                  let chain = manager.evmChain(forChainId: id),
+                  manager.activeCoin != .polygon || chain == .polygon else {
                 rejectJS(callId: callId, code: 4902, message: "Unrecognized chain")
                 return
             }
-            walletManager?.evmNetwork = chain
+            siteChain = chain
+            siteChainSlot = manager.activeSlot
             syncProviderState()
             resolveJS(callId: callId, resultJSON: "null")
 
@@ -836,12 +981,13 @@ extension BrowserWebModel: WKNavigationDelegate, WKUIDelegate {
                 rejectJS(callId: callId, code: 4100, message: WalletConnectError.noEVMWallet.localizedDescription)
                 return
             }
-            // A site signs only after it was connected (the user approved it), never on its own.
-            guard connectedHosts.contains(host) else {
+            // A site signs only after it was connected with this wallet (the user approved it), never on its own.
+            guard isConnected("evm", host: host) else {
                 rejectJS(callId: callId, code: 4100, message: "Unauthorized: connect first (eth_requestAccounts)")
                 return
             }
-            signPrompt = BrowserSignRequest(callId: callId, host: host, pageTitle: pageTitle, method: method, params: params)
+            guard !refuseWhileBusy(callId) else { return }
+            signPrompt = BrowserSignRequest(callId: callId, host: host, pageTitle: pageTitle, method: method, params: params, page: page)
 
         case "eth_blockNumber", "eth_getBalance", "eth_call", "eth_estimateGas",
              "eth_gasPrice", "eth_maxPriorityFeePerGas", "eth_feeHistory",
@@ -852,37 +998,30 @@ extension BrowserWebModel: WKNavigationDelegate, WKUIDelegate {
             Task {
                 do {
                     let result = try await EthereumRPC(isTestnet: isTestnet, chain: chain).call(method, params)
-                    let wrapped = ["v": result]
-                    if JSONSerialization.isValidJSONObject(wrapped),
-                       let data = try? JSONSerialization.data(withJSONObject: wrapped),
-                       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let val = obj["v"] {
-                        let json: String
-                        if let str = val as? String {
-                            let escaped = str.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-                            json = "'\(escaped)'"
-                        } else if val is NSNull {
-                            json = "null"
-                        } else if let num = val as? NSNumber {
-                            json = num.stringValue
-                        } else if let subData = try? JSONSerialization.data(withJSONObject: val),
-                                  let subText = String(data: subData, encoding: .utf8) {
-                            json = subText
-                        } else {
-                            json = "null"
-                        }
-                        self.resolveJS(callId: callId, resultJSON: json)
+                    // The node's answer as JSON (a string as a quoted literal): nothing it says can run as code.
+                    let json: String
+                    if let str = result as? String {
+                        json = JSLiteral.string(str)
+                    } else if result is NSNull {
+                        json = "null"
+                    } else if let num = result as? NSNumber {
+                        json = CFGetTypeID(num) == CFBooleanGetTypeID() ? (num.boolValue ? "true" : "false") : num.stringValue
+                    } else if JSONSerialization.isValidJSONObject(result),
+                              let subData = try? JSONSerialization.data(withJSONObject: result),
+                              let subText = String(data: subData, encoding: .utf8) {
+                        json = subText
                     } else {
-                        self.resolveJS(callId: callId, resultJSON: "null")
+                        json = "null"
                     }
+                    self.resolveJS(callId: callId, resultJSON: json, page: page)
                 } catch {
-                    self.rejectJS(callId: callId, code: -32603, message: error.localizedDescription)
+                    self.rejectJS(callId: callId, code: -32603, message: error.localizedDescription, page: page)
                 }
             }
 
         default:
             if method.hasPrefix("btc_") || method.hasPrefix("sol_") {
-                handleChainRPC(callId: callId, host: host, method: method, params: params)
+                handleChainRPC(callId: callId, host: host, method: method, params: params, page: page)
             } else {
                 rejectJS(callId: callId, code: 4200, message: "Unsupported method: \(method)")
             }
@@ -971,6 +1110,7 @@ struct DappBrowserView: View {
         }
         .onAppear {
             webModel.walletManager = walletManager
+            webModel.closeTabsBuiltWithOtherTor()
             webModel.syncProviderState()
         }
         .onChange(of: walletManager.evmNetwork) { _ in webModel.syncProviderState() }
@@ -1057,7 +1197,9 @@ struct DappBrowserView: View {
             // Search / URL Bar + Network Selector
             HStack(spacing: 10) {
                 HStack(spacing: 8) {
-                    Image(systemName: webModel.isShowingWebPage ? "lock.fill" : "magnifyingglass")
+                    // The padlock only for a secure page (a plain-http page shows an open one).
+                    Image(systemName: !webModel.isShowingWebPage ? "magnifyingglass"
+                          : (webModel.currentURL?.scheme?.lowercased() == "https" ? "lock.fill" : "lock.open"))
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(Palette.secondary)
 
@@ -1141,12 +1283,11 @@ struct DappBrowserView: View {
                 items.append(AppMenuItem(title: chain.name(testnet: walletManager.isTestnet),
                                          image: AnyView(Image(chain.logoName).resizable().scaledToFit()),
                                          selected: webModel.activeEVMChain == chain) {
-                    walletManager.evmNetwork = chain
-                    webModel.syncProviderState()
+                    webModel.chooseNetwork(chain)
                 })
             }
         }
-        if let host = webModel.currentHost, webModel.connectedHosts.contains(host) {
+        if let host = webModel.currentHost, webModel.isConnectedAnywhere(host) {
             items.append(AppMenuItem(title: t("Disconnect \(host)", "Desconectar \(host)"), icon: "xmark.circle",
                                      destructive: true) { webModel.disconnectHost(host) })
         }
@@ -1175,7 +1316,7 @@ struct DappBrowserView: View {
                 .frame(width: 42, height: 42)
                 .background(Circle().fill(SettingsStyle.groupFill))
 
-                if let host = webModel.currentHost, webModel.connectedHosts.contains(host) {
+                if let host = webModel.currentHost, webModel.isConnectedAnywhere(host) {
                     Circle()
                         .fill(Color.green)
                         .frame(width: 10, height: 10)
@@ -1281,9 +1422,8 @@ struct DappBrowserView: View {
                         Button {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                                walletManager.evmNetwork = chain
+                                webModel.chooseNetwork(chain)
                             }
-                            webModel.syncProviderState()
                         } label: {
                             HStack(spacing: 7) {
                                 Image(chain.logoName)
@@ -1647,6 +1787,41 @@ private struct BrowserTabsSheet: View {
     }
 }
 
+// MARK: - Review sheets' header
+
+/// Who asks: the site's address first and big (what the browser checked), the page's own title small
+/// below it (any page can call itself "Uniswap").
+struct BrowserRequestHeader: View {
+    let host: String
+    let pageTitle: String
+
+    private var title: String {
+        let clean = KnownToken.cleanText(pageTitle, limit: 60)
+        return clean.lowercased() == host ? "" : clean
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "globe")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundColor(Color(uiColor: .label))
+                .frame(width: 60, height: 60)
+                .background(Circle().fill(SettingsStyle.groupFill))
+            Label(host, systemImage: "lock.fill")
+                .font(.system(size: 19, weight: .bold))
+                .multilineTextAlignment(.center)
+            if !title.isEmpty {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Palette.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
 // MARK: - Browser Connect Sheet (eth_requestAccounts)
 
 private struct BrowserConnectSheet: View {
@@ -1672,22 +1847,7 @@ private struct BrowserConnectSheet: View {
             GlassAmbientBackground()
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 18) {
-                    VStack(spacing: 10) {
-                        Image(systemName: "globe")
-                            .font(.system(size: 26, weight: .semibold))
-                            .foregroundColor(Color(uiColor: .label))
-                            .frame(width: 64, height: 64)
-                            .background(Circle().fill(SettingsStyle.groupFill))
-
-                        Text(request.pageTitle.isEmpty ? request.host : request.pageTitle)
-                            .font(.system(size: 20, weight: .bold))
-                            .multilineTextAlignment(.center)
-
-                        Label(request.host, systemImage: "lock.fill")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.green)
-                    }
-                    .frame(maxWidth: .infinity)
+                    BrowserRequestHeader(host: request.host, pageTitle: request.pageTitle)
 
                     Text(t("wants to connect to your wallet", "quiere conectarse a tu billetera"))
                         .font(.system(size: 14))
@@ -1750,6 +1910,7 @@ private struct BrowserConnectSheet: View {
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+        .onDisappear { webModel.promptClosed(request.id, callId: request.callId, page: request.page) }
     }
 }
 
@@ -1765,6 +1926,8 @@ private struct BrowserSignSheet: View {
     @State private var errorText: String?
     @State private var isPreparing = true
     @State private var isWorking = false
+    /// The address the request was checked against: the one that signs.
+    @State private var signer: String?
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -1774,19 +1937,7 @@ private struct BrowserSignSheet: View {
             GlassAmbientBackground()
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 18) {
-                    VStack(spacing: 8) {
-                        Image(systemName: "lock.shield")
-                            .font(.system(size: 26, weight: .semibold))
-                            .foregroundColor(Color(uiColor: .label))
-                            .frame(width: 60, height: 60)
-                            .background(Circle().fill(SettingsStyle.groupFill))
-                        Text(request.pageTitle.isEmpty ? request.host : request.pageTitle)
-                            .font(.system(size: 19, weight: .bold))
-                            .multilineTextAlignment(.center)
-                        Text(request.host)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(Palette.secondary)
-                    }
+                    BrowserRequestHeader(host: request.host, pageTitle: request.pageTitle)
 
                     ForEach(warnings, id: \.self) { warning in
                         banner(warning, color: .orange, icon: "exclamationmark.triangle.fill")
@@ -1796,6 +1947,20 @@ private struct BrowserSignSheet: View {
                         ProgressView().padding(.vertical, 30)
                     } else if let payload {
                         payloadView(payload)
+                    }
+
+                    if let signer, !isPreparing {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(t("Signed by", "Firma")).font(.system(size: 12, weight: .medium)).foregroundColor(Palette.secondary)
+                            Text(walletManager.activeWallet?.bundle.name ?? "").font(.system(size: 14, weight: .semibold))
+                            Text(signer)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(Palette.secondary)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
                     }
 
                     if let errorText {
@@ -1818,7 +1983,7 @@ private struct BrowserSignSheet: View {
                         }
                         Button {
                             webModel.signPrompt = nil
-                            webModel.rejectJS(callId: request.callId, code: 4001, message: "User rejected the request")
+                            webModel.rejectJS(callId: request.callId, code: 4001, message: "User rejected the request", page: request.page)
                         } label: {
                             Text(t("Reject", "Rechazar"))
                                 .font(.system(size: 15, weight: .semibold))
@@ -1838,7 +2003,9 @@ private struct BrowserSignSheet: View {
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(isWorking)
         .task { await prepare() }
+        .onDisappear { webModel.promptClosed(request.id, callId: request.callId, page: request.page) }
     }
 
     private func banner(_ text: String, color: Color, icon: String) -> some View {
@@ -1863,12 +2030,19 @@ private struct BrowserSignSheet: View {
                 Text(text)
                     .font(.system(size: 13, design: isBinary ? .monospaced : .default))
                     .textSelection(.enabled)
+                if isBinary {
+                    Text(t("This is binary data, not readable text. Only sign it if you know what it is.",
+                           "Son datos binarios, no texto legible. Fírmalo solo si sabes qué es."))
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
 
         case .typedData(let typed):
+            let domain = typed.domainSummary
             VStack(spacing: 12) {
                 if typed.isRiskyPermission {
                     banner(t("This signature can give permission to move your tokens or NFTs later. Only sign it if you trust this site.",
@@ -1877,9 +2051,13 @@ private struct BrowserSignSheet: View {
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     Text(typed.primaryType).font(.system(size: 16, weight: .semibold))
-                    Text(typed.prettyMessage)
+                    if let name = domain.name { row(t("App", "App"), name) }
+                    if let contract = domain.verifyingContract { row(t("Contract", "Contrato"), contract) }
+                    if let chain = domain.chainId { row(t("Network", "Red"), chain) }
+                    Text(typed.signedMessageText)
                         .font(.system(size: 11, design: .monospaced))
                         .textSelection(.enabled)
+                        .padding(.top, 4)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
@@ -1894,6 +2072,11 @@ private struct BrowserSignSheet: View {
                 case .danger: banner(plan.summary.text(lang), color: .red, icon: "exclamationmark.triangle.fill")
                 case .caution: banner(plan.summary.text(lang), color: .orange, icon: "exclamationmark.circle.fill")
                 case .none: banner(plan.summary.text(lang), color: .green, icon: "checkmark.circle.fill")
+                }
+                if walletManager.dappFeeLooksHigh(plan) {
+                    banner(t("The network fee can be unusually high for this transaction. Check the maximum below.",
+                             "La comisión de red puede ser inusualmente alta para esta transacción. Revisa el máximo abajo."),
+                           color: .orange, icon: "exclamationmark.triangle.fill")
                 }
                 VStack(alignment: .leading, spacing: 10) {
                     row(t("Network", "Red"), plan.chain.name(testnet: walletManager.isTestnet))
@@ -1931,6 +2114,7 @@ private struct BrowserSignSheet: View {
             isPreparing = false
             return
         }
+        signer = ours
         let list = request.params
         do {
             switch request.method {
@@ -1944,8 +2128,8 @@ private struct BrowserSignSheet: View {
                 let printable = shown.map { $0.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.subtracting(.newlines).contains($0) } } ?? false
                 let siwe = shown.flatMap { SIWESummary.parse($0) }
                 if let siwe, !siwe.matches(host: request.host) {
-                    warnings.append(t("This sign-in is for \(siwe.domain), but the request comes from \(request.host).",
-                                      "Este inicio de sesión es para \(siwe.domain), pero la solicitud viene de \(request.host)."))
+                    warnings.append(t("This sign-in is for \(siwe.domain), but the request comes from \(request.host). It could be a phishing attempt.",
+                                      "Este inicio de sesión es para \(siwe.domain), pero la solicitud viene de \(request.host). Podría ser phishing."))
                 }
                 payload = .message(text: printable ? (shown ?? "") : "0x" + bytes.hexEncodedString, isBinary: !printable, siwe: siwe, data: bytes)
 
@@ -1964,11 +2148,25 @@ private struct BrowserSignSheet: View {
                 }
                 let typed = try EIP712TypedData(json: json)
                 _ = try typed.signingHash()
+                let expected = webModel.activeEVMChain.chainId(testnet: walletManager.isTestnet)
+                if let domainChain = typed.domainChainId, domainChain != expected {
+                    warnings.append(t("This data is for network \(domainChain), not for the one the browser is on (\(expected)).",
+                                      "Estos datos son para la red \(domainChain), no para la del navegador (\(expected))."))
+                }
+                if !typed.unsignedKeys.isEmpty {
+                    warnings.append(t("The site also sent fields that are not signed, so they are not shown: \(typed.unsignedKeys.joined(separator: ", ")).",
+                                      "El sitio también envió campos que no se firman, así que no se muestran: \(typed.unsignedKeys.joined(separator: ", "))."))
+                }
                 payload = .typedData(typed)
 
             case "eth_sendTransaction":
                 guard let object = list.first as? [String: Any] else { throw DappError.invalidParams }
                 let chain = webModel.activeEVMChain
+                // A transaction the site built for another network is never signed on this one.
+                if let named = object["chainId"], !(named is NSNull) {
+                    let id = (named as? String).flatMap { UInt256(hex: $0)?.low64 } ?? (named as? NSNumber)?.uint64Value
+                    guard id == chain.chainId(testnet: walletManager.isTestnet) else { throw DappError.otherChain }
+                }
                 let plan = try await walletManager.prepareDappTransaction(chain: chain, params: object, from: ours)
                 payload = .transaction(plan)
 
@@ -1982,7 +2180,12 @@ private struct BrowserSignSheet: View {
     }
 
     private func approve() async {
-        guard let payload, let ours = walletManager.walletConnectAddress, !isWorking else { return }
+        guard let payload, let ours = signer, !isWorking else { return }
+        // The page that asked must still be the one open: an answer never goes to another page.
+        guard webModel.isCurrent(request.page) else {
+            errorText = t("The page changed. Nothing was signed.", "La página cambió. No se firmó nada.")
+            return
+        }
         isWorking = true
         errorText = nil
         do {
@@ -2002,7 +2205,7 @@ private struct BrowserSignSheet: View {
             }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             webModel.signPrompt = nil
-            webModel.resolveJS(callId: request.callId, resultJSON: "'\(result)'")
+            webModel.resolveJS(callId: request.callId, resultJSON: JSLiteral.string(result), page: request.page)
         } catch {
             errorText = error.localizedDescription
             UINotificationFeedbackGenerator().notificationOccurred(.error)

@@ -234,17 +234,39 @@ public struct EIP712TypedData {
 
     // MARK: Display
 
-    /// What the dApp's domain says about itself, for the review.
+    /// The domain fields that are part of what is signed (the ones its EIP712Domain type names).
+    private var signedDomainFields: Set<String> { Set((types["EIP712Domain"] ?? []).map { $0.name }) }
+
+    /// What the dApp's domain says about itself, for the review: only the fields that are signed. A field
+    /// the domain carries but its type leaves out (a contract, a network) binds nothing, so it is not shown
+    /// as if it did (see `unsignedKeys`).
     public var domainSummary: (name: String?, version: String?, chainId: String?, verifyingContract: String?) {
         func text(_ key: String) -> String? {
+            guard signedDomainFields.contains(key) else { return nil }
             if let string = domain[key] as? String { return string }
             if let number = domain[key] as? NSNumber { return number.stringValue }
             return nil
         }
-        return (text("name"), text("version"), text("chainId"), text("verifyingContract"))
+        return (text("name"), text("version"), domainChainId.map { String($0) } ?? text("chainId"), text("verifyingContract"))
     }
 
-    /// The message as indented JSON (keys sorted), for the review.
+    /// The domain's network as a number ("0x89" and 137 alike), when it is signed.
+    public var domainChainId: UInt64? {
+        guard signedDomainFields.contains("chainId"), let raw = domain["chainId"],
+              let number = try? integer(raw, field: "chainId"), !number.negative,
+              let value = UInt256(bigEndian: number.magnitude), value < UInt256(UInt64.max) else { return nil }
+        return value.low64
+    }
+
+    /// Keys the dApp sent that are not signed (not in their type): shown apart, never as part of the data.
+    public var unsignedKeys: [String] {
+        var keys = domain.keys.filter { !signedDomainFields.contains($0) }.map { "domain." + $0 }
+        let fields = Set((types[primaryType] ?? []).map { $0.name })
+        keys += message.keys.filter { !fields.contains($0) }
+        return keys.sorted()
+    }
+
+    /// The message as indented JSON (keys sorted). Kept for reference: the review shows `signedMessageText`.
     public var prettyMessage: String {
         guard JSONSerialization.isValidJSONObject(message),
               let data = try? JSONSerialization.data(withJSONObject: message, options: [.prettyPrinted, .sortedKeys]),
@@ -252,11 +274,77 @@ public struct EIP712TypedData {
         return text
     }
 
+    /// What is signed, field by field in the order of the types: only the values that go into the hash.
+    /// Anything else the dApp put in the JSON is not shown here (it would not be signed).
+    public var signedMessageText: String {
+        var lines = [String]()
+        if let fields = types[primaryType] {
+            for field in fields {
+                appendValue(field.name, type: field.type, value: message[field.name], indent: 0, depth: 0, into: &lines)
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func appendValue(_ label: String, type: String, value: Any?, indent: Int, depth: Int, into lines: inout [String]) {
+        let pad = String(repeating: "  ", count: indent)
+        guard depth < 10 else {
+            lines.append(pad + label + ": …")
+            return
+        }
+        if type.hasSuffix("]"), let open = type.lastIndex(of: "[") {
+            let element = String(type[..<open])
+            let array = value as? [Any] ?? []
+            lines.append(pad + label + ": [\(array.count)]")
+            for (index, item) in array.prefix(50).enumerated() {
+                appendValue("#\(index)", type: element, value: item, indent: indent + 1, depth: depth + 1, into: &lines)
+            }
+            if array.count > 50 { lines.append(pad + "  …") }
+            return
+        }
+        if let fields = types[type] {
+            lines.append(pad + label + " (" + type + "):")
+            let object = value as? [String: Any] ?? [:]
+            for field in fields {
+                appendValue(field.name, type: field.type, value: object[field.name], indent: indent + 1, depth: depth + 1, into: &lines)
+            }
+            return
+        }
+        lines.append(pad + label + ": " + EIP712TypedData.display(value))
+    }
+
+    /// One value as text; control and direction characters are written as codes (they could disguise it).
+    private static func display(_ value: Any?) -> String {
+        guard let value, !(value is NSNull) else { return "null" }
+        if let text = value as? String {
+            var shown = ""
+            for scalar in text.unicodeScalars {
+                if CharacterSet.controlCharacters.contains(scalar) {
+                    shown += String(format: "\\u{%04X}", scalar.value)
+                } else {
+                    shown.unicodeScalars.append(scalar)
+                }
+            }
+            return "\"" + shown + "\""
+        }
+        if let number = value as? NSNumber {
+            return CFGetTypeID(number) == CFBooleanGetTypeID() ? (number.boolValue ? "true" : "false") : number.stringValue
+        }
+        if JSONSerialization.isValidJSONObject(value),
+           let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+           let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        return String(describing: value)
+    }
+
     /// A signature that can move money or NFTs later without another prompt, by what it is called.
-    /// (Seaport orders, Permit / Permit2, approvals, delegations.)
+    /// (Seaport orders, Permit / Permit2, approvals, delegations, USDC's TransferWithAuthorization,
+    /// Safe transactions, meta-transactions a relayer executes.)
     public var isRiskyPermission: Bool {
         let names = [primaryType.lowercased()] + types.keys.map { $0.lowercased() }
-        let markers = ["permit", "order", "seaport", "approval", "allowance", "delegat", "transferfrom", "bid", "listing", "offer"]
+        let markers = ["permit", "order", "seaport", "approval", "allowance", "delegat", "transfer", "bid", "listing", "offer",
+                       "authoriz", "safetx", "forward", "metatransaction", "execut", "withdraw", "userop"]
         return names.contains { name in markers.contains { name.contains($0) } }
     }
 }

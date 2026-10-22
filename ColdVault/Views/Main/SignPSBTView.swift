@@ -127,7 +127,7 @@ struct SignPSBTView: View {
     private func reviewCard(psbt: PSBT, summary: PSBTSummary) -> some View {
         let feeTooHigh: Bool = {
             guard let fee = summary.fee else { return false }
-            return summary.externalTotal > 0 ? fee * 10 > summary.externalTotal : FeePolicy.isStrong(fee: UInt64(fee))
+            return summary.externalTotal > 0 ? fee > summary.externalTotal / 10 : FeePolicy.isStrong(fee: UInt64(fee))
         }()
         return VStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 12) {
@@ -161,7 +161,7 @@ struct SignPSBTView: View {
                 }
                 detail(t("Inputs signed by this wallet", "Entradas que firma esta billetera"),
                        "\(summary.signableInputs) / \(summary.totalInputs)")
-                if let lock = timeLock(psbt.unsignedTx) {
+                if let lock = PSBTTimeLock.describe(psbt.unsignedTx, english: lang == .english) {
                     if lock.warning {
                         Label(lock.text, systemImage: "clock.badge.exclamationmark")
                             .font(.system(size: 13, weight: .semibold))
@@ -194,33 +194,6 @@ struct SignPSBTView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .disabled(isProcessing)
         }
-    }
-
-    /// nLockTime and BIP-68 relative locks: the transaction cannot be mined before then. A block
-    /// height near the tip is normal (anti fee-sniping); a future date or a relative lock is flagged.
-    private func timeLock(_ tx: Transaction) -> (text: String, warning: Bool)? {
-        var parts = [String]()
-        var warning = false
-        let enforced = tx.inputs.contains { $0.sequence != 0xffff_ffff }
-        if tx.lockTime > 0 && enforced {
-            if tx.lockTime < 500_000_000 {
-                parts.append(t("block \(tx.lockTime)", "bloque \(tx.lockTime)"))
-            } else {
-                let date = Date(timeIntervalSince1970: TimeInterval(tx.lockTime))
-                let text = date.formatted(date: .abbreviated, time: .shortened)
-                if date > Date() {
-                    warning = true
-                    parts.append(t("Can't be confirmed before \(text)", "No se podrá confirmar antes del \(text)"))
-                } else {
-                    parts.append(text)
-                }
-            }
-        }
-        if tx.version >= 2 && tx.inputs.contains(where: { $0.sequence & 0x8000_0000 == 0 }) {
-            warning = true
-            parts.append(t("an input has a relative time lock", "una entrada tiene un bloqueo de tiempo relativo"))
-        }
-        return parts.isEmpty ? nil : (parts.joined(separator: " · "), warning)
     }
 
     private func detail(_ title: String, _ value: String) -> some View {

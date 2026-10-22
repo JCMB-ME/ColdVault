@@ -130,6 +130,10 @@ extension WalletManager {
             lamports = spendable
         }
         guard lamports > 0, lamports <= spendable else { throw SolanaError.insufficientFunds }
+        // An account may end empty or keep at least the rent-exempt minimum (890 880 lamports for a plain
+        // account): anything in between is refused by the network.
+        let left = spendable - lamports
+        guard left == 0 || left >= 890_880 else { throw SolanaError.rentReserve }
         return EthereumSendPlan(payload: .solana(lamports: lamports, to: destination), recipient: recipient,
                                 maxFee: UInt256(fee), total: UInt256(lamports + fee), asset: asset,
                                 amount: UInt256(lamports))

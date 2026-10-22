@@ -19,17 +19,33 @@ struct DappHeader: View {
     let lang: AppLanguage
 
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
-    private var host: String? { metadata.flatMap { URL(string: $0.url)?.host } }
+    /// The address the dApp gives for itself (any site can claim any name and address).
+    private var claimedHost: String? { metadata.flatMap { URL(string: $0.url)?.host?.lowercased() } }
+    /// The site the verification service saw make the request, when it answered.
+    private var verifiedHost: String? {
+        guard context?.origin?.isEmpty == false else { return nil }
+        return WalletConnectService.requestHost(peerURL: nil, context: context)
+    }
 
     var body: some View {
         VStack(spacing: 10) {
             NFTImage(url: EVMNFT.webURL(metadata?.icons.first))
                 .frame(width: 64, height: 64)
                 .clipShape(Circle())
-            Text(metadata?.name ?? t("Unknown site", "Sitio desconocido"))
+            Text(KnownToken.cleanText(metadata?.name ?? t("Unknown site", "Sitio desconocido"), limit: 60))
                 .font(.system(size: 20, weight: .bold))
                 .multilineTextAlignment(.center)
-            if let host {
+            if let verified = verifiedHost, verified != claimedHost {
+                // The page that really asked is another site than the one the dApp names.
+                Text(t("Asked from \(verified)", "Pedido desde \(verified)"))
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.red)
+                if let claimedHost {
+                    Text(t("It says it is \(claimedHost)", "Dice ser \(claimedHost)"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(Palette.secondary)
+                }
+            } else if let host = verifiedHost ?? claimedHost {
                 Text(host)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(Palette.secondary)
@@ -62,6 +78,12 @@ struct DappHeader: View {
 private extension DappHeader {
     static func isBlocked(_ context: VerifyContext?) -> Bool {
         if case .some(.scam) = context?.validation { return true }
+        return false
+    }
+
+    /// The verification says the site is not the one the dApp claims to be.
+    static func isMismatch(_ context: VerifyContext?) -> Bool {
+        if case .some(.invalid) = context?.validation { return true }
         return false
     }
 }
@@ -484,6 +506,14 @@ struct DappProposalSheet: View {
                         .foregroundColor(Palette.secondary)
                         .multilineTextAlignment(.center)
 
+                    if DappHeader.isMismatch(item.context) {
+                        Label(t("The verification says this request does not come from the site it names. Phishing sites copy names and logos: only continue if you opened this connection yourself, on the real site.",
+                                "La verificación dice que esta solicitud no viene del sitio que nombra. Los sitios de phishing copian nombres y logos: continúa solo si tú abriste esta conexión, en el sitio real."),
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.red)
+                    }
+
                     if let errorText {
                         Text(errorText)
                             .font(.system(size: 13, weight: .medium))
@@ -493,7 +523,9 @@ struct DappProposalSheet: View {
 
                     VStack(spacing: 12) {
                         if !blocked {
-                            PrimaryCapsuleButton(title: t("Connect", "Conectar"), icon: "link",
+                            PrimaryCapsuleButton(title: DappHeader.isMismatch(item.context) ? t("Connect anyway", "Conectar de todos modos")
+                                                                                            : t("Connect", "Conectar"),
+                                                 icon: "link",
                                                  enabled: walletManager.walletConnectAddress != nil && !working) { approve() }
                         }
                         Button { reject() } label: {
@@ -666,11 +698,11 @@ struct DappRequestSheet: View {
                 Text(t("Data to sign", "Datos a firmar")).font(.system(size: 12, weight: .medium)).foregroundColor(Palette.secondary)
                 Text(typed.primaryType).font(.system(size: 16, weight: .semibold))
                 if let name = domain.name { row(t("App", "App"), name) }
-                if let contract = domain.verifyingContract { row(t("Contract", "Contrato"), shortAddress(contract)) }
+                if let contract = domain.verifyingContract { row(t("Contract", "Contrato"), contract) }
                 if let chain = domain.chainId { row(t("Network", "Red"), chain) }
             }
-            DisclosureGroup(t("See the full content", "Ver el contenido completo")) {
-                Text(typed.prettyMessage)
+            DisclosureGroup(t("See what is signed", "Ver lo que se firma")) {
+                Text(typed.signedMessageText)
                     .font(.system(size: 11, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -691,8 +723,14 @@ struct DappRequestSheet: View {
             case .caution: banner(plan.summary.text(lang), color: .orange, icon: "exclamationmark.circle.fill")
             case .none: banner(plan.summary.text(lang), color: .green, icon: "checkmark.circle.fill")
             }
+            if walletManager.dappFeeLooksHigh(plan) {
+                banner(t("The network fee can be unusually high for this transaction. Check the maximum below.",
+                         "La comisión de red puede ser inusualmente alta para esta transacción. Revisa el máximo abajo."),
+                       color: .orange, icon: "exclamationmark.triangle.fill")
+            }
             DappCard {
                 row(t("Network", "Red"), plan.chain.name(testnet: walletManager.isTestnet))
+                row(t("From", "Desde"), plan.from)
                 row(t("To", "Para"), plan.to)
                 if !plan.value.isZero {
                     row(t("Sends", "Envía"), "\(plan.value.formatted(decimals: decimals, maxFraction: 8)) \(symbol)")
@@ -750,11 +788,14 @@ struct DappRequestSheet: View {
 struct DappSheetsModifier: ViewModifier {
     @EnvironmentObject var walletManager: WalletManager
     @ObservedObject private var service = WalletConnectService.shared
+    /// A sheet shows above the app lock: while it is locked, a dApp's request waits (it would show the
+    /// wallet's name and address to whoever holds the phone).
+    @ObservedObject private var lock = AppLockState.shared
 
     func body(content: Content) -> some View {
         content
             .sheet(item: Binding<DappProposal?>(
-                get: { service.nextProposal },
+                get: { lock.locked ? nil : service.nextProposal },
                 set: { newValue in
                     // Swiped away (or closed by the app lock) without answering: it stays pending, not rejected.
                     if newValue == nil, let first = service.nextProposal { service.snooze(first.id) }
@@ -762,7 +803,7 @@ struct DappSheetsModifier: ViewModifier {
                 DappProposalSheet(item: item).environmentObject(walletManager)
             }
             .sheet(item: Binding<DappRequest?>(
-                get: { service.nextRequest },
+                get: { lock.locked ? nil : service.nextRequest },
                 set: { newValue in
                     if newValue == nil, let first = service.nextRequest { service.snooze(first.id) }
                 })) { item in

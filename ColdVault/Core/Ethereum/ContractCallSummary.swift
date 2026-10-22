@@ -81,6 +81,14 @@ public struct ContractCallSummary: Equatable {
         case "42842e0e" where w.count >= 3, "b88d4fde" where w.count >= 3:   // safeTransferFrom
             return ContractCallSummary(risk: .caution, english: "Moves an NFT from \(address(w[0])) to \(address(w[1])).",
                                        spanish: "Mueve un NFT de \(address(w[0])) a \(address(w[1])).")
+        case "87517c45" where w.count >= 3:                  // Permit2 approve(token, spender, amount, expiration)
+            let spender = address(w[1])
+            return ContractCallSummary(risk: .danger,
+                                       english: "Lets \(spender) move this token for you through Permit2, until the permission expires.",
+                                       spanish: "Deja que \(spender) mueva este token por ti a través de Permit2, hasta que caduque el permiso.")
+        case "2eb2c2d6" where w.count >= 3:                  // safeBatchTransferFrom (ERC-1155)
+            return ContractCallSummary(risk: .caution, english: "Moves several NFTs from \(address(w[0])) to \(address(w[1])).",
+                                       spanish: "Mueve varios NFTs de \(address(w[0])) a \(address(w[1])).")
         case "d505accf":                                     // permit(...)
             return ContractCallSummary(risk: .danger,
                                        english: "Uses a signed permission to let an address spend this token.",
