@@ -22,6 +22,8 @@ public struct ContentView: View {
             }
         }
         .tint(Palette.accent)
+        // Web links open on a Safari sheet inside the app, not in the default browser.
+        .environment(\.openURL, OpenURLAction { url in MainActor.assumeIsolated { InAppSafari.open(url) } })
         .walletConnectSheets()
         .withAppLock()
         .withPrivacyShield()

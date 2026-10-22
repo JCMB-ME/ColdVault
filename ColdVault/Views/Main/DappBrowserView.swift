@@ -1092,6 +1092,20 @@ struct DappBrowserView: View {
                                 .foregroundColor(Palette.secondary)
                         }
                         .buttonStyle(.plain)
+                        // The page in the iPhone's own browser (Safari, Chrome…).
+                        if let url = webModel.currentURL, let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                UIApplication.shared.open(url)
+                            } label: {
+                                Image(systemName: "safari")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(Palette.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.leading, 4)
+                            .accessibilityLabel(t("Open in the system browser", "Abrir en el navegador del sistema"))
+                        }
                     }
                 }
                 .padding(.horizontal, 14)
