@@ -154,6 +154,16 @@ public final class BlockchainService {
     /// Your own server, when set, replaces the public mainnet servers entirely.
     private func ownServerOnly(_ isTestnet: Bool) -> Bool { !isTestnet && usesOwnServer }
 
+    /// Whether an output was spent; nil when there is no answer (or only the own server is used).
+    public func isSpent(_ outpoint: String, isTestnet: Bool) async -> Bool? {
+        guard !ownServerOnly(isTestnet) else { return nil }
+        let parts = outpoint.split(separator: ":")
+        guard parts.count == 2, parts[0].count == 64, parts[0].allSatisfy({ $0.isHexDigit }), let vout = Int(parts[1]),
+              let data = try? await get("/tx/\(parts[0])/outspend/\(vout)", isTestnet: isTestnet),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        return object["spent"] as? Bool
+    }
+
     private func electrumActivity(_ address: String, isTestnet: Bool) async throws -> AddressActivity {
         let hash = ElectrumClient.scriptHash(try scriptPubKey(address, isTestnet: isTestnet))
         let results = try await ElectrumClient.client(isTestnet: isTestnet).batch([

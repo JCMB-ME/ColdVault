@@ -181,8 +181,25 @@ extension WalletManager {
     /// The inscriptions of the account, from the phone when the list is less than 15
     /// minutes old (`force`: pull to refresh).
     public func loadInscriptions(force: Bool = false) async throws -> [Inscription] {
-        let sent = recentlySentCollectibles  // this wallet's, for 30 minutes
-        return try await loadAllInscriptions(force: force).filter { !sent.contains($0.id) }
+        let all = try await loadAllInscriptions(force: force)
+        let sent = recentlySentCollectibles
+        guard !sent.isEmpty else { return all }
+        var result = [Inscription]()
+        for item in all {
+            guard sent.contains(item.id) else {
+                result.append(item)
+                continue
+            }
+            // Sent from here and still listed: shown again only when the coin that carries it is
+            // unspent (the index lists it on a new coin of this wallet: it came back).
+            if let output = item.output,
+               await BlockchainService.shared.isSpent(output, isTestnet: isTestnet) == false {
+                clearSentMark(item.id)
+                result.append(item)
+            }
+        }
+        for id in sent where !all.contains(where: { $0.id == id }) { clearSentMark(id) }
+        return result
     }
 
     private func loadAllInscriptions(force: Bool) async throws -> [Inscription] {

@@ -81,6 +81,7 @@ public struct SettingsView: View {
     @State var serviceKeyTarget: ServiceKeys.Service = .tronGrid
     @State var serviceKeyDraft = ""
     @AppStorage(DataSaver.cellularKey) var dataSaverCellular = false
+    @AppStorage(ReceiveAlerts.enabledKey) var receiveAlerts = true
 
     public init(route: Binding<SettingsRoute?>) {
         self._route = route

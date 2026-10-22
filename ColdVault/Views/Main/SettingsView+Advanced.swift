@@ -110,6 +110,24 @@ extension SettingsView {
                                      "Con datos móviles: sin revisión automática de pagos nuevos (desliza para actualizar) y sin descargar imágenes nuevas de NFTs u ordinals (las guardadas se siguen viendo). El modo de datos reducidos de iOS hace lo mismo en cualquier conexión."))
             }
             Group {
+                SettingsSubheader(text: t("Notifications", "Notificaciones"))
+                SettingsRow(title: t("Incoming alerts", "Avisos de cobros"), icon: "bell.badge") {
+                    Toggle("", isOn: $receiveAlerts).labelsHidden()
+                        .onChange(of: receiveAlerts) { on in
+                            if on {
+                                Task {
+                                    _ = await ReceiveAlerts.requestPermission()
+                                    ReceiveAlerts.schedule()
+                                }
+                            } else {
+                                ReceiveAlerts.schedule()
+                            }
+                        }
+                }
+                SettingsNote(text: t("While the app is closed, iOS wakes it now and then (from about 15 minutes to a few hours, iOS decides) to look at every wallet: coins, tokens, NFTs and ordinals that arrived show as a notification. No server: your addresses stay on this iPhone. Closing the app by swiping it away stops the checks until you open it again.",
+                                     "Con la app cerrada, iOS la despierta de vez en cuando (de unos 15 minutos a varias horas, lo decide iOS) para revisar todas las billeteras: las monedas, tokens, NFTs y ordinals que lleguen se avisan con una notificación. Sin servidor: tus direcciones no salen de este iPhone. Si cierras la app deslizándola, las revisiones se detienen hasta que la abras."))
+            }
+            Group {
                 // Only the keys of the coin on screen (bitcoin uses none).
                 let services = ServiceKeys.Service.allCases.filter { $0.coins.contains(walletManager.activeCoin) }
                 if !services.isEmpty {

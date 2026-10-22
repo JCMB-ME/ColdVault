@@ -632,9 +632,41 @@ extension WalletManager {
     /// The NFT list of the account, from the phone when it is less than 15 minutes old
     /// (`force`: pull to refresh).
     public func loadNFTs(force: Bool = false) async -> [EVMNFT] {
-        // Ethereum, Base and Polygon read ownership on chain; TON and Solana trust an index that lags.
+        let all = await loadAllNFTs(force: force)
         let sent = recentlySentCollectibles
-        return await loadAllNFTs(force: force).filter { $0.chain.isEVM || !sent.contains($0.id) }
+        guard !sent.isEmpty, let record = activeRecord else { return all }
+        var result = [EVMNFT]()
+        for nft in all {
+            // Ethereum, Base and Polygon: ownership was already read on chain.
+            guard !nft.chain.isEVM, sent.contains(nft.id) else {
+                result.append(nft)
+                continue
+            }
+            // Sent from here and still listed (the index lags): the chain tells whether it is back.
+            if let owner = address(on: nft.chain, record: record),
+               await ownsOnChain(nft, owner: owner, testnet: record.isTestnet) == true {
+                clearSentMark(nft.id)
+                result.append(nft)
+            }
+        }
+        for id in sent where !all.contains(where: { $0.id == id }) { clearSentMark(id) }
+        return result
+    }
+
+    /// Whether `owner` holds a TON or Solana NFT now, read from the chain; nil when it cannot be told.
+    private func ownsOnChain(_ nft: EVMNFT, owner: String, testnet: Bool) async -> Bool? {
+        switch nft.chain {
+        case .ton:
+            guard let found = try? await TonAPI(isTestnet: testnet).nftOwner(nft.contract),
+                  let current = TonAddress.parse(found), let mine = TonAddress.parse(owner) else { return nil }
+            return current == mine
+        case .solana:
+            guard nft.standard != "Compressed NFT" else { return nil }
+            return (try? await SolanaAPI(isTestnet: testnet).holds(asset: nft.contract, owner: owner,
+                                                                    core: nft.standard == "Metaplex Core")) ?? nil
+        default:
+            return nil
+        }
     }
 
     private func loadAllNFTs(force: Bool) async -> [EVMNFT] {
@@ -650,8 +682,9 @@ extension WalletManager {
         return list
     }
 
-    private func fetchNFTs() async -> [EVMNFT] {
-        guard let record = activeRecord, record.coinKind.isAccountBased else { return [] }
+    /// The NFTs of a wallet (the one open, or another: the background check of ReceiveAlerts).
+    func fetchNFTs(for given: StoredWalletRecord? = nil) async -> [EVMNFT] {
+        guard let record = given ?? activeRecord, record.coinKind.isAccountBased else { return [] }
         var result = [EVMNFT]()
         for chain in record.coinKind.networks {
             guard let owner = address(on: chain, record: record) else { continue }

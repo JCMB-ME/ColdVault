@@ -149,6 +149,28 @@ public final class SolanaAPI {
 
     /// The assets the account owns that are not fungible tokens (compressed NFTs included), as the
     /// asset API (DAS) answers: 100 per page, at most 300.
+    /// Whether `owner` holds an NFT now, read from the chain: its token account (Metaplex and
+    /// programmable NFTs) or, for Metaplex Core, the owner written in the asset itself. nil when the
+    /// answer cannot tell.
+    func holds(asset id: String, owner: String, core: Bool) async throws -> Bool? {
+        if core {
+            let result = try await call("getAccountInfo", [id, ["encoding": "base64"]]) as? [String: Any]
+            // No account: the asset was burnt.
+            guard let value = result?["value"] as? [String: Any] else { return result == nil ? nil : false }
+            guard let text = (value["data"] as? [Any])?.first as? String, let bytes = Data(base64Encoded: text),
+                  bytes.count >= 33, let key = SolanaAddress.decode(owner) else { return nil }
+            return Data(bytes[1..<33]) == key
+        }
+        let result = try await call("getTokenAccountsByOwner", [owner, ["mint": id], ["encoding": "jsonParsed"]]) as? [String: Any]
+        guard let accounts = result?["value"] as? [[String: Any]] else { return nil }
+        return accounts.contains { account in
+            let data = (account["account"] as? [String: Any])?["data"] as? [String: Any]
+            let info = (data?["parsed"] as? [String: Any])?["info"] as? [String: Any]
+            let amount = (info?["tokenAmount"] as? [String: Any])?["amount"] as? String
+            return amount != nil && amount != "0"
+        }
+    }
+
     func nfts(owner: String) async throws -> [[String: Any]] {
         var items: [[String: Any]] = []
         for page in 1...3 {

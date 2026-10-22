@@ -3,9 +3,10 @@
 //  ColdVault
 //
 //  An NFT or ordinal that was just sent leaves its list with the focus effect of the sheets
-//  (Receive, Send) played backwards: it blurs, shrinks, fades and drifts up. On TON, Solana and
-//  bitcoin it stays out of that wallet's lists for 30 minutes, while the indexers have not caught up
-//  with the transfer (on Ethereum, Base and Polygon ownership is read on chain: no mark needed).
+//  (Receive, Send) played backwards: it blurs, shrinks, fades and drifts up. The indexers that list
+//  NFTs and ordinals follow the chain with some delay: while one still lists an item this wallet sent,
+//  the chain itself is asked whose it is (the NFT's contract on TON, its token account on Solana, the
+//  coin that carries the ordinal). It shows again only when it is back.
 //
 
 import SwiftUI
@@ -34,10 +35,11 @@ extension AnyTransition {
 extension WalletManager {
     private static let sentKey = "sentCollectibles"
 
-    private static let sentLifetime: TimeInterval = 30 * 60
+    /// A mark is dropped once its item is no longer listed or is back; a day at most.
+    private static let sentLifetime: TimeInterval = 24 * 60 * 60
 
-    /// NFTs and inscriptions this wallet sent in the last 30 minutes. Only this wallet's: another
-    /// wallet on this iPhone that received one shows it.
+    /// NFTs and inscriptions this wallet sent (still to be confirmed as gone from the lists). Only
+    /// this wallet's: another wallet on this iPhone that received one shows it.
     var recentlySentCollectibles: Set<String> {
         guard let scope = collectiblesKey else { return [] }
         let saved = UserDefaults.standard.dictionary(forKey: WalletManager.sentKey) as? [String: Double] ?? [:]
@@ -58,5 +60,13 @@ extension WalletManager {
         sentCollectibleCount += 1
         homeNFTs?.removeAll { $0.id == id }
         homeInscriptions?.removeAll { $0.id == id }
+    }
+
+    /// The item is no longer listed, or it is back: its mark ends.
+    func clearSentMark(_ id: String) {
+        guard let scope = collectiblesKey else { return }
+        var saved = UserDefaults.standard.dictionary(forKey: WalletManager.sentKey) as? [String: Double] ?? [:]
+        guard saved.removeValue(forKey: scope + "|" + id) != nil else { return }
+        UserDefaults.standard.set(saved, forKey: WalletManager.sentKey)
     }
 }

@@ -699,6 +699,15 @@ public final class TonAPI {
         return (object["nft_items"] as? [[String: Any]]) ?? []
     }
 
+    /// The current owner of an NFT item ("0:…"), from its own contract (get_nft_data), not an index.
+    public func nftOwner(_ item: String) async throws -> String? {
+        guard TonAddress.parse(item) != nil,
+              let encoded = item.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
+        let object = try await json("\(tonapi)/v2/blockchain/accounts/\(encoded)/methods/get_nft_data")
+        guard (object["success"] as? Bool) != false else { return nil }
+        return (object["decoded"] as? [String: Any])?["owner_address"] as? String
+    }
+
     /// A tonapi object, or nil when it does not exist (yet).
     private func lookup(_ url: String) async throws -> [String: Any]? {
         guard let endpoint = URL(string: url) else { throw TonError.unavailable }
