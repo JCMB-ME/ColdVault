@@ -91,12 +91,28 @@ struct OrdinalsView: View {
         }
     }
 
-    private var groups: [(name: String, items: [Inscription])] {
-        let named = Dictionary(grouping: items.filter { $0.collection != nil }) { $0.collection ?? "" }
-            .map { (name: $0.key, items: $0.value) }
-            .sorted { $0.items.count != $1.items.count ? $0.items.count > $1.items.count : $0.name < $1.name }
-        let rest = items.filter { $0.collection == nil }
-        return named + (rest.isEmpty ? [] : [(name: named.isEmpty ? t("Inscriptions", "Inscripciones") : t("Other", "Otras"), items: rest)])
+    private struct Group {
+        let name: String
+        let items: [Inscription]
+    }
+
+    /// One group per collection (biggest first), then the inscriptions without one.
+    private var groups: [Group] {
+        var byName = [String: [Inscription]]()
+        var rest = [Inscription]()
+        for item in items {
+            if let name = item.collection { byName[name, default: []].append(item) } else { rest.append(item) }
+        }
+        var result: [Group] = byName.map { Group(name: $0.key, items: $0.value) }
+        result.sort { lhs, rhs in
+            if lhs.items.count != rhs.items.count { return lhs.items.count > rhs.items.count }
+            return lhs.name < rhs.name
+        }
+        if !rest.isEmpty {
+            let title = result.isEmpty ? t("Inscriptions", "Inscripciones") : t("Other", "Otras")
+            result.append(Group(name: title, items: rest))
+        }
+        return result
     }
 
     private func tile(_ item: Inscription) -> some View {
