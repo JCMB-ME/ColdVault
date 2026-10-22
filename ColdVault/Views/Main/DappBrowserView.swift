@@ -10,6 +10,7 @@
 
 import SwiftUI
 import WebKit
+import Network
 import Combine
 
 // MARK: - Models
@@ -83,6 +84,8 @@ struct BrowserConnectRequest: Identifiable {
     let callId: Int
     let host: String
     let pageTitle: String
+    /// "evm" (Ethereum, Base, Polygon), "btc" or "sol".
+    var chain = "evm"
 }
 
 struct BrowserSignRequest: Identifiable {
@@ -109,6 +112,8 @@ final class BrowserWebModel: NSObject, ObservableObject {
 
     @Published var connectPrompt: BrowserConnectRequest?
     @Published var signPrompt: BrowserSignRequest?
+    /// A Bitcoin or Solana request waiting for review.
+    @Published var chainPrompt: BrowserChainRequest?
 
     @Published var bookmarks: [BrowserBookmark] = []
     @Published var recents: [BrowserBookmark] = []
@@ -121,7 +126,7 @@ final class BrowserWebModel: NSObject, ObservableObject {
     private static let bookmarksKey = "browserBookmarks"
     private static let recentsKey = "browserRecents"
     private static let connectedHostsKey = "browserConnectedHosts"
-    fileprivate static let handlerName = "coldvaultEthereum"
+    static let handlerName = "coldvaultEthereum"
 
     override init() {
         super.init()
@@ -155,7 +160,7 @@ final class BrowserWebModel: NSObject, ObservableObject {
         }
     }
 
-    private func saveConnectedHosts() {
+    func saveConnectedHosts() {
         UserDefaults.standard.set(Array(connectedHosts), forKey: Self.connectedHostsKey)
     }
 
@@ -189,6 +194,8 @@ final class BrowserWebModel: NSObject, ObservableObject {
     func disconnectHost(_ host: String) {
         let key = host.lowercased()
         connectedHosts.remove(key)
+        connectedHosts.remove("btc:" + key)
+        connectedHosts.remove("sol:" + key)
         saveConnectedHosts()
         syncProviderState()
     }
@@ -291,11 +298,23 @@ final class BrowserWebModel: NSObject, ObservableObject {
         if let existing = webView { return existing }
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
+        // Private: cookies and site data live only while the app runs (like a private tab).
+        let store = WKWebsiteDataStore.nonPersistent()
+        if #available(iOS 17.0, *), TorProxy.isEnabled, let port = NWEndpoint.Port(rawValue: TorProxy.port) {
+            store.proxyConfigurations = [ProxyConfiguration(socksv5Proxy: .hostPort(host: "127.0.0.1", port: port))]
+        }
+        config.websiteDataStore = store
         let contentController = WKUserContentController()
+        // Only the page itself (not the frames inside it, such as ads) gets the wallet.
         let script = WKUserScript(source: Self.providerScript(chainHex: activeChainHex, netVersion: String(activeChainId)),
                                   injectionTime: .atDocumentStart,
-                                  forMainFrameOnly: false)
+                                  forMainFrameOnly: true)
         contentController.addUserScript(script)
+        let icon = "data:image/svg+xml;base64," + Data(Self.walletIconSVG.utf8).base64EncodedString()
+        contentController.addUserScript(WKUserScript(source: Self.chainProviderScript(handler: Self.handlerName,
+                                                                                      testnet: walletManager?.isTestnet ?? false,
+                                                                                      icon: icon),
+                                                     injectionTime: .atDocumentStart, forMainFrameOnly: true))
         contentController.add(WeakScriptMessageHandler(target: self), name: Self.handlerName)
         config.userContentController = contentController
 
@@ -364,12 +383,12 @@ final class BrowserWebModel: NSObject, ObservableObject {
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
-    fileprivate func resolveJS(callId: Int, resultJSON: String) {
+    func resolveJS(callId: Int, resultJSON: String) {
         let js = "window.__coldvaultResolve && window.__coldvaultResolve(\(callId), \(resultJSON));"
         webView?.evaluateJavaScript(js, completionHandler: nil)
     }
 
-    fileprivate func rejectJS(callId: Int, code: Int, message: String) {
+    func rejectJS(callId: Int, code: Int, message: String) {
         let escaped = message
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "'", with: "\\'")
@@ -382,6 +401,28 @@ final class BrowserWebModel: NSObject, ObservableObject {
 
     func approveConnect(_ request: BrowserConnectRequest) {
         connectPrompt = nil
+        switch request.chain {
+        case "btc":
+            guard let account = bitcoinAccount else {
+                rejectJS(callId: request.callId, code: 4100, message: "No Bitcoin wallet")
+                return
+            }
+            connectedHosts.insert(chainKey("btc", request.host))
+            saveConnectedHosts()
+            resolveValue(request.callId, [account.address])
+            return
+        case "sol":
+            guard let address = solanaAddress, let key = SolanaAddress.decode(address) else {
+                rejectJS(callId: request.callId, code: 4100, message: "No Solana wallet")
+                return
+            }
+            connectedHosts.insert(chainKey("sol", request.host))
+            saveConnectedHosts()
+            resolveValue(request.callId, ["address": address, "publicKey": key.base64EncodedString()])
+            return
+        default:
+            break
+        }
         guard let address = walletManager?.walletConnectAddress else {
             rejectJS(callId: request.callId, code: 4100, message: WalletConnectError.noEVMWallet.localizedDescription)
             return
@@ -396,6 +437,9 @@ final class BrowserWebModel: NSObject, ObservableObject {
         connectPrompt = nil
         rejectJS(callId: request.callId, code: 4001, message: "User rejected the request")
     }
+
+    /// The ColdVault mark shown by sites next to the wallet's name.
+    static let walletIconSVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><rect width=\"64\" height=\"64\" rx=\"16\" fill=\"#111111\"/><circle cx=\"32\" cy=\"32\" r=\"16\" stroke=\"#ffffff\" stroke-width=\"4\" fill=\"none\"/><circle cx=\"32\" cy=\"32\" r=\"5\" fill=\"#ffffff\"/></svg>"
 
     private static func providerScript(chainHex: String, netVersion: String) -> String {
         """
@@ -577,6 +621,11 @@ extension BrowserWebModel: WKNavigationDelegate, WKUIDelegate {
               let callId = body["id"] as? Int,
               let method = body["method"] as? String else { return }
 
+        // A frame inside the page (an ad, another site) never speaks for the page.
+        guard message.frameInfo.isMainFrame else {
+            rejectJS(callId: callId, code: 4100, message: "Only the page itself can ask the wallet")
+            return
+        }
         let host = message.frameInfo.securityOrigin.host.lowercased()
         let proto = message.frameInfo.securityOrigin.`protocol`.lowercased()
         guard proto == "https" || host == "localhost" else {
@@ -649,9 +698,11 @@ extension BrowserWebModel: WKNavigationDelegate, WKUIDelegate {
                 rejectJS(callId: callId, code: 4100, message: WalletConnectError.noEVMWallet.localizedDescription)
                 return
             }
-            connectedHosts.insert(host)
-            saveConnectedHosts()
-            syncProviderState()
+            // A site signs only after it was connected (the user approved it), never on its own.
+            guard connectedHosts.contains(host) else {
+                rejectJS(callId: callId, code: 4100, message: "Unauthorized: connect first (eth_requestAccounts)")
+                return
+            }
             signPrompt = BrowserSignRequest(callId: callId, host: host, pageTitle: pageTitle, method: method, params: params)
 
         case "eth_blockNumber", "eth_getBalance", "eth_call", "eth_estimateGas",
@@ -692,7 +743,11 @@ extension BrowserWebModel: WKNavigationDelegate, WKUIDelegate {
             }
 
         default:
-            rejectJS(callId: callId, code: 4200, message: "Unsupported method: \(method)")
+            if method.hasPrefix("btc_") || method.hasPrefix("sol_") {
+                handleChainRPC(callId: callId, host: host, method: method, params: params)
+            } else {
+                rejectJS(callId: callId, code: 4200, message: "Unsupported method: \(method)")
+            }
         }
     }
 }
@@ -786,6 +841,10 @@ struct DappBrowserView: View {
         }
         .sheet(item: $webModel.signPrompt) { req in
             BrowserSignSheet(request: req, webModel: webModel)
+                .environmentObject(walletManager)
+        }
+        .sheet(item: $webModel.chainPrompt) { req in
+            BrowserChainSignSheet(request: req, webModel: webModel)
                 .environmentObject(walletManager)
         }
         .sheet(isPresented: $showQRScanner) {
@@ -1279,6 +1338,15 @@ private struct BrowserConnectSheet: View {
     @ObservedObject var webModel: BrowserWebModel
     @State private var working = false
 
+    /// The address the site will see, on the chain it asked for.
+    private var shownAddress: String? {
+        switch request.chain {
+        case "btc": return webModel.bitcoinAccount?.address
+        case "sol": return webModel.solanaAddress
+        default: return walletManager.walletConnectAddress
+        }
+    }
+
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
@@ -1312,7 +1380,7 @@ private struct BrowserConnectSheet: View {
                         Text(t("Account it will see", "Cuenta que verá"))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(Palette.secondary)
-                        if let address = walletManager.walletConnectAddress {
+                        if let address = shownAddress {
                             Text(walletManager.activeWallet?.bundle.name ?? "")
                                 .font(.system(size: 15, weight: .semibold))
                             Text(address)
