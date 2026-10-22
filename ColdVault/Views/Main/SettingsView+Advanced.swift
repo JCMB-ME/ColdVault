@@ -133,12 +133,15 @@ extension SettingsView {
             }
             Group {
                 SettingsSubheader(text: "Cold wallet")
-                Button { route = .server } label: {
-                    SettingsRow(title: t("Server", "Servidor"),
-                                value: ElectrumServerConfig.current?.host ?? t("Public", "Públicos"), chevron: true,
-                                icon: "server.rack")
+                // Your own Electrum server: bitcoin only.
+                if walletManager.activeCoin == .bitcoin {
+                    Button { route = .server } label: {
+                        SettingsRow(title: t("Server", "Servidor"),
+                                    value: ElectrumServerConfig.current?.host ?? t("Public", "Públicos"), chevron: true,
+                                    icon: "server.rack")
+                    }
+                    SettingsDivider(inset: 60)
                 }
-                SettingsDivider(inset: 60)
                 SettingsRow(title: walletManager.isEthereum ? "Testnet" : "Testnet4", icon: "testtube.2") {
                     if isSwitchingNetwork {
                         ProgressView()
@@ -160,14 +163,16 @@ extension SettingsView {
                             }
                     }
                 }
-                SettingsNote(text: t("Testnet re-derives your addresses (Face ID). Server: use your own node so public servers never see your addresses.",
-                                  "Testnet vuelve a derivar tus direcciones (Face ID). Servidor: usa tu propio nodo para que los servidores públicos nunca vean tus direcciones."))
+                SettingsNote(text: walletManager.activeCoin == .bitcoin
+                             ? t("Testnet re-derives your addresses (Face ID). Server: use your own node so public servers never see your addresses.",
+                                 "Testnet vuelve a derivar tus direcciones (Face ID). Servidor: usa tu propio nodo para que los servidores públicos nunca vean tus direcciones.")
+                             : t("Testnet uses the test networks of this coin; the same addresses.",
+                                 "Testnet usa las redes de prueba de esta moneda; las mismas direcciones."))
             }
         }
         // A sheet like Send: what the key is for, the link to get one free, the key.
         .sheet(item: $editingServiceKey) { service in
             ServiceKeySheet(service: service, current: serviceKey(service)) { setServiceKey(service, $0) }
-                .focusAppear()
                 .environmentObject(walletManager)
         }
         .alert(t("Breez API key", "API key de Breez"), isPresented: $showBreezKey) {

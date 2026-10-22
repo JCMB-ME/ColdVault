@@ -136,6 +136,8 @@ public struct DashboardView: View {
                 .tabViewStyle(.page(indexDisplayMode: .never))
             }
         }
+        // The browser sheet blurs the balance behind it, by how far it is up.
+        .modifier(BrowserBackdropBlur(maxBlur: focusBlur))
         .onAppear { showBalancePage() }
         .onChange(of: scenePhase) { phase in
             if phase == .background {
@@ -172,9 +174,12 @@ public struct DashboardView: View {
                 .focusAppear()
                 .environmentObject(walletManager)
         }
-        .sheet(isPresented: $showBrowserSheet) {
+        .sheet(isPresented: $showBrowserSheet, onDismiss: {
+            withAnimation(.easeOut(duration: 0.2)) { BrowserBackdrop.shared.progress = 0 }
+        }) {
             DappBrowserView(webModel: browserModel, onClose: { showBrowserSheet = false },
                             onDragChanged: { _ in }, onDragEnded: { _, _ in }, asSheet: true)
+                .background(SheetPositionReader().allowsHitTesting(false))
                 .focusAppear()
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
