@@ -17,6 +17,9 @@ struct ServiceKeySheet: View {
 
     @State private var draft = ""
     @State private var reveal = false
+    /// The quick check of the key typed or pasted: nil while there is nothing to check.
+    @State private var checking = false
+    @State private var result: ServiceKeys.TestResult?
     @FocusState private var focused: Bool
 
     private var lang: AppLanguage { walletManager.appLanguage }
@@ -110,6 +113,7 @@ struct ServiceKeySheet: View {
                         .frame(height: 48)
                         .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .fill(Color(uiColor: .systemBackground).opacity(0.9)))
+                        checkLine
                         Text(t("Kept in this iPhone's Keychain. Without a key the app uses the free public services.",
                                "Se guarda en el Keychain de este iPhone. Sin clave, la app usa los servicios públicos gratuitos."))
                             .font(.system(size: 12))
@@ -151,5 +155,53 @@ struct ServiceKeySheet: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .onAppear { draft = current }
+        // A moment after the key changes, one small request tells whether the service accepts it.
+        .task(id: trimmed) {
+            result = nil
+            guard !trimmed.isEmpty else { checking = false; return }
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.2)) { checking = true }
+            let answer = await ServiceKeys.test(service, key: trimmed)
+            guard !Task.isCancelled else { return }
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                checking = false
+                result = answer
+            }
+            if answer == .works { UINotificationFeedbackGenerator().notificationOccurred(.success) }
+        }
+    }
+
+    /// Checking… / it works / it was refused / no answer, in the app's own small row style.
+    @ViewBuilder
+    private var checkLine: some View {
+        if checking {
+            HStack(spacing: 8) {
+                ProgressView().scaleEffect(0.8)
+                Text(t("Checking the key…", "Comprobando la clave…"))
+            }
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(Palette.secondary)
+            .transition(.opacity)
+        } else if let result {
+            Group {
+                switch result {
+                case .works:
+                    Label(t("Connection works", "Conexión correcta"), systemImage: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                case .rejected:
+                    Label(t("\(service.title) does not accept this key", "\(service.title) no acepta esta clave"),
+                          systemImage: "xmark.circle.fill")
+                        .foregroundColor(.red)
+                case .unreachable:
+                    Label(t("Could not check it now (no answer). You can save it anyway.",
+                            "No se pudo comprobar ahora (sin respuesta). Puedes guardarla igual."),
+                          systemImage: "exclamationmark.circle.fill")
+                        .foregroundColor(.orange)
+                }
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .leading)))
+        }
     }
 }

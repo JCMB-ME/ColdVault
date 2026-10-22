@@ -157,6 +157,67 @@ public enum ServiceKeys {
         }
     }
 
+    enum TestResult { case works, rejected, unreachable }
+
+    /// One small request with `key` (at most 6 s): does the service accept it?
+    static func test(_ service: Service, key: String) async -> TestResult {
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, let encoded = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return .rejected }
+        var request: URLRequest
+        func rpc(_ url: String, _ method: String) -> URLRequest? {
+            guard let endpoint = URL(string: url) else { return nil }
+            var request = URLRequest(url: endpoint)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 1, "method": method, "params": []])
+            return request
+        }
+        switch service {
+        case .tronGrid:
+            guard let url = URL(string: "https://api.trongrid.io/wallet/getnowblock") else { return .unreachable }
+            request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue(key, forHTTPHeaderField: "TRON-PRO-API-KEY")
+        case .toncenter:
+            guard let url = URL(string: "https://toncenter.com/api/v2/getMasterchainInfo") else { return .unreachable }
+            request = URLRequest(url: url)
+            request.setValue(key, forHTTPHeaderField: "X-API-Key")
+        case .tonapi:
+            guard let url = URL(string: "https://tonapi.io/v2/status") else { return .unreachable }
+            request = URLRequest(url: url)
+            request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
+        case .walletConnect:
+            guard let made = rpc("https://rpc.walletconnect.org/v1/?chainId=eip155:1&projectId=\(encoded)", "eth_chainId") else { return .unreachable }
+            request = made
+        case .alchemy:
+            guard let made = rpc("https://eth-mainnet.g.alchemy.com/v2/\(encoded)", "eth_blockNumber") else { return .unreachable }
+            request = made
+        case .helius:
+            guard let made = rpc("https://mainnet.helius-rpc.com/?api-key=\(encoded)", "getHealth") else { return .unreachable }
+            request = made
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 6
+        config.timeoutIntervalForResource = 6
+        TorProxy.apply(to: config)
+        let session = URLSession(configuration: config)
+        defer { session.finishTasksAndInvalidate() }
+        guard let (data, response) = try? await session.data(for: request),
+              let status = (response as? HTTPURLResponse)?.statusCode else { return .unreachable }
+        switch status {
+        case 200:
+            // A JSON-RPC answer must carry a result, not an error about the key.
+            if let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], object["error"] != nil,
+               object["result"] == nil, [.walletConnect, .alchemy, .helius].contains(service) {
+                return .rejected
+            }
+            return .works
+        case 401, 403: return .rejected
+        case 400 where service == .walletConnect: return .rejected
+        default: return .unreachable
+        }
+    }
+
     /// Adds the key header a service expects (nothing when no key is set).
     static func authorize(_ request: inout URLRequest) {
         guard let host = request.url?.host?.lowercased() else { return }
