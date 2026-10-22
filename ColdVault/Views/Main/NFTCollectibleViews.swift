@@ -6,7 +6,7 @@
 //   • CollectibleRevealCard: opens like the Receive card. The picture alone, as large as the card
 //     allows and centered; a tap raises it and the details come in one after another. It also has
 //     the Download (Photos) and Profile picture (the wallet's picture) buttons.
-//   • NFTFolder: the NFTs of one collection, shown as a folder in the gallery.
+//   • NFTFolder: the NFTs of one collection, shown as a folder in the gallery (ordinals too).
 //
 
 import SwiftUI
@@ -269,19 +269,31 @@ extension NFTFolder {
     }
 }
 
-/// A folder in the grid: the first pictures stacked, the collection's name and how many NFTs it holds.
+/// A folder of NFTs in the grid.
 struct NFTFolderTile: View {
-    @EnvironmentObject var walletManager: WalletManager
     let folder: NFTFolder
 
-    private var lang: AppLanguage { walletManager.appLanguage }
-    private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+    var body: some View {
+        CollectibleFolderTile(name: folder.name, count: folder.items.count, unit: "NFT", units: "NFTs",
+                              thumbs: folder.items.prefix(3).map { CollectibleThumb(id: $0.id, url: $0.imageURL, icon: "photo") })
+    }
+}
+
+/// A folder in the grid (NFTs or ordinals): the first pictures stacked, the collection's name and
+/// how many it holds.
+struct CollectibleFolderTile: View {
+    let name: String
+    let count: Int
+    /// "NFT" / "NFTs", "Ordinal" / "Ordinals".
+    let unit: String
+    let units: String
+    let thumbs: [CollectibleThumb]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack {
-                ForEach((0..<min(3, folder.items.count)).reversed(), id: \.self) { index in
-                    NFTImage(url: folder.items[index].imageURL)
+                ForEach((0..<min(3, thumbs.count)).reversed(), id: \.self) { index in
+                    thumb(thumbs[index])
                         .aspectRatio(1, contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -297,13 +309,13 @@ struct NFTFolderTile: View {
                 Image(systemName: "folder.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(Palette.secondary)
-                Text(folder.name)
+                Text(name)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Color(uiColor: .label))
                     .lineLimit(1)
             }
             .padding(.horizontal, 4)
-            Text(folder.items.count == 1 ? t("1 NFT", "1 NFT") : t("\(folder.items.count) NFTs", "\(folder.items.count) NFTs"))
+            Text("\(count) \(count == 1 ? unit : units)")
                 .font(.system(size: 11))
                 .foregroundColor(Palette.secondary)
                 .padding(.horizontal, 4)
@@ -311,5 +323,20 @@ struct NFTFolderTile: View {
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+    }
+
+    /// The picture, or the type's icon (text inscriptions…).
+    @ViewBuilder
+    private func thumb(_ item: CollectibleThumb) -> some View {
+        if item.url != nil {
+            NFTImage(url: item.url)
+        } else {
+            ZStack {
+                Rectangle().fill(Color(uiColor: .systemBackground).opacity(0.6))
+                Image(systemName: item.icon)
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundColor(Palette.secondary)
+            }
+        }
     }
 }

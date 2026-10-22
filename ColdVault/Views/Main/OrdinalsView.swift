@@ -15,6 +15,8 @@ struct OrdinalsView: View {
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var selected: Inscription?
+    /// The collection folder that is open (nil: the grid of folders and single inscriptions).
+    @State private var openFolderID: String?
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -26,13 +28,6 @@ struct OrdinalsView: View {
             GlassAmbientBackground()
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 16) {
-                    Text(t("Inscriptions on this wallet. Payments never spend the small coins that carry them.",
-                           "Inscripciones de esta billetera. Los envíos nunca gastan las monedas pequeñas que las llevan."))
-                        .font(.system(size: 13))
-                        .foregroundColor(Palette.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 12)
-
                     if walletManager.isTestnet {
                         message("testtube.2", t("Mainnet only", "Solo en mainnet"),
                                 t("Ordinals are read from ordinals.com, which indexes the real bitcoin network.",
@@ -43,36 +38,41 @@ struct OrdinalsView: View {
                         message("exclamationmark.triangle", t("Couldn't load", "No se pudo cargar"), error)
                     } else if items.isEmpty {
                         message("photo.on.rectangle.angled", t("No inscriptions yet", "Aún no tienes inscripciones"),
-                                t("Receive ordinals on your Taproot (bc1p) address.", "Recibe ordinals en tu dirección Taproot (bc1p)."))
-                    } else {
-                        // One section per collection (biggest first); the rest at the end.
-                        ForEach(groups, id: \.name) { group in
-                            VStack(alignment: .leading, spacing: 10) {
-                                HStack {
-                                    Text(group.name)
-                                        .font(.system(size: 15, weight: .semibold))
-                                        .foregroundColor(Color(uiColor: .label))
-                                        .lineLimit(1)
-                                    Spacer()
-                                    Text("\(group.items.count)")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundColor(Palette.secondary)
-                                }
-                                .padding(.horizontal, 4)
-                                LazyVGrid(columns: columns, spacing: 12) {
-                                    ForEach(group.items) { item in
-                                        Button {
-                                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                            selected = item
-                                        } label: {
-                                            tile(item)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .transition(.collectibleVanish)
-                                    }
-                                }
-                            }
+                                t("Receive ordinals on your Taproot (bc1p) address. Payments never spend the small coins that carry them.",
+                                  "Recibe ordinals en tu dirección Taproot (bc1p). Los envíos nunca gastan las monedas pequeñas que los llevan."))
+                    } else if let folder = openFolder {
+                        Button(action: closeFolder) {
+                            Label(t("Collections", "Colecciones"), systemImage: "chevron.left")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(Color(uiColor: .label))
+                                .padding(.horizontal, 14)
+                                .frame(height: 36)
+                                .background(Capsule().fill(SettingsStyle.groupFill))
                         }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        LazyVGrid(columns: columns, spacing: 12) {
+                            ForEach(folder.items) { item in inscriptionButton(item) }
+                        }
+                        .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                    } else {
+                        // Like the NFTs: collections of two or more are folders (biggest first), the rest single.
+                        let layout = split
+                        LazyVGrid(columns: columns, spacing: 12) {
+                            ForEach(layout.folders) { folder in
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { openFolderID = folder.id }
+                                } label: {
+                                    CollectibleFolderTile(name: folder.name, count: folder.items.count,
+                                                          unit: "Ordinal", units: "Ordinals",
+                                                          thumbs: folder.items.prefix(3).map(thumb))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            ForEach(layout.singles) { item in inscriptionButton(item) }
+                        }
+                        .transition(.opacity.combined(with: .scale(scale: 0.97)))
                     }
                 }
                 .padding(.horizontal, 20)
@@ -81,7 +81,7 @@ struct OrdinalsView: View {
             }
             .refreshable { await load(force: true) }
             .safeAreaInset(edge: .top, spacing: 0) {
-                SheetHeader(title: "Ordinals")
+                SheetHeader(title: openFolder?.name ?? "Ordinals")
             }
         }
         .presentationDetents([.large])
@@ -96,28 +96,63 @@ struct OrdinalsView: View {
         }
     }
 
-    private struct Group {
+    private struct Folder: Identifiable {
+        let id: String
         let name: String
         let items: [Inscription]
     }
 
-    /// One group per collection (biggest first), then the inscriptions without one.
-    private var groups: [Group] {
-        var byName = [String: [Inscription]]()
-        var rest = [Inscription]()
+    /// Collections of two or more inscriptions become folders (biggest first); the rest stay single.
+    private var split: (folders: [Folder], singles: [Inscription]) {
+        var order = [String]()
+        var buckets = [String: [Inscription]]()
+        var singles = [Inscription]()
         for item in items {
-            if let name = item.collection { byName[name, default: []].append(item) } else { rest.append(item) }
+            guard let name = item.collection else { singles.append(item); continue }
+            let key = name.lowercased()
+            if buckets[key] == nil { order.append(key) }
+            buckets[key, default: []].append(item)
         }
-        var result: [Group] = byName.map { Group(name: $0.key, items: $0.value) }
-        result.sort { lhs, rhs in
+        var folders = [Folder]()
+        for key in order {
+            guard let list = buckets[key] else { continue }
+            if list.count >= 2 {
+                folders.append(Folder(id: key, name: list[0].collection ?? "", items: list))
+            } else {
+                singles += list
+            }
+        }
+        folders.sort { lhs, rhs in
             if lhs.items.count != rhs.items.count { return lhs.items.count > rhs.items.count }
             return lhs.name < rhs.name
         }
-        if !rest.isEmpty {
-            let title = result.isEmpty ? t("Inscriptions", "Inscripciones") : t("Other", "Otras")
-            result.append(Group(name: title, items: rest))
+        return (folders, singles)
+    }
+
+    private var openFolder: Folder? {
+        guard let id = openFolderID else { return nil }
+        return split.folders.first { $0.id == id }
+    }
+
+    private func closeFolder() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { openFolderID = nil }
+    }
+
+    private func thumb(_ item: Inscription) -> CollectibleThumb {
+        CollectibleThumb(id: item.id, url: item.isImage ? item.contentURL : nil,
+                         icon: item.contentType.hasPrefix("text/") ? "doc.text" : "cube")
+    }
+
+    private func inscriptionButton(_ item: Inscription) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            selected = item
+        } label: {
+            tile(item)
         }
-        return result
+        .buttonStyle(.plain)
+        .transition(.collectibleVanish)
     }
 
     private func tile(_ item: Inscription) -> some View {
