@@ -92,7 +92,11 @@ struct NFTGalleryView: View {
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
-        .task { await load() }
+        .task {
+            await load()
+            await load(force: true)
+        }
+        .onChange(of: walletManager.collectiblesVersion) { _ in Task { await load() } }
         .onChange(of: walletManager.sentCollectibleCount) { _ in
             let sent = walletManager.recentlySentCollectibles
             withAnimation(.spring(response: 0.75, dampingFraction: 0.86)) { items.removeAll { sent.contains($0.id) } }

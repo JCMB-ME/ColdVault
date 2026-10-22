@@ -355,7 +355,11 @@ struct EVMAssetsCard: View {
                               : (nfts?.isEmpty == true ? t("No NFTs on \(networkName) yet", "Aún no tienes NFTs en \(networkName)") : nil)) {
             showNFTs = true
         }
-        .task(id: walletManager.activeRecord?.primaryAddress) { await walletManager.loadHomeNFTs() }
+        .task(id: walletManager.activeRecord?.primaryAddress) {
+            // The saved list at once, then the network's (something may have arrived meanwhile).
+            await walletManager.loadHomeNFTs()
+            await walletManager.loadHomeNFTs(force: true)
+        }
     }
 
     // MARK: Rows

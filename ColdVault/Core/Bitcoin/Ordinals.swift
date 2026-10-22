@@ -181,7 +181,7 @@ extension WalletManager {
     /// The inscriptions of the account, from the phone when the list is less than 15
     /// minutes old (`force`: pull to refresh).
     public func loadInscriptions(force: Bool = false) async throws -> [Inscription] {
-        let sent = recentlySentCollectibles
+        let sent = recentlySentCollectibles  // this wallet's, for 30 minutes
         return try await loadAllInscriptions(force: force).filter { !sent.contains($0.id) }
     }
 

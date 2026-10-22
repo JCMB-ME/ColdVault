@@ -3,8 +3,9 @@
 //  ColdVault
 //
 //  An NFT or ordinal that was just sent leaves its list with the focus effect of the sheets
-//  (Receive, Send) played backwards: it blurs, shrinks, fades and drifts up. It stays out of the
-//  lists for two hours, while the indexers have not caught up with the transfer.
+//  (Receive, Send) played backwards: it blurs, shrinks, fades and drifts up. On TON, Solana and
+//  bitcoin it stays out of that wallet's lists for 30 minutes, while the indexers have not caught up
+//  with the transfer (on Ethereum, Base and Polygon ownership is read on chain: no mark needed).
 //
 
 import SwiftUI
@@ -33,19 +34,26 @@ extension AnyTransition {
 extension WalletManager {
     private static let sentKey = "sentCollectibles"
 
-    /// NFTs and inscriptions sent from this iPhone in the last two hours (id → when).
+    private static let sentLifetime: TimeInterval = 30 * 60
+
+    /// NFTs and inscriptions this wallet sent in the last 30 minutes. Only this wallet's: another
+    /// wallet on this iPhone that received one shows it.
     var recentlySentCollectibles: Set<String> {
+        guard let scope = collectiblesKey else { return [] }
         let saved = UserDefaults.standard.dictionary(forKey: WalletManager.sentKey) as? [String: Double] ?? [:]
         let now = Date().timeIntervalSince1970
-        return Set(saved.filter { now - $0.value < 7200 }.keys)
+        let prefix = scope + "|"
+        return Set(saved.filter { now - $0.value < WalletManager.sentLifetime && $0.key.hasPrefix(prefix) }
+            .keys.map { String($0.dropFirst(prefix.count)) })
     }
 
-    /// Takes a sent NFT or inscription out of every list (call it inside withAnimation).
+    /// Takes a sent NFT or inscription out of the lists (call it inside withAnimation).
     func markCollectibleSent(_ id: String) {
+        guard let scope = collectiblesKey else { return }
         var saved = UserDefaults.standard.dictionary(forKey: WalletManager.sentKey) as? [String: Double] ?? [:]
         let now = Date().timeIntervalSince1970
-        saved = saved.filter { now - $0.value < 7200 }
-        saved[id] = now
+        saved = saved.filter { now - $0.value < WalletManager.sentLifetime }
+        saved[scope + "|" + id] = now
         UserDefaults.standard.set(saved, forKey: WalletManager.sentKey)
         sentCollectibleCount += 1
         homeNFTs?.removeAll { $0.id == id }

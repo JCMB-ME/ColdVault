@@ -416,7 +416,10 @@ extension WalletManager {
             }
         }
         addLocalPending(hash: hash, plan: plan)
-        Task { await refreshAll() }
+        Task {
+            await refreshAll()
+            await refreshCollectibles()
+        }
         return hash
     }
 

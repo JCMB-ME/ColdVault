@@ -238,6 +238,7 @@ extension WalletManager {
                 guard let snapshot = await self.activityFingerprint(network) else { continue }
                 if let last, last != snapshot, lastNetwork == network {
                     await self.refreshAll()
+                    Task { await self.refreshCollectibles() }
                 }
                 last = snapshot
                 lastNetwork = network
@@ -256,13 +257,76 @@ extension WalletManager {
         case .ton:
             return try? await TonAPI(isTestnet: testnet).latestEventID(owner)
         case .solana:
-            return (try? await SolanaAPI(isTestnet: testnet).balance(owner)).map { "\($0)" }
+            // The SOL balance does not move when a token or an NFT arrives: the newest signature does.
+            let api = SolanaAPI(isTestnet: testnet)
+            guard let balance = try? await api.balance(owner),
+                  let newest = try? await api.signatures(owner, limit: 1) else { return nil }
+            return "\(balance)|\(newest.first?.signature ?? "")"
         default:
             let contracts = KnownToken.stablecoins(testnet: testnet).filter { $0.chain == chain }.map { $0.contract }
+            async let received = receivedMark(chain, owner: owner, testnet: testnet)
             guard let found = try? await EthereumRPC(isTestnet: testnet, chain: chain).balances(owner: owner, contracts: contracts) else {
                 return nil
             }
-            return "\(found.native)|" + contracts.map { "\(found.tokens[$0] ?? .zero)" }.joined(separator: ",")
+            return "\(found.native)|" + contracts.map { "\(found.tokens[$0] ?? .zero)" }.joined(separator: ",") + "|" + (await received)
+        }
+    }
+
+    /// Where each watched account was read up to (block) and the last transfer it received.
+    private static var receivedMarks = [String: (block: UInt64, mark: String)]()
+
+    /// The newest transfer received (any ERC-20, ERC-721 or ERC-1155) since the last check, read from
+    /// the node's logs: what the sender's gas pays leaves the receiver's coin balance untouched, so
+    /// a token or an NFT that arrives only shows here.
+    private func receivedMark(_ chain: EVMChain, owner: String, testnet: Bool) async -> String {
+        let key = "\(chain.rawValue)|\(testnet)|\(owner.lowercased())"
+        let previous = WalletManager.receivedMarks[key]
+        let rpc = EthereumRPC(isTestnet: testnet, chain: chain)
+        guard let previous else {
+            // First look: where the chain is now.
+            if let hex = try? await rpc.call("eth_blockNumber", []) as? String, let block = UInt64(hex.dropFirst(2), radix: 16) {
+                WalletManager.receivedMarks[key] = (block, "")
+            }
+            return ""
+        }
+        let to = "0x" + String(repeating: "0", count: 24) + String(owner.lowercased().dropFirst(2))
+        let transfer = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+        let single = "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62"
+        let batch = "0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb"
+        let from = "0x" + String(previous.block + 1, radix: 16)
+        let tokens: [String: Any] = ["fromBlock": from, "toBlock": "latest", "topics": [transfer, NSNull(), to]]
+        let multi: [String: Any] = ["fromBlock": from, "toBlock": "latest", "topics": [[single, batch], NSNull(), NSNull(), to]]
+        guard let answers = try? await rpc.batch([(method: "eth_blockNumber", params: []),
+                                                  (method: "eth_getLogs", params: [tokens]),
+                                                  (method: "eth_getLogs", params: [multi])]),
+              answers.count == 3, let hex = answers[0] as? String, let block = UInt64(hex.dropFirst(2), radix: 16) else {
+            return previous.mark
+        }
+        guard let first = answers[1] as? [[String: Any]], let second = answers[2] as? [[String: Any]] else {
+            // No logs answer (too long a range after a while away): start again from the chain's head.
+            if block > previous.block + 2_000 { WalletManager.receivedMarks[key] = (block, previous.mark) }
+            return previous.mark
+        }
+        let mark = (first + second).compactMap { $0["transactionHash"] as? String }.last ?? previous.mark
+        WalletManager.receivedMarks[key] = (max(block, previous.block), mark)
+        return mark
+    }
+
+    /// Something moved on the account: the NFT / ordinal lists are read again now, and once more a
+    /// little later (the indexers that list them follow the chain by a few seconds).
+    func refreshCollectibles() async {
+        guard let key = collectiblesKey else { return }
+        for pass in 0..<2 {
+            if pass == 1 { try? await Task.sleep(nanoseconds: 20_000_000_000) }
+            guard collectiblesKey == key else { return }
+            if isEthereum {
+                guard supportsNFTs else { return }
+                await loadHomeNFTs(force: true)
+            } else {
+                guard activeCoin == .bitcoin, !isTestnet else { return }
+                await loadHomeInscriptions(force: true)
+            }
+            collectiblesVersion += 1
         }
     }
 
@@ -411,7 +475,7 @@ extension WalletManager {
 
     // MARK: - Home blocks (NFTs / ordinals)
 
-    private var collectiblesKey: String? {
+    var collectiblesKey: String? {
         activeRecord.map { WalletManager.cacheKey($0.primaryAddress, $0.isTestnet, $0.coinKind) }
     }
 
@@ -568,8 +632,9 @@ extension WalletManager {
     /// The NFT list of the account, from the phone when it is less than 15 minutes old
     /// (`force`: pull to refresh).
     public func loadNFTs(force: Bool = false) async -> [EVMNFT] {
+        // Ethereum, Base and Polygon read ownership on chain; TON and Solana trust an index that lags.
         let sent = recentlySentCollectibles
-        return await loadAllNFTs(force: force).filter { !sent.contains($0.id) }
+        return await loadAllNFTs(force: force).filter { $0.chain.isEVM || !sent.contains($0.id) }
     }
 
     private func loadAllNFTs(force: Bool) async -> [EVMNFT] {
