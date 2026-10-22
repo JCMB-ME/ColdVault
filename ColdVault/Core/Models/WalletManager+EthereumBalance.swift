@@ -482,6 +482,8 @@ extension WalletManager {
     /// NFTs for the home block (once per account unless `force`).
     public func loadHomeNFTs(force: Bool = false) async {
         guard let key = collectiblesKey, force || homeNFTs == nil || homeCollectiblesKey != key else { return }
+        // Another wallet, or the first look: what was saved shows at once.
+        if homeNFTs == nil || homeCollectiblesKey != key { homeNFTs = savedNFTs() }
         homeCollectiblesKey = key
         let list = await loadNFTs(force: force)
         guard collectiblesKey == key else { return }
@@ -491,8 +493,13 @@ extension WalletManager {
     /// Inscriptions for the home block (mainnet bitcoin; once per account unless `force`).
     public func loadHomeInscriptions(force: Bool = false) async {
         guard let key = collectiblesKey, force || homeInscriptions == nil || homeCollectiblesKey != key else { return }
+        if homeInscriptions == nil || homeCollectiblesKey != key { homeInscriptions = savedInscriptions() }
         homeCollectiblesKey = key
-        let list = (try? await loadInscriptions(force: force)) ?? []
+        // No answer: what is shown stays (an empty list only when there is nothing at all).
+        guard let list = try? await loadInscriptions(force: force) else {
+            if collectiblesKey == key && homeInscriptions == nil { homeInscriptions = [] }
+            return
+        }
         guard collectiblesKey == key else { return }
         homeInscriptions = list
     }
@@ -678,8 +685,34 @@ extension WalletManager {
         }
         let list = await fetchNFTs()
         guard activeRecord?.primaryAddress == record.primaryAddress else { return list }
+        // No NFTs where some were saved is most often a service that did not answer (an empty list
+        // looks the same): the saved ones stay, as long as the chain does not say they left.
+        if list.isEmpty, let saved = savedNFTs(), !saved.isEmpty {
+            return await stillOwned(saved, record: record)
+        }
         WalletManager.writeCollectibles(list.map(CachedNFT.init), name: name)
         return list
+    }
+
+    /// The NFT list saved on the phone, however old (shown at once while the network answers).
+    func savedNFTs() -> [EVMNFT]? {
+        guard let record = activeRecord, record.coinKind.isAccountBased else { return nil }
+        let saved: [CachedNFT]? = WalletManager.readCollectibles(WalletManager.collectiblesFile(record, kind: "nfts"),
+                                                                 maxAge: .infinity)
+        let sent = recentlySentCollectibles
+        return saved?.compactMap { $0.nft }.filter { !sent.contains($0.id) }
+    }
+
+    /// The saved NFTs the chain does not say are gone (Ethereum, Base, Polygon are asked; an
+    /// answer that does not come keeps the NFT, and other networks keep theirs).
+    private func stillOwned(_ saved: [EVMNFT], record: StoredWalletRecord) async -> [EVMNFT] {
+        var kept = saved.filter { !$0.chain.isEVM }
+        for chain in Set(saved.map(\.chain)) where chain.isEVM {
+            guard let owner = address(on: chain, record: record) else { continue }
+            kept += await ownedOnChain(saved.filter { $0.chain == chain }, chain: chain, owner: owner, testnet: record.isTestnet)
+        }
+        let order = Dictionary(saved.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
+        return kept.sorted { (order[$0.id] ?? 0) < (order[$1.id] ?? 0) }
     }
 
     /// The NFTs of a wallet (the one open unless another is given).

@@ -215,6 +215,15 @@ extension WalletManager {
         return list
     }
 
+    /// The inscription list saved on the phone, however old (shown at once while the network answers).
+    func savedInscriptions() -> [Inscription]? {
+        guard let record = activeRecord, record.coinKind == .bitcoin, !record.isTestnet else { return nil }
+        let saved: [CachedInscription]? = WalletManager.readCollectibles(WalletManager.collectiblesFile(record, kind: "inscriptions"),
+                                                                         maxAge: .infinity)
+        let sent = recentlySentCollectibles
+        return saved?.map { $0.inscription }.filter { !sent.contains($0.id) }
+    }
+
     private func fetchInscriptions() async throws -> [Inscription] {
         guard let record = activeRecord, record.coinKind == .bitcoin, !record.isTestnet else { return [] }
         if usesAddressRotation && fundedAddresses.isEmpty { await refreshBalance() }

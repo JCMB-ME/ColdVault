@@ -357,7 +357,6 @@ struct EVMAssetsCard: View {
         }
         .task(id: walletManager.activeRecord?.primaryAddress) {
             // The saved list at once, then the network's (something may have arrived meanwhile).
-            await walletManager.loadHomeNFTs()
             await walletManager.loadHomeNFTs(force: true)
         }
     }

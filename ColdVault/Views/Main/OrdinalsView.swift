@@ -87,7 +87,10 @@ struct OrdinalsView: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .task {
-            await load()
+            if let saved = walletManager.savedInscriptions(), !saved.isEmpty {
+                items = saved
+                isLoading = false
+            }
             await load(force: true)
         }
         .onChange(of: walletManager.collectiblesVersion) { _ in Task { await load() } }
@@ -216,10 +219,12 @@ struct OrdinalsView: View {
     private func load(force: Bool = false) async {
         guard !walletManager.isTestnet else { isLoading = false; return }
         do {
-            items = try await walletManager.loadInscriptions(force: force)
+            let list = try await walletManager.loadInscriptions(force: force)
+            withAnimation(.easeInOut(duration: 0.25)) { items = list }
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            // No answer: the list already shown stays; the error only when there is nothing to show.
+            if items.isEmpty { errorMessage = error.localizedDescription }
         }
         isLoading = false
     }
@@ -341,7 +346,6 @@ struct OrdinalsHomeCard: View {
         }
         .task(id: walletManager.activeRecord?.primaryAddress) {
             guard !walletManager.isTestnet else { return }
-            await walletManager.loadHomeInscriptions()
             await walletManager.loadHomeInscriptions(force: true)
         }
         .sheet(isPresented: $showOrdinals) {

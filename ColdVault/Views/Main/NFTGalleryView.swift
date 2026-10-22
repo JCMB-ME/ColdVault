@@ -93,7 +93,13 @@ struct NFTGalleryView: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .task {
-            await load()
+            if let saved = walletManager.savedNFTs() {
+                let shown = saved.filter { $0.chain == walletManager.activeNetwork }
+                if !shown.isEmpty {
+                    items = shown
+                    isLoading = false
+                }
+            }
             await load(force: true)
         }
         .onChange(of: walletManager.collectiblesVersion) { _ in Task { await load() } }
@@ -156,8 +162,10 @@ struct NFTGalleryView: View {
 
     private func load(force: Bool = false) async {
         let all = await walletManager.loadNFTs(force: force)
-        items = all.filter { $0.chain == walletManager.activeNetwork }
-        isLoading = false
+        withAnimation(.easeInOut(duration: 0.25)) {
+            items = all.filter { $0.chain == walletManager.activeNetwork }
+            isLoading = false
+        }
     }
 }
 
