@@ -4,7 +4,7 @@
 //
 //  Built-in Web3 & dApp Browser opened by scrolling down past the bottom of the
 //  balance screen. Includes an injected EIP-1193 / EIP-6963 provider (window.ethereum),
-//  WalletConnect deep-link interception, curated dApp directory, bookmarks, and
+//  WalletConnect deep-link interception, curated dApp directory, bookmarks, tabs, and
 //  interactive vertical focus transition back to the balance page.
 //
 
@@ -14,6 +14,18 @@ import Network
 import Combine
 
 // MARK: - Models
+
+/// One browser tab: its own page (and history), kept while the app runs. Tabs share the private
+/// site data of the browser.
+struct BrowserTab: Identifiable {
+    let id = UUID()
+    var webView: WKWebView?
+    var title = ""
+    var url: URL?
+    var showingPage = false
+    /// A picture of the page, for the tab list.
+    var snapshot: UIImage?
+}
 
 struct BrowserBookmark: Identifiable, Codable, Equatable {
     var id: String { url }
@@ -119,6 +131,11 @@ final class BrowserWebModel: NSObject, ObservableObject {
     @Published var recents: [BrowserBookmark] = []
     @Published var connectedHosts: Set<String> = []
 
+    /// The open tabs; the one on screen is `activeTabID` (its page is `webView`).
+    @Published var tabs: [BrowserTab]
+    @Published var activeTabID: UUID
+    static let maxTabs = 12
+
     weak var walletManager: WalletManager?
     fileprivate(set) var webView: WKWebView?
     private var kvoTokens: [NSKeyValueObservation] = []
@@ -129,6 +146,9 @@ final class BrowserWebModel: NSObject, ObservableObject {
     static let handlerName = "coldvaultEthereum"
 
     override init() {
+        let first = BrowserTab()
+        tabs = [first]
+        activeTabID = first.id
         super.init()
         loadPersistedState()
     }
@@ -326,6 +346,14 @@ final class BrowserWebModel: NSObject, ObservableObject {
         view.backgroundColor = .clear
         view.scrollView.backgroundColor = .clear
 
+        bind(view)
+        self.webView = view
+        if let index = tabs.firstIndex(where: { $0.id == activeTabID }) { tabs[index].webView = view }
+        return view
+    }
+
+    /// Follows the page on screen (address, title, loading, back / forward).
+    private func bind(_ view: WKWebView) {
         kvoTokens = [
             view.observe(\.url, options: [.new]) { [weak self] wv, _ in
                 let newURL = wv.url
@@ -368,9 +396,80 @@ final class BrowserWebModel: NSObject, ObservableObject {
                 }
             }
         ]
+    }
 
-        self.webView = view
-        return view
+    // MARK: - Tabs
+
+    var activeTabIndex: Int? { tabs.firstIndex { $0.id == activeTabID } }
+
+    /// Saves the tab on screen into the list (and a picture of its page, for the tab list).
+    func storeActiveTab() {
+        guard let index = activeTabIndex else { return }
+        tabs[index].webView = webView
+        tabs[index].title = pageTitle
+        tabs[index].url = currentURL
+        tabs[index].showingPage = isShowingWebPage
+        guard isShowingWebPage, let view = webView, view.bounds.width > 0 else { return }
+        let id = activeTabID
+        let options = WKSnapshotConfiguration()
+        options.snapshotWidth = 360
+        view.takeSnapshot(with: options) { [weak self] image, _ in
+            Task { @MainActor in
+                guard let self, let image, let index = self.tabs.firstIndex(where: { $0.id == id }) else { return }
+                self.tabs[index].snapshot = image
+            }
+        }
+    }
+
+    func selectTab(_ id: UUID) {
+        guard id != activeTabID else { return }
+        storeActiveTab()
+        activateTab(id)
+    }
+
+    func newTab() {
+        guard tabs.count < Self.maxTabs else { return }
+        storeActiveTab()
+        let tab = BrowserTab()
+        tabs.append(tab)
+        activateTab(tab.id)
+    }
+
+    func closeTab(_ id: UUID) {
+        guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        if let view = tabs[index].webView {
+            view.stopLoading()
+            view.navigationDelegate = nil
+            view.uiDelegate = nil
+            view.configuration.userContentController.removeScriptMessageHandler(forName: Self.handlerName)
+            view.removeFromSuperview()
+        }
+        let wasActive = id == activeTabID
+        tabs.remove(at: index)
+        if tabs.isEmpty { tabs.append(BrowserTab()) }
+        if wasActive { activateTab(tabs[min(index, tabs.count - 1)].id) }
+    }
+
+    func closeAllTabs() {
+        for id in tabs.map(\.id) { closeTab(id) }
+    }
+
+    /// Puts a tab on screen: its page becomes `webView` and the bars follow it.
+    private func activateTab(_ id: UUID) {
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        activeTabID = id
+        webView = tab.webView
+        kvoTokens = []
+        if let view = tab.webView { bind(view) }
+        currentURL = tab.webView?.url ?? tab.url
+        pageTitle = tab.webView?.title ?? tab.title
+        isShowingWebPage = tab.showingPage
+        isLoading = tab.webView?.isLoading ?? false
+        estimatedProgress = tab.webView?.estimatedProgress ?? 0
+        canGoBack = tab.webView?.canGoBack ?? false
+        canGoForward = tab.webView?.canGoForward ?? false
+        addressInput = tab.showingPage ? (currentURL?.host ?? "") : ""
+        syncProviderState()
     }
 
     func syncProviderState() {
@@ -621,6 +720,14 @@ extension BrowserWebModel: WKNavigationDelegate, WKUIDelegate {
               let callId = body["id"] as? Int,
               let method = body["method"] as? String else { return }
 
+        // A tab that is not on screen never asks the wallet (the answer would go to another page).
+        guard let sender = message.webView, sender === webView else {
+            message.webView?.evaluateJavaScript(
+                "window.__coldvaultReject && window.__coldvaultReject(\(callId), 4100, 'Open this tab to use the wallet');",
+                completionHandler: nil)
+            return
+        }
+
         // A frame inside the page (an ad, another site) never speaks for the page.
         guard message.frameInfo.isMainFrame else {
             rejectJS(callId: callId, code: 4100, message: "Only the page itself can ask the wallet")
@@ -784,6 +891,7 @@ struct DappBrowserView: View {
     @State private var showQRScanner = false
     @State private var showWalletConnectSheet = false
     @State private var pullCloseFired = false
+    @State private var showTabs = false
 
     let onClose: () -> Void
     let onDragChanged: (CGFloat) -> Void
@@ -816,6 +924,7 @@ struct DappBrowserView: View {
             ZStack {
                 if webModel.isShowingWebPage {
                     BrowserWebViewContainer(model: webModel)
+                        .id(webModel.activeTabID)
                         .ignoresSafeArea(edges: .bottom)
                         .transition(.opacity)
                 } else {
@@ -825,7 +934,7 @@ struct DappBrowserView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if webModel.isShowingWebPage {
+            if webModel.isShowingWebPage || webModel.tabs.count > 1 {
                 browserBottomToolbar
             }
         }
@@ -861,6 +970,10 @@ struct DappBrowserView: View {
         }
         .sheet(isPresented: $showWalletConnectSheet) {
             DappsView()
+                .environmentObject(walletManager)
+        }
+        .sheet(isPresented: $showTabs) {
+            BrowserTabsSheet(webModel: webModel)
                 .environmentObject(walletManager)
         }
     }
@@ -1302,9 +1415,27 @@ struct DappBrowserView: View {
                 webModel.goHome()
             }
             Spacer()
-            toolbarButton(icon: webModel.isCurrentBookmarked ? "star.fill" : "star", enabled: webModel.currentURL != nil) {
+            toolbarButton(icon: webModel.isCurrentBookmarked ? "star.fill" : "star",
+                          enabled: webModel.isShowingWebPage && webModel.currentURL != nil) {
                 webModel.toggleBookmark()
             }
+            Spacer()
+            // Tabs: how many are open; a tap shows them all.
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                webModel.storeActiveTab()
+                showTabs = true
+            } label: {
+                Text("\(webModel.tabs.count)")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundColor(Color(uiColor: .label))
+                    .frame(width: 22, height: 22)
+                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(Color(uiColor: .label), lineWidth: 2))
+                    .frame(width: 40, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
             Spacer()
             toolbarButton(icon: "arrow.up.circle", enabled: true) {
                 onClose()
@@ -1327,6 +1458,134 @@ struct DappBrowserView: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
+    }
+}
+
+// MARK: - Tabs Sheet
+
+/// Every open tab as a card (a picture of its page and its title): a tap opens it, the cross
+/// closes it; a new tab starts on the start page.
+private struct BrowserTabsSheet: View {
+    @EnvironmentObject var walletManager: WalletManager
+    @Environment(\.presentationMode) private var presentationMode
+    @ObservedObject var webModel: BrowserWebModel
+
+    private var lang: AppLanguage { walletManager.appLanguage }
+    private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
+    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+
+    var body: some View {
+        ZStack {
+            GlassAmbientBackground()
+            ScrollView(showsIndicators: false) {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(webModel.tabs) { tab in
+                        card(tab)
+                            .transition(.scale(scale: 0.85).combined(with: .opacity))
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 110)
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SheetHeader(title: t("Tabs", "Pestañas"))
+            }
+            VStack {
+                Spacer()
+                HStack(spacing: 12) {
+                    if webModel.tabs.count > 1 {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) { webModel.closeAllTabs() }
+                        } label: {
+                            Text(t("Close all", "Cerrar todas"))
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(.red)
+                                .padding(.horizontal, 18)
+                                .frame(height: 46)
+                                .background(Capsule().fill(SettingsStyle.groupFill))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        webModel.newTab()
+                        presentationMode.wrappedValue.dismiss()
+                    } label: {
+                        Label(t("New tab", "Nueva pestaña"), systemImage: "plus")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(Color(uiColor: .systemBackground))
+                            .padding(.horizontal, 22)
+                            .frame(height: 46)
+                            .background(Capsule().fill(Color(uiColor: .label)))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(webModel.tabs.count >= BrowserWebModel.maxTabs)
+                    .opacity(webModel.tabs.count >= BrowserWebModel.maxTabs ? 0.4 : 1)
+                }
+                .padding(.bottom, 24)
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func card(_ tab: BrowserTab) -> some View {
+        let active = tab.id == webModel.activeTabID
+        let title = tab.showingPage ? ((tab.webView?.title).flatMap { $0.isEmpty ? nil : $0 } ?? tab.title) : ""
+        let host = tab.showingPage ? (tab.webView?.url ?? tab.url)?.host ?? "" : ""
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            webModel.selectTab(tab.id)
+            presentationMode.wrappedValue.dismiss()
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                ZStack {
+                    Rectangle().fill(Color(uiColor: .systemBackground).opacity(0.6))
+                    if tab.showingPage, let image = tab.snapshot {
+                        Image(uiImage: image).resizable().scaledToFill()
+                    } else {
+                        Image(systemName: tab.showingPage ? "globe" : "safari")
+                            .font(.system(size: 26, weight: .semibold))
+                            .foregroundColor(Palette.secondary)
+                    }
+                }
+                .aspectRatio(0.78, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title.isEmpty ? (host.isEmpty ? t("Start page", "Inicio") : host) : title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color(uiColor: .label))
+                        .lineLimit(1)
+                    Text(host.isEmpty ? t("New tab", "Nueva pestaña") : host)
+                        .font(.system(size: 11))
+                        .foregroundColor(Palette.secondary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 4)
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color(uiColor: .label), lineWidth: active ? 2 : 0))
+            .overlay(alignment: .topTrailing) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) { webModel.closeTab(tab.id) }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color(uiColor: .label))
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(.ultraThinMaterial))
+                        .padding(14)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
