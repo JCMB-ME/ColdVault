@@ -43,9 +43,11 @@ extension SettingsView {
                 DescriptorExportView(descriptors: descriptors, lang: lang)
             }
             .confirmCard(isPresented: $showDeleteConfirmation, icon: "trash.fill",
-                         title: L10n.deleteWalletConfirmTitle(lang), message: L10n.deleteWalletConfirmDesc(lang),
+                         title: L10n.deleteWalletConfirmTitle(lang),
+                         message: L10n.deleteWalletConfirmDesc(lang)
+                            + (nameToDelete(walletManager.activeWallet) == nil ? "" : "\n\n" + t("Type its name to confirm.", "Escribe su nombre para confirmar.")),
                          confirmTitle: L10n.deletePermanently(lang), cancelTitle: L10n.cancel(lang),
-                         destructive: true) {
+                         destructive: true, typeToConfirm: nameToDelete(walletManager.activeWallet)) {
                 // Someone holding the unlocked phone must not be able to erase the keys.
                 Task {
                     guard await AppLock.authenticate(reason: t("Confirm to delete this wallet",
@@ -293,11 +295,27 @@ extension SettingsView {
         }
     }
 
+    /// A wallet with keys is erased only after its name is typed (a tap by mistake can't lose a phrase
+    /// that was never written down); a watch-only one has nothing to lose.
+    func nameToDelete(_ wallet: LibraryWallet?) -> String? {
+        guard let wallet, wallet.bundle.accounts.first?.record.type != .watchOnly else { return nil }
+        return wallet.bundle.name
+    }
+
     func setAppLock(_ on: Bool) {
+        // Without a passcode on the iPhone there is nothing to check against: the lock would open for anyone.
+        if on && !SecureKeyStore.shared.isDevicePasscodeSet {
+            errorMessage = t("Set a passcode on this iPhone first (Settings › Face ID & Passcode): without one the app lock can't protect anything.",
+                             "Configura antes un código en este iPhone (Ajustes › Face ID y código): sin él el bloqueo de la app no protege nada.")
+            return
+        }
         Task {
             let ok = await AppLock.authenticate(reason: on ? t("Turn on the app lock", "Activa el bloqueo de la app")
                                                            : t("Turn off the app lock", "Desactiva el bloqueo de la app"))
-            if ok { appLockEnabled = on }
+            if ok {
+                appLockEnabled = on
+                walletManager.scheduleWidgetUpdate()          // the widget hides (or shows) the balance
+            }
         }
     }
 

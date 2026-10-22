@@ -40,6 +40,10 @@ struct BalanceEntry: TimelineEntry {
     let updated: Date?
     let spanish: Bool
     let theme: String
+    /// The app lock (or face-down hiding) is on: no amount is shown.
+    var hidden = false
+    /// The wallet on screen is on Testnet4: its coins have no value.
+    var testnet = false
 
     static let preview = BalanceEntry(date: Date(), hasWallet: true, balance: "0.021", unit: "BTC",
                                       fiat: nil, updated: Date(), spanish: false, theme: "")
@@ -68,7 +72,9 @@ struct BalanceProvider: TimelineProvider {
             fiat: defaults?.string(forKey: "widget.fiat"),
             updated: updated > 0 ? Date(timeIntervalSince1970: updated) : nil,
             spanish: defaults?.bool(forKey: "widget.spanish") ?? Locale.preferredLanguages.first?.hasPrefix("es") == true,
-            theme: defaults?.string(forKey: "widget.theme") ?? ""
+            theme: defaults?.string(forKey: "widget.theme") ?? "",
+            hidden: defaults?.bool(forKey: "widget.hidden") ?? false,
+            testnet: defaults?.bool(forKey: "widget.testnet") ?? false
         )
     }
 }
@@ -86,6 +92,11 @@ struct BalanceWidgetView: View {
         return updated.formatted(date: .omitted, time: .shortened)
     }
 
+    /// The amount, or asterisks while the app hides balances.
+    private var balance: String { entry.hidden ? "*****" : entry.balance }
+    private var fiat: String? { entry.hidden ? nil : entry.fiat }
+    private var title: String { entry.testnet ? "ColdVault · Testnet4" : "ColdVault" }
+
     var body: some View {
         // Redacted while the iPhone is locked (Lock Screen / StandBy).
         content.privacySensitive()
@@ -95,15 +106,15 @@ struct BalanceWidgetView: View {
     private var content: some View {
         switch family {
         case .accessoryInline:
-            Text(entry.hasWallet ? "₿ \(entry.balance) \(entry.unit)" : "ColdVault")
+            Text(entry.hasWallet ? "₿ \(balance) \(entry.unit)\(entry.testnet ? " · Testnet" : "")" : "ColdVault")
         case .accessoryRectangular:
             VStack(alignment: .leading, spacing: 2) {
-                Text("ColdVault").font(.system(size: 12, weight: .semibold))
-                Text(entry.hasWallet ? "\(entry.balance) \(entry.unit)" : t("No wallet", "Sin billetera"))
+                Text(title).font(.system(size: 12, weight: .semibold))
+                Text(entry.hasWallet ? "\(balance) \(entry.unit)" : t("No wallet", "Sin billetera"))
                     .font(.system(size: 18, weight: .bold))
                     .minimumScaleFactor(0.5)
                     .lineLimit(1)
-                if let fiat = entry.fiat { Text("≈ \(fiat)").font(.system(size: 11)) }
+                if let fiat { Text("≈ \(fiat)").font(.system(size: 11)) }
             }
         default:
             home
@@ -112,13 +123,14 @@ struct BalanceWidgetView: View {
 
     private var home: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("ColdVault")
+            Text(title)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(secondary)
+                .lineLimit(1)
             Spacer(minLength: 0)
             if entry.hasWallet {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(entry.balance)
+                    Text(balance)
                         .font(.system(size: family == .systemSmall ? 30 : 38, weight: .bold))
                         .foregroundColor(primary)
                         .minimumScaleFactor(0.4)
@@ -128,7 +140,7 @@ struct BalanceWidgetView: View {
                         .foregroundColor(secondary)
                         .fixedSize()
                 }
-                if let fiat = entry.fiat {
+                if let fiat {
                     Text("≈ \(fiat)")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(secondary)

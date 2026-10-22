@@ -649,6 +649,10 @@ extension WalletManager {
         // The widget shows bitcoin: an Ethereum wallet on screen leaves it as it was.
         guard !isEthereum, let defaults = UserDefaults(suiteName: WalletManager.widgetSuite) else { return }
         defaults.set(hasWallet, forKey: "widget.hasWallet")
+        // With the app lock on (or balances hidden face down) the widget shows no amount: the home screen
+        // must not show what the app itself hides behind Face ID.
+        defaults.set(UserDefaults.standard.bool(forKey: "appLockEnabled") || balancesCensored, forKey: "widget.hidden")
+        defaults.set(isTestnet, forKey: "widget.testnet")
         defaults.set(formattedBalance, forKey: "widget.balance")
         defaults.set(displayUnit.rawValue, forKey: "widget.unit")
         defaults.set(formattedFiatBalance, forKey: "widget.fiat")

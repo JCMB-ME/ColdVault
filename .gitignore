@@ -27,3 +27,14 @@ Vendor/TorLocal/tor.xcframework/
 research/
 coins logo/
 audit/
+logos/
+
+# Screenshots and image drafts at the top of the repo: they can show balances, addresses or
+# inscriptions of a real wallet, so they never go into the (public) repository.
+/*.png
+/*.PNG
+/*.jpg
+/*.jpeg
+/*.JPG
+/*.heic
+/*.HEIC

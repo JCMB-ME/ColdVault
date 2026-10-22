@@ -17,8 +17,9 @@ jobs:
     runs-on: xcode-27
 
     steps:
+      # Actions are pinned by commit (a tag can be moved), with the version they were at.
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
 
       - name: Select Xcode 27 (iOS 27 SDK)
         run: |
@@ -34,9 +35,13 @@ jobs:
           echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
           xcrun simctl list devices available | grep "$UDID"
 
-      - name: Install XcodeGen
+      - name: Install XcodeGen 2.46.0 (checksum-verified)
         run: |
-          brew install xcodegen
+          # A fixed XcodeGen release checked against its SHA-256, not whatever Homebrew has that day.
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
 
       - name: Fetch Tor library (checksum-verified)
         run: |
@@ -44,7 +49,15 @@ jobs:
 
       - name: Generate Xcode Project
         run: |
+          xcodegen --version
           xcodegen generate
+          # Every Swift package, also the ones the packages bring with them, at the exact commit recorded in
+          # Package.resolved: the build never picks up a tag that was moved, and fails if one would change.
+          if [ -f Package.resolved ]; then
+            mkdir -p ColdVault.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+            cp Package.resolved ColdVault.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+            echo "PKG_FLAGS=-disableAutomaticPackageResolution" >> "$GITHUB_ENV"
+          fi
 
       - name: Run Unit Tests
         run: |
@@ -52,10 +65,15 @@ jobs:
             -project ColdVault.xcodeproj \
             -scheme ColdVault \
             -destination "id=$SIM_UDID" \
+            $PKG_FLAGS \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Resolved Swift packages
+        run: |
+          cat ColdVault.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 
       - name: Build for Generic iOS Device (Release)
         run: |
@@ -65,6 +83,7 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build_device \
+            $PKG_FLAGS \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -86,6 +105,8 @@ jobs:
           zip -qr ../ColdVault.ipa Payload
           cd ..
           ls -lh ColdVault.ipa
+          # The IPA's fingerprint in the run's summary: a downloaded copy can be checked against it.
+          shasum -a 256 ColdVault.ipa | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Build for iOS Simulator (Release)
         run: |
@@ -95,6 +116,7 @@ jobs:
             -configuration Release \
             -sdk iphonesimulator \
             -derivedDataPath build_sim \
+            $PKG_FLAGS \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY=""
@@ -106,15 +128,22 @@ jobs:
           cd ../../..
 
       - name: Upload IPA Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
         with:
           name: ColdVault-iOS-IPA
           path: ColdVault.ipa
           retention-days: 14
 
       - name: Upload Simulator App Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
         with:
           name: ColdVault-Simulator-App
           path: ColdVault-Simulator.app.zip
+          retention-days: 14
+
+      - name: Upload Resolved Packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: Package-resolved
+          path: ColdVault.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
           retention-days: 14

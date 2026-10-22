@@ -33,6 +33,22 @@ public enum SolanaError: LocalizedError {
     }
 }
 
+/// A token account (SPL Token or Token-2022): the mint and the amount, from the start of its data
+/// (mint 32 bytes, owner 32 bytes, amount u64 little-endian; Token-2022 extensions come after).
+struct SolanaTokenAccount: Equatable {
+    let mint: String
+    let owner: String
+    let amount: UInt64
+
+    init?(_ data: Data) {
+        guard data.count >= 72 else { return nil }
+        let bytes = [UInt8](data)
+        mint = SolanaKeys.address(publicKey: Data(bytes[0..<32]))
+        owner = SolanaKeys.address(publicKey: Data(bytes[32..<64]))
+        amount = bytes[64..<72].reversed().reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+    }
+}
+
 public final class SolanaAPI {
     public let isTestnet: Bool
     private let session: URLSession
@@ -149,6 +165,73 @@ public final class SolanaAPI {
                           date: (item["blockTime"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) },
                           failed: item["err"].map { !($0 is NSNull) } ?? false)
         }
+    }
+
+    // MARK: Simulation (what a site's transaction would do)
+
+    /// What a transaction would do if it were sent now: the node runs it without checking its signatures,
+    /// on a fresh blockhash. `ownerLamports` is the owner's SOL afterwards (0 when the account would be
+    /// closed), `accounts` the data the watched accounts would hold (missing: closed).
+    struct Simulation {
+        let error: String?
+        let ownerLamports: UInt64?
+        let accounts: [String: Data]
+    }
+
+    func simulate(_ transaction: Data, owner: String, watching accounts: [String]) async throws -> Simulation {
+        let addresses = [owner] + accounts
+        let result = try await call("simulateTransaction", [transaction.base64EncodedString(), [
+            "encoding": "base64", "sigVerify": false, "replaceRecentBlockhash": true, "commitment": "confirmed",
+            "accounts": ["encoding": "base64", "addresses": addresses]
+        ] as [String: Any]]) as? [String: Any]
+        guard let value = result?["value"] as? [String: Any] else { throw SolanaError.unavailable }
+        var error: String?
+        if let failure = value["err"], !(failure is NSNull) {
+            if JSONSerialization.isValidJSONObject(failure), let data = try? JSONSerialization.data(withJSONObject: failure) {
+                error = String(decoding: data, as: UTF8.self)
+            } else {
+                error = String(describing: failure)
+            }
+        }
+        var lamports: UInt64?
+        var data = [String: Data]()
+        let list = value["accounts"] as? [Any] ?? []
+        for (index, item) in list.enumerated() where index < addresses.count {
+            guard let account = item as? [String: Any] else {
+                if index == 0 { lamports = 0 }                         // the account would be closed
+                continue
+            }
+            if index == 0 { lamports = (account["lamports"] as? NSNumber)?.uint64Value }
+            if let encoded = (account["data"] as? [Any])?.first as? String, let raw = Data(base64Encoded: encoded) {
+                data[addresses[index]] = raw
+            }
+        }
+        return Simulation(error: error, ownerLamports: lamports, accounts: data)
+    }
+
+    /// The owner's token accounts (SPL Token and Token-2022) as the chain has them now: address → mint and amount.
+    func tokenAccounts(owner: String) async throws -> [String: SolanaTokenAccount] {
+        var found = [String: SolanaTokenAccount]()
+        for program in ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"] {
+            let result = try await call("getTokenAccountsByOwner", [owner, ["programId": program],
+                                                                    ["encoding": "base64", "commitment": "confirmed"]]) as? [String: Any]
+            for item in (result?["value"] as? [[String: Any]]) ?? [] {
+                guard let address = item["pubkey"] as? String,
+                      let encoded = ((item["account"] as? [String: Any])?["data"] as? [Any])?.first as? String,
+                      let raw = Data(base64Encoded: encoded), let account = SolanaTokenAccount(raw) else { continue }
+                found[address] = account
+            }
+        }
+        return found
+    }
+
+    /// The decimals of a token (its mint).
+    func decimals(ofMint mint: String) async throws -> Int {
+        let result = try await call("getTokenSupply", [mint]) as? [String: Any]
+        guard let decimals = ((result?["value"] as? [String: Any])?["decimals"] as? NSNumber)?.intValue else {
+            throw SolanaError.unavailable
+        }
+        return decimals
     }
 
     /// The assets the account owns that are not fungible tokens (compressed NFTs included), as the

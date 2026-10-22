@@ -1,0 +1,83 @@
+{
+  "pins" : [
+    {
+      "identity" : "breez-sdk-spark-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/breez/breez-sdk-spark-swift",
+      "state" : {
+        "revision" : "2a9f457e9bb84b09f09b5816b07b4ec3612e2e8a"
+      }
+    },
+    {
+      "identity" : "ldk-node",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/lightningdevkit/ldk-node",
+      "state" : {
+        "revision" : "68ab7f417e595f3997dd598ebe070dd5d1b5facf"
+      }
+    },
+    {
+      "identity" : "qrcode",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/WalletConnect/QRCode",
+      "state" : {
+        "revision" : "263f280d2c8144adfb0b6676109846cfc8dd552b",
+        "version" : "14.3.1"
+      }
+    },
+    {
+      "identity" : "reown-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/reown-com/reown-swift",
+      "state" : {
+        "revision" : "1286a56685266804f3ceae93e394f45eb4473dfb"
+      }
+    },
+    {
+      "identity" : "swift-bigint",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/mkrd/Swift-BigInt.git",
+      "state" : {
+        "revision" : "7e2117797cd1b608303cc2da1a3a2263cc4e7727",
+        "version" : "2.4.0"
+      }
+    },
+    {
+      "identity" : "swift-qrcode-generator",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/dagronf/swift-qrcode-generator",
+      "state" : {
+        "revision" : "5ca09b6a2ad190f94aa3d6ddef45b187f8c0343b",
+        "version" : "1.0.3"
+      }
+    },
+    {
+      "identity" : "swiftimagereadwrite",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/dagronf/SwiftImageReadWrite",
+      "state" : {
+        "revision" : "5596407d1cf61b953b8e658fa8636a471df3c509",
+        "version" : "1.1.6"
+      }
+    },
+    {
+      "identity" : "wallet-mobile-sdk",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/MobileWalletProtocol/wallet-mobile-sdk",
+      "state" : {
+        "revision" : "4293df51d3500b8e876ca4bf0d7548adf097569a",
+        "version" : "1.1.2"
+      }
+    },
+    {
+      "identity" : "yttrium",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/reown-com/yttrium",
+      "state" : {
+        "revision" : "e3dd9f5b53e520c1794802ec93ab84775123fdf9",
+        "version" : "0.10.59"
+      }
+    }
+  ],
+  "version" : 2
+}

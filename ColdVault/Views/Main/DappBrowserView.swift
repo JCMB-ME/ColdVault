@@ -472,8 +472,20 @@ final class BrowserWebModel: NSObject, ObservableObject {
                                                      injectionTime: .atDocumentStart, forMainFrameOnly: true))
         if TorProxy.isEnabled {
             // WebRTC opens its own connections, outside the proxy, and can show a site the real IP
-            // address: it is taken away from every page and frame while Tor is on.
-            let noRTC = "(function(){['RTCPeerConnection','webkitRTCPeerConnection','RTCDataChannel','RTCIceCandidate','RTCSessionDescription','RTCRtpSender','RTCRtpReceiver'].forEach(function(n){try{Object.defineProperty(window,n,{value:undefined,writable:false,configurable:false});}catch(e){}});})();"
+            // address: it is taken away from every page and frame while Tor is on. A blank frame a script
+            // adds gets no user script (WebKit skips the initial empty document), so the window of any
+            // frame is cleaned too when the page reaches it through `contentWindow`.
+            let noRTC = """
+            (function(){
+              var names=['RTCPeerConnection','webkitRTCPeerConnection','RTCDataChannel','RTCIceCandidate','RTCSessionDescription','RTCRtpSender','RTCRtpReceiver','RTCRtpTransceiver'];
+              function strip(w){names.forEach(function(n){try{Object.defineProperty(w,n,{value:undefined,writable:false,configurable:false});}catch(e){}});}
+              strip(window);
+              try{
+                var d=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'contentWindow');
+                if(d&&d.get){Object.defineProperty(HTMLIFrameElement.prototype,'contentWindow',{get:function(){var w=d.get.call(this);if(w){try{strip(w);}catch(e){}}return w;},configurable:false,enumerable:d.enumerable});}
+              }catch(e){}
+            })();
+            """
             contentController.addUserScript(WKUserScript(source: noRTC, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         }
         contentController.add(WeakScriptMessageHandler(target: self), name: Self.handlerName)

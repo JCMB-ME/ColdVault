@@ -259,7 +259,9 @@ struct LightningView: View {
                 Text("\(SendView.satsText(quote.amountSats)) sats")
                     .font(.system(size: 32, weight: .bold))
                 Text(quote.feeSats.map { t("Fee: \(SendView.satsText($0)) sats", "Comisión: \(SendView.satsText($0)) sats") }
-                     ?? t("Fee: found when paying (usually < 1%)", "Comisión: se calcula al pagar (normalmente < 1%)"))
+                     ?? quote.maxFeeSats.map { t("Fee: found when paying, at most \(SendView.satsText($0)) sats (1% + 50)",
+                                                 "Comisión: se calcula al pagar, como máximo \(SendView.satsText($0)) sats (1% + 50)") }
+                     ?? t("Fee: found when paying", "Comisión: se calcula al pagar"))
                     .font(.system(size: 13))
                     .foregroundColor(Palette.secondary)
                 SlideToConfirm(title: t("Slide to pay", "Desliza para pagar"), icon: "bolt.fill", isLoading: isWorking) {

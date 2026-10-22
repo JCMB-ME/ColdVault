@@ -358,6 +358,7 @@ extension WalletManager {
         } else {
             guard coin != .ton, coin != .solana else { throw WalletError.derivationFailed }   // TON and Solana keys come from a phrase
             secret = WalletSecret(privateKey: trimmed.lowercased().replacingOccurrences(of: "0x", with: ""))
+            if let raw = secret.privateKey?.hexDecoded, WalletManager.isGuessableKey(raw) { throw guessableKeyError }
             type = .privateKey
         }
         var result = try await Task.detached(priority: .userInitiated) {

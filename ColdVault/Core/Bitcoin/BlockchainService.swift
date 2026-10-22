@@ -454,12 +454,45 @@ public final class BlockchainService {
 
     // MARK: - Fees
     public func fetchRecommendedFees(isTestnet: Bool) async throws -> RecommendedFees {
+        async let second = electrumFeeEstimate(skip: isTestnet)
         let data = try await get("/v1/fees/recommended", isTestnet: isTestnet)
         let fees = try JSONDecoder().decode(RecommendedFees.self, from: data)
         guard fees.hourFee >= 1, fees.fastestFee >= fees.hourFee, fees.fastestFee < 10_000 else {
             throw BlockchainError.invalidResponse
         }
-        return FeePolicy.capped(fees)
+        let capped = FeePolicy.capped(fees)
+        guard let estimate = await second else { return capped }
+        return FeePolicy.crossChecked(capped, secondEstimate: estimate)
+    }
+
+    /// The Electrum server's estimate for the next two blocks, in sat/vB; nil without an answer within
+    /// four seconds (the fee screen does not wait longer for a second opinion), or on testnet (`skip`).
+    private func electrumFeeEstimate(skip: Bool) async -> Int? {
+        guard !skip else { return nil }
+        final class Once: @unchecked Sendable {
+            private let lock = NSLock()
+            private var done = false
+            func claim() -> Bool {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !done else { return false }
+                done = true
+                return true
+            }
+        }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Int?, Never>) in
+            let once = Once()
+            Task {
+                // BTC per kilo-vbyte; -1 when the server has no estimate.
+                let value = (try? await ElectrumClient.client(isTestnet: false).request("blockchain.estimatefee", [2])) as? Double
+                let rate = value.flatMap { $0 > 0 && $0 < 1 ? Int(($0 * 100_000).rounded(.up)) : nil }
+                if once.claim() { continuation.resume(returning: rate) }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if once.claim() { continuation.resume(returning: nil) }
+            }
+        }
     }
 
     // MARK: - UTXOs

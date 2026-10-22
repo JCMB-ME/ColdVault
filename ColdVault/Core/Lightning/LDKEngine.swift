@@ -114,18 +114,28 @@ final class LDKEngine: LightningEngine {
         guard let msat = parsed.amountMilliSatoshis().map({ $0 / 1000 }) ?? amountSats, msat > 0 else {
             throw LightningError.amountRequired
         }
-        // LDK finds the route (and so the fee) when paying.
-        return LightningQuote(invoice: invoice, amountSats: msat, feeSats: nil, token: parsed)
+        // LDK finds the route (and so the fee) when paying, never above the cap.
+        return LightningQuote(invoice: invoice, amountSats: msat, feeSats: nil, token: parsed,
+                              maxFeeSats: LDKEngine.maxRoutingFeeMsat(amountSats: msat) / 1000)
+    }
+
+    /// The most the route may cost: 1 % of the payment plus 50 sats. A route above it is not taken (the
+    /// payment fails instead of paying more than the screen said).
+    static func maxRoutingFeeMsat(amountSats: UInt64) -> UInt64 {
+        amountSats * 10 + 50_000                  // 1 % of amountSats × 1000 msat, plus 50 sats
     }
 
     func pay(_ quote: LightningQuote) async throws -> String {
         guard let invoice = quote.token as? Bolt11Invoice else { throw LightningError.invalidInvoice }
+        // LDK's own limits for the rest (1008 blocks of time lock, 10 paths, half a channel at most).
+        let limits = RouteParametersConfig(maxTotalRoutingFeeMsat: LDKEngine.maxRoutingFeeMsat(amountSats: quote.amountSats),
+                                           maxTotalCltvExpiryDelta: 1008, maxPathCount: 10, maxChannelSaturationPowerOfHalf: 2)
         do {
             let payments = try running().bolt11Payment()
             if invoice.amountMilliSatoshis() == nil {
-                return try payments.sendUsingAmount(invoice: invoice, amountMsat: quote.amountSats * 1000, routeParameters: nil)
+                return try payments.sendUsingAmount(invoice: invoice, amountMsat: quote.amountSats * 1000, routeParameters: limits)
             }
-            return try payments.send(invoice: invoice, routeParameters: nil)
+            return try payments.send(invoice: invoice, routeParameters: limits)
         } catch {
             throw LightningError.engine("\(error)")
         }

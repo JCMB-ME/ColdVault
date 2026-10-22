@@ -123,7 +123,10 @@ public final class WalletManager: ObservableObject {
     /// Balances show as asterisks (iPhone put face down, Settings › Security). Saved: the app opens
     /// the way it was left.
     @Published public var balancesCensored = UserDefaults.standard.bool(forKey: "balancesCensored") {
-        didSet { UserDefaults.standard.set(balancesCensored, forKey: "balancesCensored") }
+        didSet {
+            UserDefaults.standard.set(balancesCensored, forKey: "balancesCensored")
+            scheduleWidgetUpdate()
+        }
     }
     @Published public var fiatCurrency: String {
         didSet {
@@ -496,6 +499,7 @@ public final class WalletManager: ObservableObject {
                                                  isTestnet: requested ?? false)
 
         case .privateKey(let keyData, let isCompressed, let network):
+            guard !WalletManager.isGuessableKey(keyData) else { throw guessableKeyError }
             try await ensureSelfTest()
             let isTestnet = network ?? requested ?? false
             let addresses = try await Task.detached(priority: .userInitiated) {
@@ -532,6 +536,18 @@ public final class WalletManager: ObservableObject {
         case .invalid(let reason):
             throw NSError(domain: "ColdVault", code: 400, userInfo: [NSLocalizedDescriptionKey: reason])
         }
+    }
+
+    /// A private key below 2^128 was not made at random (puzzle keys, examples, keys from a word): bots watch
+    /// them and sweep anything sent to them within seconds. Such a key is never imported.
+    nonisolated static func isGuessableKey(_ key: Data) -> Bool {
+        key.count == 32 && key.prefix(16).allSatisfy { $0 == 0 }
+    }
+
+    var guessableKeyError: Error {
+        NSError(domain: "ColdVault", code: 400, userInfo: [NSLocalizedDescriptionKey: appLanguage == .english
+            ? "This private key is far too small to be random (a known example or puzzle key): anyone can spend what is sent to it. ColdVault won't import it."
+            : "Esta clave privada es demasiado pequeña para ser aleatoria (un ejemplo o una clave de reto conocida): cualquiera puede gastar lo que reciba. ColdVault no la importa."])
     }
 
     // MARK: - Refresh Balance (all addresses of the wallet)

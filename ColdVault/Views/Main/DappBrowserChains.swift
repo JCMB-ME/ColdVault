@@ -96,10 +96,24 @@ extension BrowserWebModel {
             guard btcConnected, let account = bitcoinAccount else { return notConnected() }
             resolveValue(callId, account.publicKey.hexEncodedString)
         case "btc_getBalance":
-            guard btcConnected, let manager = walletManager else { return notConnected() }
-            let unconfirmed = manager.pendingIncomingSats
-            resolveValue(callId, ["confirmed": manager.availableSats, "unconfirmed": unconfirmed,
-                                  "total": manager.availableSats + unconfirmed])
+            // The coins of the address the site was given, as UniSat answers: not the whole wallet's balance
+            // (that would tell a site what every other address holds).
+            guard btcConnected, let manager = walletManager, let account = bitcoinAccount else { return notConnected() }
+            let testnet = manager.isTestnet
+            Task {
+                do {
+                    let coins = try await BlockchainService.shared.fetchUTXOs(address: account.address, isTestnet: testnet)
+                    var confirmed: UInt64 = 0
+                    var unconfirmed: UInt64 = 0
+                    for coin in coins where coin.value <= 2_100_000_000_000_000 {
+                        if coin.status?.confirmed ?? false { confirmed += coin.value } else { unconfirmed += coin.value }
+                        guard confirmed <= 2_100_000_000_000_000, unconfirmed <= 2_100_000_000_000_000 else { throw BlockchainError.invalidResponse }
+                    }
+                    resolveValue(callId, ["confirmed": confirmed, "unconfirmed": unconfirmed, "total": confirmed + unconfirmed], page: page)
+                } catch {
+                    rejectJS(callId: callId, code: -32603, message: error.localizedDescription, page: page)
+                }
+            }
         case "btc_pushPsbt", "btc_pushTx":
             guard btcConnected, let manager = walletManager, let text = params.first as? String else { return notConnected() }
             let testnet = manager.isTestnet
@@ -758,17 +772,26 @@ struct BrowserChainSignSheet: View {
                         (t("Instructions", "Instrucciones"), parsed.instructions.map { "\($0)" } ?? "?"),
                         (t("Accounts involved", "Cuentas que toca"), "\(parsed.keys.count)"),
                         (t("You pay the fee", "Pagas la comisión"), parsed.keys.first == mine ? t("Yes", "Sí") : t("No", "No"))]
+                var lines = [String]()
                 if let mine, let message = SolanaWire.parseMessage(Data(data[(data.startIndex + parsed.messageStart)...])) {
                     let read = SolanaWire.describe(message, owner: mine, english: lang == .english)
                     danger = read.danger
-                    var lines = read.lines.map { "• " + $0 }
+                    lines = read.lines.map { "• " + $0 }
                     if message.usesLookupTables {
                         lines.append(t("• Some accounts come from lookup tables (not shown).", "• Algunas cuentas vienen de tablas de búsqueda (no se muestran)."))
                     }
-                    if !lines.isEmpty { detail = lines.joined(separator: "\n") }
                 }
-                warning = t("ColdVault reads only part of what a Solana transaction does. Sign it only on sites you trust: a malicious one can move your tokens and NFTs.",
-                            "ColdVault solo lee parte de lo que hace una transacción de Solana. Fírmala solo en webs de confianza: una maliciosa puede mover tus tokens y NFTs.")
+                // What it would do to this wallet, as the network runs it now (without signing it).
+                if let owner = walletManager.address(on: .solana) {
+                    let outcome = await simulateSolana(data, owner: owner)
+                    lines = outcome.lines + lines
+                    for item in outcome.danger where !danger.contains(item) { danger.append(item) }
+                    if !outcome.ran {
+                        warning = t("The network could not try this transaction first. ColdVault reads only part of what it does: sign it only on sites you trust.",
+                                    "La red no pudo probar antes esta transacción. ColdVault solo lee parte de lo que hace: fírmala solo en webs de confianza.")
+                    }
+                }
+                if !lines.isEmpty { detail = lines.joined(separator: "\n") }
             default:
                 throw DappError.unsupportedMethod(request.method)
             }
@@ -776,6 +799,46 @@ struct BrowserChainSignSheet: View {
         } catch {
             fail(error)
         }
+    }
+
+    /// Runs a site's Solana transaction on the network without sending it (no signature is needed for
+    /// that) and says what it would change in this wallet: its SOL and each of its tokens. A transaction
+    /// the network says would fail, or that hands a token account to someone else, is flagged.
+    private func simulateSolana(_ transaction: Data, owner: String) async -> (lines: [String], danger: [String], ran: Bool) {
+        let api = SolanaAPI(isTestnet: walletManager.isTestnet)
+        let before = try? await api.balance(owner)
+        let tokens = (try? await api.tokenAccounts(owner: owner)) ?? [:]
+        let watched = Array(tokens.keys.sorted().prefix(40))
+        guard let result = try? await api.simulate(transaction, owner: owner, watching: watched) else { return ([], [], false) }
+        var lines = [String]()
+        var danger = [String]()
+        if let error = result.error {
+            danger.append(t("The network says this transaction would fail (\(error)): signing it would only cost the fee.",
+                            "La red dice que esta transacción fallaría (\(error)): firmarla solo costaría la comisión."))
+        }
+        if let before, let after = result.ownerLamports, after != before {
+            let change = after > before ? "+" + UInt256(after - before).formatted(decimals: 9, maxFraction: 9)
+                                        : "−" + UInt256(before - after).formatted(decimals: 9, maxFraction: 9)
+            lines.append(t("• Your SOL: \(change) SOL", "• Tu SOL: \(change) SOL"))
+        }
+        for address in watched {
+            guard let held = tokens[address] else { continue }
+            let after = result.accounts[address].flatMap { SolanaTokenAccount($0) }
+            // Missing afterwards: the account would be closed. Another owner: it would be handed over.
+            let amount = after.map { $0.owner == owner ? $0.amount : 0 } ?? 0
+            let handedOver = t("One of your token accounts would get another owner: whoever it is could take its tokens.",
+                               "Una de tus cuentas de tokens pasaría a otro dueño: podría quedarse con sus tokens.")
+            if let after, after.owner != owner, !danger.contains(handedOver) { danger.append(handedOver) }
+            guard amount != held.amount else { continue }
+            let decimals = (try? await api.decimals(ofMint: held.mint)) ?? 0
+            let difference = amount > held.amount ? amount - held.amount : held.amount - amount
+            let text = (amount > held.amount ? "+" : "−") + UInt256(difference).formatted(decimals: decimals, maxFraction: decimals)
+            lines.append("• Token \(held.mint.prefix(4))…\(held.mint.suffix(4)): \(text)")
+        }
+        if lines.isEmpty && result.error == nil {
+            lines.append(t("• Nothing of this wallet changes, apart from the fee.", "• No cambia nada de esta billetera, salvo la comisión."))
+        }
+        return (lines, danger, true)
     }
 
     /// This wallet's inputs in the PSBT (the ones it signs), with their "txid:vout".

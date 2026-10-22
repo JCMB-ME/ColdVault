@@ -27,4 +27,16 @@ public enum FeePolicy {
     public static func isStrong(fee: UInt64) -> Bool {
         fee > strongWarningSats
     }
+
+    /// One fee server alone could be wrong or hostile: with a second estimate (sat/vB, the Electrum
+    /// server's for the next blocks), rates more than five times above it (and 20 sat/vB above it) are
+    /// brought down to that. A slow payment can be sped up later; an overpaid fee can't come back.
+    public static func crossChecked(_ fees: RecommendedFees, secondEstimate: Int) -> RecommendedFees {
+        guard secondEstimate >= 1 else { return fees }
+        let ceiling = max(secondEstimate * 5, secondEstimate + 20)
+        return RecommendedFees(fastestFee: min(fees.fastestFee, ceiling),
+                               halfHourFee: min(fees.halfHourFee, ceiling),
+                               hourFee: min(fees.hourFee, ceiling),
+                               minimumFee: min(fees.minimumFee, ceiling))
+    }
 }

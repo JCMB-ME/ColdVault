@@ -246,8 +246,11 @@ struct WalletsView: View {
         }
         .confirmCard(isPresented: Binding(get: { deleteSlot != nil }, set: { if !$0 { deleteSlot = nil } }),
                      icon: "trash.fill",
-                     title: L10n.deleteWalletConfirmTitle(lang), message: L10n.deleteWalletConfirmDesc(lang),
-                     confirmTitle: L10n.deletePermanently(lang), cancelTitle: L10n.cancel(lang), destructive: true) {
+                     title: L10n.deleteWalletConfirmTitle(lang),
+                     message: L10n.deleteWalletConfirmDesc(lang)
+                        + (nameToDelete == nil ? "" : "\n\n" + t("Type its name to confirm.", "Escribe su nombre para confirmar.")),
+                     confirmTitle: L10n.deletePermanently(lang), cancelTitle: L10n.cancel(lang), destructive: true,
+                     typeToConfirm: nameToDelete) {
             guard let slot = deleteSlot else { return }
             // Someone holding the unlocked phone must not be able to erase the keys.
             Task {
@@ -263,6 +266,13 @@ struct WalletsView: View {
 
     /// Sum of the mainnet accounts of the wallets you own (watch-only ones are only
     /// watched, not yours: shown apart); with only testnet accounts, the testnet sum.
+    /// The name to type before erasing a wallet with keys (a watch-only one has nothing to lose).
+    private var nameToDelete: String? {
+        guard let slot = deleteSlot, let wallet = walletManager.library.first(where: { $0.slot == slot }),
+              wallet.bundle.accounts.first?.record.type != .watchOnly else { return nil }
+        return wallet.bundle.name
+    }
+
     private var totalBalance: UInt64? {
         guard (keyWallets + watchWallets).flatMap({ $0.bundle.accounts }).count > 1 else { return nil }
         return sum(testnet: totalIsTestnet) ?? (watchOnlySum == nil ? nil : 0)

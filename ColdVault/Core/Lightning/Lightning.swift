@@ -42,6 +42,8 @@ public struct LightningQuote {
     public let amountSats: UInt64
     public let feeSats: UInt64?
     let token: Any
+    /// When the fee is only known while paying: the most the route may cost (LDK refuses dearer routes).
+    var maxFeeSats: UInt64? = nil
 }
 
 public enum LightningError: LocalizedError {

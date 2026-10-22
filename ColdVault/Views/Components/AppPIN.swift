@@ -213,6 +213,7 @@ struct AppPinSetupView: View {
             AppPin.save(AppPin.make(pin: pin))
             firstPIN = ""
             appLockEnabled = true                    // the PIN is asked on the lock screen
+            walletManager.scheduleWidgetUpdate()     // and the widget stops showing the balance
             isSet = true
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             message = nil

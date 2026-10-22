@@ -20,12 +20,21 @@ struct ConfirmCardView: View {
     let confirmTitle: String
     let cancelTitle: String
     let destructive: Bool
+    /// Something the user must type before confirming (the wallet's name before erasing its keys), or nil.
+    var typeToConfirm: String? = nil
     let onConfirm: () -> Void
     let onCancel: () -> Void
 
     @State private var height: CGFloat = 360
+    @State private var typed = ""
 
     private var tint: Color { destructive ? .red : Color(uiColor: .label) }
+
+    private var canConfirm: Bool {
+        guard let typeToConfirm else { return true }
+        return typed.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            == typeToConfirm.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -47,6 +56,16 @@ struct ConfirmCardView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let typeToConfirm {
+                TextField(typeToConfirm, text: $typed)
+                    .font(.system(size: 16, weight: .medium))
+                    .multilineTextAlignment(.center)
+                    .textInputAutocapitalization(.never)
+                    .disableAutocorrection(true)
+                    .padding(.horizontal, 16)
+                    .frame(height: 48)
+                    .background(Capsule().fill(SettingsStyle.groupFill))
+            }
             VStack(spacing: 10) {
                 Button {
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -58,7 +77,9 @@ struct ConfirmCardView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: 52)
                         .background(Capsule().fill(tint))
+                        .opacity(canConfirm ? 1 : 0.4)
                 }
+                .disabled(!canConfirm)
                 Button(action: onCancel) {
                     Text(cancelTitle)
                         .font(.system(size: 16, weight: .semibold))
@@ -89,11 +110,11 @@ extension View {
     /// Asks before doing something, with a card instead of the iOS alert.
     func confirmCard(isPresented: Binding<Bool>, icon: String = "exclamationmark.triangle.fill",
                      title: String, message: String, confirmTitle: String, cancelTitle: String,
-                     destructive: Bool = false, onConfirm: @escaping () -> Void,
+                     destructive: Bool = false, typeToConfirm: String? = nil, onConfirm: @escaping () -> Void,
                      onCancel: @escaping () -> Void = {}) -> some View {
         sheet(isPresented: isPresented) {
             ConfirmCardView(icon: icon, title: title, message: message, confirmTitle: confirmTitle,
-                            cancelTitle: cancelTitle, destructive: destructive,
+                            cancelTitle: cancelTitle, destructive: destructive, typeToConfirm: typeToConfirm,
                             onConfirm: {
                                 // The action first: it may read the state the closing clears.
                                 onConfirm()
