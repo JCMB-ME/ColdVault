@@ -178,12 +178,13 @@ extension WalletManager {
     /// The inscriptions on this wallet's addresses (mainnet bitcoin wallets): every one
     /// ordinals.com lists, with its details when they load (a few at a time, retried);
     /// one whose details do not come is still shown, from its id.
-    /// The inscriptions of the account, from the phone when the list is less than two
-    /// hours old (`force`: pull to refresh).
+    /// The inscriptions of the account, from the phone when the list is less than 15
+    /// minutes old (`force`: pull to refresh).
     public func loadInscriptions(force: Bool = false) async throws -> [Inscription] {
         guard let record = activeRecord, record.coinKind == .bitcoin, !record.isTestnet else { return [] }
         let name = WalletManager.collectiblesFile(record, kind: "inscriptions")
-        if !force, let saved: [CachedInscription] = WalletManager.readCollectibles(name, maxAge: 2 * 3600) {
+        // Kept 15 minutes, like the NFTs; pull to refresh asks again at once.
+        if !force, let saved: [CachedInscription] = WalletManager.readCollectibles(name, maxAge: 15 * 60) {
             return saved.map { $0.inscription }
         }
         let list = try await fetchInscriptions()

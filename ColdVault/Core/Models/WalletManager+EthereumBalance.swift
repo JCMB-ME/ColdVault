@@ -428,7 +428,7 @@ extension WalletManager {
     public func loadHomeInscriptions(force: Bool = false) async {
         guard let key = collectiblesKey, force || homeInscriptions == nil || homeCollectiblesKey != key else { return }
         homeCollectiblesKey = key
-        let list = (try? await loadInscriptions()) ?? []
+        let list = (try? await loadInscriptions(force: force)) ?? []
         guard collectiblesKey == key else { return }
         homeInscriptions = list
     }

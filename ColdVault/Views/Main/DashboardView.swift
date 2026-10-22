@@ -413,6 +413,10 @@ public struct DashboardView: View {
                         if walletManager.isEthereum && walletManager.homeShowNFTs && walletManager.supportsNFTs {
                             await walletManager.loadHomeNFTs(force: true)
                         }
+                        // Bitcoin: the ordinals too.
+                        if walletManager.activeCoin == .bitcoin && !walletManager.isTestnet && walletManager.homeShowOrdinals {
+                            await walletManager.loadHomeInscriptions(force: true)
+                        }
                     }
                 }
             }
