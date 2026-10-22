@@ -164,14 +164,11 @@ extension SettingsView {
                                   "Testnet vuelve a derivar tus direcciones (Face ID). Servidor: usa tu propio nodo para que los servidores públicos nunca vean tus direcciones."))
             }
         }
-        .alert(serviceKeyTarget.title + " API key",
-               isPresented: Binding(get: { editingServiceKey != nil }, set: { if !$0 { editingServiceKey = nil } })) {
-            TextField("API key", text: $serviceKeyDraft)
-            Button(t("Save", "Guardar")) { setServiceKey(serviceKeyTarget, serviceKeyDraft) }
-            Button(t("Cancel", "Cancelar"), role: .cancel) {}
-        } message: {
-            Text(t("Request it free at \(serviceKeyTarget.site). Leave it empty to remove it.",
-                   "Pídela gratis en \(serviceKeyTarget.site). Déjala vacía para quitarla."))
+        // A sheet like Send: what the key is for, the link to get one free, the key.
+        .sheet(item: $editingServiceKey) { service in
+            ServiceKeySheet(service: service, current: serviceKey(service)) { setServiceKey(service, $0) }
+                .focusAppear()
+                .environmentObject(walletManager)
         }
         .alert(t("Breez API key", "API key de Breez"), isPresented: $showBreezKey) {
             TextField("API key", text: $breezKeyDraft)

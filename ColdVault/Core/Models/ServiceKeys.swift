@@ -61,6 +61,43 @@ public enum ServiceKeys {
             }
         }
 
+        /// The page where a free account (and key) is made.
+        public var signupURL: URL? {
+            switch self {
+            case .tronGrid: return URL(string: "https://www.trongrid.io/register")
+            case .toncenter: return URL(string: "https://t.me/tonapibot")
+            case .tonapi: return URL(string: "https://tonconsole.com")
+            case .walletConnect: return URL(string: "https://cloud.reown.com/sign-up")
+            case .alchemy: return URL(string: "https://dashboard.alchemy.com/signup")
+            case .helius: return URL(string: "https://dashboard.helius.dev/signup")
+            }
+        }
+
+        /// How to get the key, step by step.
+        public func steps(_ lang: AppLanguage) -> String {
+            let english = lang == .english
+            switch self {
+            case .tronGrid:
+                return english ? "1. Create a free account on TronGrid.\n2. Open API Keys and create one.\n3. Copy it and paste it below."
+                               : "1. Crea una cuenta gratis en TronGrid.\n2. Entra en API Keys y crea una.\n3. Cópiala y pégala abajo."
+            case .toncenter:
+                return english ? "1. Open @tonapibot in Telegram.\n2. Ask it for a mainnet API key.\n3. Copy it and paste it below."
+                               : "1. Abre @tonapibot en Telegram.\n2. Pídele una API key de mainnet.\n3. Cópiala y pégala abajo."
+            case .tonapi:
+                return english ? "1. Sign in to TON Console (with Telegram).\n2. Open TON API and create a key on the free plan.\n3. Copy it and paste it below."
+                               : "1. Entra en TON Console (con Telegram).\n2. Abre TON API y crea una clave en el plan gratis.\n3. Cópiala y pégala abajo."
+            case .walletConnect:
+                return english ? "1. Create a free account on Reown Cloud.\n2. Create a project (type: Wallet).\n3. Copy its Project ID and paste it below."
+                               : "1. Crea una cuenta gratis en Reown Cloud.\n2. Crea un proyecto (tipo: Wallet).\n3. Copia su Project ID y pégalo abajo."
+            case .alchemy:
+                return english ? "1. Create a free account on Alchemy.\n2. Create an app and turn on Ethereum, Base and Polygon.\n3. Copy its API key and paste it below."
+                               : "1. Crea una cuenta gratis en Alchemy.\n2. Crea una app y activa Ethereum, Base y Polygon.\n3. Copia su API key y pégala abajo."
+            case .helius:
+                return english ? "1. Create a free account on Helius.\n2. Open the dashboard: your API key is there.\n3. Copy it and paste it below."
+                               : "1. Crea una cuenta gratis en Helius.\n2. Abre el panel: ahí está tu API key.\n3. Cópiala y pégala abajo."
+            }
+        }
+
         /// Where a free key is requested.
         public var site: String {
             switch self {
