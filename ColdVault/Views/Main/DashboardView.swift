@@ -409,6 +409,10 @@ public struct DashboardView: View {
                     // Pull down to refresh the balance (needs a scrollable container).
                     .refreshable {
                         await walletManager.refreshAll()
+                        // The NFTs too (the list is otherwise kept for 15 minutes).
+                        if walletManager.isEthereum && walletManager.homeShowNFTs && walletManager.supportsNFTs {
+                            await walletManager.loadHomeNFTs(force: true)
+                        }
                     }
                 }
             }

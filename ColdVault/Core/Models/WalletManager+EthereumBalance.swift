@@ -419,7 +419,7 @@ extension WalletManager {
     public func loadHomeNFTs(force: Bool = false) async {
         guard let key = collectiblesKey, force || homeNFTs == nil || homeCollectiblesKey != key else { return }
         homeCollectiblesKey = key
-        let list = await loadNFTs()
+        let list = await loadNFTs(force: force)
         guard collectiblesKey == key else { return }
         homeNFTs = list
     }
@@ -565,12 +565,13 @@ extension WalletManager {
 
     /// NFTs on every network of the wallet: Blockscout (every page, up to 300) on EVM
     /// chains, tonapi on TON.
-    /// The NFT list of the account, from the phone when it is less than two hours old
+    /// The NFT list of the account, from the phone when it is less than 15 minutes old
     /// (`force`: pull to refresh).
     public func loadNFTs(force: Bool = false) async -> [EVMNFT] {
         guard let record = activeRecord, record.coinKind.isAccountBased else { return [] }
         let name = WalletManager.collectiblesFile(record, kind: "nfts")
-        if !force, let saved: [CachedNFT] = WalletManager.readCollectibles(name, maxAge: 2 * 3600) {
+        // Kept 15 minutes: an NFT received shows soon; pull to refresh asks again at once.
+        if !force, let saved: [CachedNFT] = WalletManager.readCollectibles(name, maxAge: 15 * 60) {
             return saved.compactMap { $0.nft }
         }
         let list = await fetchNFTs()

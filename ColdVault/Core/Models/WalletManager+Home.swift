@@ -326,6 +326,8 @@ extension WalletManager {
         if homeShowTransactions || !isEthereum {
             await refreshTransactions()
         }
+        // Pull to refresh reads the NFTs again too (one sent or received shows at once).
+        if force && isEthereum && homeShowNFTs && supportsNFTs { await loadHomeNFTs(force: true) }
     }
 
     func refreshMarketData(force: Bool) async {
