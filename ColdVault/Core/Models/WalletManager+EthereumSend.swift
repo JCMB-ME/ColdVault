@@ -262,7 +262,7 @@ extension WalletManager {
         guard !tokenAmount.isZero, !(asset.balance < tokenAmount) else { throw EthereumError.insufficientToken(asset.symbol) }
         let attached = UInt256(50_000_000)
         guard let needed = attached.adding(fee), !(info.balance < needed) else {
-            throw EthereumError.noGas(EVMChain.ton.name(testnet: isTestnet), "TON")
+            throw EthereumError.noGas(EVMChain.ton.name(testnet: isTestnet), "GRAM")
         }
         let body = TonWallet.jettonTransferBody(amount: tokenAmount, to: destination, responseTo: me)
         let message = TonWallet.internalMessage(to: jettonWallet, amount: attached, bounce: true, body: body)

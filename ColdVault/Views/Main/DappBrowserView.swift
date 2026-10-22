@@ -54,40 +54,71 @@ struct CuratedDapp: Identifiable {
     let url: String
     let icon: String
     let category: Category
+    /// Where the site belongs: "btc", or a network (EVMChain raw value: ethereum, base, polygon,
+    /// tron, ton, solana). The browser lists the sites of the wallet and network on screen.
+    let chains: Set<String>
 
     enum Category: String, CaseIterable {
         case defi
         case nfts
+        case names
         case explorers
 
         func title(_ lang: AppLanguage) -> String {
             switch self {
             case .defi: return "DeFi"
             case .nfts: return "NFTs"
+            case .names: return lang == .english ? "Names" : "Nombres"
             case .explorers: return lang == .english ? "Explorers" : "Exploradores"
             }
         }
     }
 
+    private static let evm: Set<String> = ["ethereum", "base", "polygon"]
+
     static let directory: [CuratedDapp] = [
         // DeFi
-        CuratedDapp(name: "Uniswap", subtitleEn: "Swap tokens on Ethereum, Base & Polygon", subtitleEs: "Intercambia tokens en Ethereum, Base y Polygon", url: "https://app.uniswap.org", icon: "arrow.triangle.2.circlepath", category: .defi),
-        CuratedDapp(name: "Aave", subtitleEn: "Decentralized liquidity & lending", subtitleEs: "Liquidez y préstamos descentralizados", url: "https://app.aave.com", icon: "percent", category: .defi),
-        CuratedDapp(name: "1inch", subtitleEn: "DeFi DEX aggregator", subtitleEs: "Agregador DEX multicadena", url: "https://app.1inch.io", icon: "sparkles", category: .defi),
-        CuratedDapp(name: "Curve", subtitleEn: "Stablecoin pools & low-slippage swaps", subtitleEs: "Pools de stablecoins e intercambios", url: "https://curve.fi", icon: "waveform.path.ecg", category: .defi),
-        CuratedDapp(name: "Lido", subtitleEn: "Liquid Ethereum staking", subtitleEs: "Staking líquido de Ethereum", url: "https://stake.lido.fi", icon: "drop.fill", category: .defi),
-        CuratedDapp(name: "Jupiter", subtitleEn: "Solana swap aggregator", subtitleEs: "Agregador de swaps en Solana", url: "https://jup.ag", icon: "bolt.horizontal.circle.fill", category: .defi),
+        CuratedDapp(name: "Uniswap", subtitleEn: "Swap tokens on Ethereum, Base & Polygon", subtitleEs: "Intercambia tokens en Ethereum, Base y Polygon", url: "https://app.uniswap.org", icon: "arrow.triangle.2.circlepath", category: .defi, chains: evm),
+        CuratedDapp(name: "Aave", subtitleEn: "Decentralized liquidity & lending", subtitleEs: "Liquidez y préstamos descentralizados", url: "https://app.aave.com", icon: "percent", category: .defi, chains: evm),
+        CuratedDapp(name: "Aerodrome", subtitleEn: "Base's main exchange", subtitleEs: "El principal exchange de Base", url: "https://aerodrome.finance", icon: "airplane", category: .defi, chains: ["base"]),
+        CuratedDapp(name: "QuickSwap", subtitleEn: "Polygon's exchange", subtitleEs: "Exchange de Polygon", url: "https://quickswap.exchange", icon: "hare", category: .defi, chains: ["polygon"]),
+        CuratedDapp(name: "1inch", subtitleEn: "DeFi DEX aggregator", subtitleEs: "Agregador DEX multicadena", url: "https://app.1inch.io", icon: "sparkles", category: .defi, chains: evm),
+        CuratedDapp(name: "Curve", subtitleEn: "Stablecoin pools & low-slippage swaps", subtitleEs: "Pools de stablecoins e intercambios", url: "https://curve.fi", icon: "waveform.path.ecg", category: .defi, chains: evm),
+        CuratedDapp(name: "Lido", subtitleEn: "Liquid Ethereum staking", subtitleEs: "Staking líquido de Ethereum", url: "https://stake.lido.fi", icon: "drop.fill", category: .defi, chains: ["ethereum"]),
+        CuratedDapp(name: "Jupiter", subtitleEn: "Solana swap aggregator", subtitleEs: "Agregador de swaps en Solana", url: "https://jup.ag", icon: "bolt.horizontal.circle.fill", category: .defi, chains: ["solana"]),
+        CuratedDapp(name: "Raydium", subtitleEn: "Solana exchange & pools", subtitleEs: "Exchange y pools de Solana", url: "https://raydium.io", icon: "drop.triangle", category: .defi, chains: ["solana"]),
+        CuratedDapp(name: "Jito", subtitleEn: "Liquid SOL staking", subtitleEs: "Staking líquido de SOL", url: "https://www.jito.network", icon: "leaf", category: .defi, chains: ["solana"]),
+        CuratedDapp(name: "STON.fi", subtitleEn: "TON's exchange", subtitleEs: "Exchange de TON", url: "https://app.ston.fi", icon: "arrow.left.arrow.right", category: .defi, chains: ["ton"]),
+        CuratedDapp(name: "DeDust", subtitleEn: "TON exchange & pools", subtitleEs: "Exchange y pools de TON", url: "https://dedust.io", icon: "aqi.medium", category: .defi, chains: ["ton"]),
+        CuratedDapp(name: "Tonstakers", subtitleEn: "Liquid Gram staking", subtitleEs: "Staking líquido de Gram", url: "https://tonstakers.com", icon: "leaf", category: .defi, chains: ["ton"]),
+        CuratedDapp(name: "SunSwap", subtitleEn: "Tron's exchange", subtitleEs: "Exchange de Tron", url: "https://sun.io", icon: "sun.max", category: .defi, chains: ["tron"]),
+        CuratedDapp(name: "JustLend", subtitleEn: "Lending & TRX staking", subtitleEs: "Préstamos y staking de TRX", url: "https://justlend.org", icon: "percent", category: .defi, chains: ["tron"]),
+        CuratedDapp(name: "Boltz", subtitleEn: "Swap bitcoin ⇄ Lightning & Liquid", subtitleEs: "Cambia bitcoin ⇄ Lightning y Liquid", url: "https://boltz.exchange", icon: "bolt.fill", category: .defi, chains: ["btc"]),
         // NFTs & Web3
-        CuratedDapp(name: "OpenSea", subtitleEn: "Collectibles & NFT marketplace", subtitleEs: "Mercado de coleccionables y NFTs", url: "https://opensea.io", icon: "sailboat.fill", category: .nfts),
-        CuratedDapp(name: "ENS Domains", subtitleEn: "Ethereum Name Service (.eth)", subtitleEs: "Nombres de Ethereum (.eth)", url: "https://app.ens.domains", icon: "at", category: .nfts),
-        CuratedDapp(name: "Magic Eden", subtitleEn: "Ordinals, Bitcoin & multi-chain NFTs", subtitleEs: "Ordinals, Bitcoin y NFTs multicadena", url: "https://magiceden.io", icon: "square.grid.2x2.fill", category: .nfts),
-        CuratedDapp(name: "Zora", subtitleEn: "Onchain media & creations", subtitleEs: "Creaciones y arte en cadena", url: "https://zora.co", icon: "sparkles.rectangle.stack", category: .nfts),
+        CuratedDapp(name: "OpenSea", subtitleEn: "Collectibles & NFT marketplace", subtitleEs: "Mercado de coleccionables y NFTs", url: "https://opensea.io", icon: "sailboat.fill", category: .nfts, chains: evm),
+        CuratedDapp(name: "Magic Eden", subtitleEn: "Ordinals, Bitcoin & multi-chain NFTs", subtitleEs: "Ordinals, Bitcoin y NFTs multicadena", url: "https://magiceden.io", icon: "square.grid.2x2.fill", category: .nfts, chains: ["btc", "solana", "ethereum", "base", "polygon"]),
+        CuratedDapp(name: "UniSat", subtitleEn: "Ordinals, BRC-20 & runes", subtitleEs: "Ordinals, BRC-20 y runes", url: "https://unisat.io", icon: "circle.hexagongrid", category: .nfts, chains: ["btc"]),
+        CuratedDapp(name: "Zora", subtitleEn: "Onchain media & creations", subtitleEs: "Creaciones y arte en cadena", url: "https://zora.co", icon: "sparkles.rectangle.stack", category: .nfts, chains: ["ethereum", "base"]),
+        CuratedDapp(name: "Tensor", subtitleEn: "Solana NFT marketplace", subtitleEs: "Mercado de NFTs de Solana", url: "https://www.tensor.trade", icon: "square.stack.3d.up", category: .nfts, chains: ["solana"]),
+        CuratedDapp(name: "Getgems", subtitleEn: "TON NFT marketplace", subtitleEs: "Mercado de NFTs de TON", url: "https://getgems.io", icon: "diamond", category: .nfts, chains: ["ton"]),
+        CuratedDapp(name: "Fragment", subtitleEn: "Telegram usernames, numbers & gifts", subtitleEs: "Usuarios, números y regalos de Telegram", url: "https://fragment.com", icon: "paperplane", category: .nfts, chains: ["ton"]),
+        // Names: a readable name for the wallet's address
+        CuratedDapp(name: "ENS Domains", subtitleEn: "Your .eth name", subtitleEs: "Tu nombre .eth", url: "https://app.ens.domains", icon: "at", category: .names, chains: ["ethereum"]),
+        CuratedDapp(name: "Basenames", subtitleEn: "Your .base.eth name", subtitleEs: "Tu nombre .base.eth", url: "https://www.base.org/names", icon: "at", category: .names, chains: ["base"]),
+        CuratedDapp(name: "Unstoppable Domains", subtitleEn: "Your .polygon name and other Web3 domains", subtitleEs: "Tu nombre .polygon y otros dominios Web3", url: "https://unstoppabledomains.com", icon: "at", category: .names, chains: ["polygon"]),
+        CuratedDapp(name: "SNS", subtitleEn: "Your .sol name (Solana Name Service)", subtitleEs: "Tu nombre .sol (Solana Name Service)", url: "https://www.sns.id", icon: "at", category: .names, chains: ["solana"]),
+        CuratedDapp(name: "TON DNS", subtitleEn: "Your .ton name", subtitleEs: "Tu nombre .ton", url: "https://dns.ton.org", icon: "at", category: .names, chains: ["ton"]),
+        CuratedDapp(name: "BNS", subtitleEn: "Your .btc name (Bitcoin Name System)", subtitleEs: "Tu nombre .btc (Bitcoin Name System)", url: "https://btc.us", icon: "at", category: .names, chains: ["btc"]),
         // Explorers
-        CuratedDapp(name: "Mempool.space", subtitleEn: "Bitcoin blocks, fees & mempool", subtitleEs: "Bloques, comisiones y mempool de Bitcoin", url: "https://mempool.space", icon: "cube.transparent", category: .explorers),
-        CuratedDapp(name: "Etherscan", subtitleEn: "Ethereum blockchain explorer", subtitleEs: "Explorador de bloques de Ethereum", url: "https://etherscan.io", icon: "magnifyingglass.circle", category: .explorers),
-        CuratedDapp(name: "Basescan", subtitleEn: "Base network explorer", subtitleEs: "Explorador de la red Base", url: "https://basescan.org", icon: "circle.grid.cross", category: .explorers),
-        CuratedDapp(name: "Polygonscan", subtitleEn: "Polygon network explorer", subtitleEs: "Explorador de la red Polygon", url: "https://polygonscan.com", icon: "hexagon", category: .explorers),
-        CuratedDapp(name: "Solscan", subtitleEn: "Solana blockchain explorer", subtitleEs: "Explorador de bloques de Solana", url: "https://solscan.io", icon: "sun.max", category: .explorers)
+        CuratedDapp(name: "Mempool.space", subtitleEn: "Bitcoin blocks, fees & mempool", subtitleEs: "Bloques, comisiones y mempool de Bitcoin", url: "https://mempool.space", icon: "cube.transparent", category: .explorers, chains: ["btc"]),
+        CuratedDapp(name: "Ordiscan", subtitleEn: "Ordinals & runes explorer", subtitleEs: "Explorador de ordinals y runes", url: "https://ordiscan.com", icon: "magnifyingglass", category: .explorers, chains: ["btc"]),
+        CuratedDapp(name: "Ordinals.com", subtitleEn: "The ord explorer", subtitleEs: "El explorador oficial de ord", url: "https://ordinals.com", icon: "circle.grid.3x3", category: .explorers, chains: ["btc"]),
+        CuratedDapp(name: "Etherscan", subtitleEn: "Ethereum blockchain explorer", subtitleEs: "Explorador de bloques de Ethereum", url: "https://etherscan.io", icon: "magnifyingglass.circle", category: .explorers, chains: ["ethereum"]),
+        CuratedDapp(name: "Basescan", subtitleEn: "Base network explorer", subtitleEs: "Explorador de la red Base", url: "https://basescan.org", icon: "circle.grid.cross", category: .explorers, chains: ["base"]),
+        CuratedDapp(name: "Polygonscan", subtitleEn: "Polygon network explorer", subtitleEs: "Explorador de la red Polygon", url: "https://polygonscan.com", icon: "hexagon", category: .explorers, chains: ["polygon"]),
+        CuratedDapp(name: "Solscan", subtitleEn: "Solana blockchain explorer", subtitleEs: "Explorador de bloques de Solana", url: "https://solscan.io", icon: "sun.max", category: .explorers, chains: ["solana"]),
+        CuratedDapp(name: "Tonviewer", subtitleEn: "TON blockchain explorer", subtitleEs: "Explorador de bloques de TON", url: "https://tonviewer.com", icon: "magnifyingglass.circle", category: .explorers, chains: ["ton"]),
+        CuratedDapp(name: "Tronscan", subtitleEn: "Tron blockchain explorer", subtitleEs: "Explorador de bloques de Tron", url: "https://tronscan.org", icon: "magnifyingglass.circle", category: .explorers, chains: ["tron"])
     ]
 }
 
@@ -1338,11 +1369,24 @@ struct DappBrowserView: View {
         }
     }
 
+    /// The wallet and network on screen, as the directory names them.
+    private var dappChain: String {
+        walletManager.activeCoin == .bitcoin ? "btc" : walletManager.activeNetwork.rawValue
+    }
+    private var walletDapps: [CuratedDapp] { CuratedDapp.directory.filter { $0.chains.contains(dappChain) } }
+    private var dappCategories: [CuratedDapp.Category] {
+        CuratedDapp.Category.allCases.filter { category in walletDapps.contains { $0.category == category } }
+    }
+    /// The chosen tab, or the first one this wallet has.
+    private var shownCategory: CuratedDapp.Category {
+        dappCategories.contains(selectedCategory) ? selectedCategory : (dappCategories.first ?? .defi)
+    }
+
     private var curatedDappsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 4) {
-                ForEach(CuratedDapp.Category.allCases, id: \.rawValue) { category in
-                    let active = selectedCategory == category
+                ForEach(dappCategories, id: \.rawValue) { category in
+                    let active = shownCategory == category
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -1364,7 +1408,7 @@ struct DappBrowserView: View {
             .background(Capsule().fill(SettingsStyle.groupFill))
 
             VStack(spacing: 0) {
-                let items = CuratedDapp.directory.filter { $0.category == selectedCategory }
+                let items = walletDapps.filter { $0.category == shownCategory }
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, dapp in
                     if index > 0 { SettingsDivider(inset: 68) }
                     Button {

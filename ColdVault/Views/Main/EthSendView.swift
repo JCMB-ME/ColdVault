@@ -571,8 +571,8 @@ struct EthSendView: View {
                      : asset.chain == .solana
                      ? t("A Solana transfer costs a fixed 0.000005 SOL.",
                          "Un envío en Solana cuesta 0.000005 SOL, una cantidad fija.")
-                     : t("TON fees are a fraction of a cent; a token transfer carries 0.05 TON and the unused part comes back.",
-                         "Las comisiones de TON son centavos; un envío de token lleva 0.05 TON y lo que no se usa regresa."))
+                     : t("TON fees are a fraction of a cent; a token transfer carries 0.05 GRAM and the unused part comes back.",
+                         "Las comisiones de TON son centavos; un envío de token lleva 0.05 GRAM y lo que no se usa regresa."))
                     .font(.system(size: 12))
                     .foregroundColor(Palette.secondary)
                     .multilineTextAlignment(.center)

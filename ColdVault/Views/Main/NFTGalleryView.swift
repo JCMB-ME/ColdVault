@@ -67,6 +67,18 @@ struct NFTGalleryView: View {
                     } else {
                         let layout = NFTFolder.split(items)
                         LazyVGrid(columns: columns, spacing: 12) {
+                            // The favourites first, as a folder of their own.
+                            if let favorites = favoritesFolder {
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { openFolderID = favorites.id }
+                                } label: {
+                                    CollectibleFolderTile(name: favorites.name, count: favorites.items.count, unit: "NFT", units: "NFTs",
+                                                          thumbs: favorites.items.prefix(3).map { CollectibleThumb(id: $0.id, url: $0.imageURL, icon: "photo") },
+                                                          icon: "star.fill")
+                                }
+                                .buttonStyle(.plain)
+                            }
                             ForEach(layout.folders) { folder in
                                 Button {
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -114,7 +126,14 @@ struct NFTGalleryView: View {
 
     private var openFolder: NFTFolder? {
         guard let id = openFolderID else { return nil }
+        if id == "favorites" { return favoritesFolder }
         return NFTFolder.split(items).folders.first { $0.id == id }
+    }
+
+    private var favoritesFolder: NFTFolder? {
+        let favorites = walletManager.favoriteCollectibles
+        let list = items.filter { favorites.contains($0.id) }
+        return list.isEmpty ? nil : NFTFolder(id: "favorites", name: t("Favorites", "Favoritos"), items: list)
     }
 
     private func closeFolder() {
@@ -144,6 +163,7 @@ struct NFTGalleryView: View {
             NFTImage(url: item.imageURL)
                 .aspectRatio(1, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(alignment: .topTrailing) { FavoriteBadge(isOn: walletManager.isFavoriteCollectible(item.id)) }
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
                     .font(.system(size: 14, weight: .semibold))
@@ -443,6 +463,7 @@ struct NFTDetailView: View {
                 row(item.chain == .solana ? "Mint" : t("Contract", "Contrato"), item.contract)
             }
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+            FavoriteToggle(id: item.id)
             if canSend {
                 sendButton(t("Send", "Enviar")) { showSend = true }
             }

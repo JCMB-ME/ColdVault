@@ -22,6 +22,8 @@ struct CollectibleSendView: View {
     var onDone: (() -> Void)? = nil
 
     @State private var recipient = ""
+    /// A name typed instead of an address (alice.eth, deadboy.base.eth) and what it points to.
+    @State private var nameLookup: NameLookupState = .idle
     @State private var showScanner = false
     @State private var isProcessing = false
     @State private var errorMessage: String?
@@ -61,6 +63,33 @@ struct CollectibleSendView: View {
         }
     }
     private var isBitcoin: Bool { if case .inscription = item { return true } else { return false } }
+
+    /// A name was typed (Ethereum, Base and Polygon NFTs).
+    private var isNameInput: Bool {
+        if case .nft(let nft) = item { return nft.chain.isEVM && ENSName.looksLikeName(trimmed) }
+        return false
+    }
+    private var resolvedName: ENSResolution? {
+        guard isNameInput, case .resolved(let found) = nameLookup, found.name == ENSName.normalized(trimmed) else { return nil }
+        return found
+    }
+
+    /// The fee in the chosen currency, when the coin's price is known (never on testnets).
+    private var feeFiat: String? {
+        guard !walletManager.isTestnet else { return nil }
+        let value: Double
+        if let plan = evmPlan {
+            let chain = plan.asset.chain
+            guard let price = walletManager.nativeFiatPrice(chain.nativeSymbol) else { return nil }
+            value = plan.maxFee.doubleValue / pow(10, Double(chain.nativeDecimals)) * price
+        } else if let plan = btcPlan, let price = walletManager.fiatPrice, price > 0 {
+            value = Double(plan.fee) / 100_000_000 * price
+        } else {
+            return nil
+        }
+        return WalletManager.currencyFormatter(walletManager.fiatCurrency, fractionDigits: value < 1 ? 2 : nil)
+            .string(from: NSNumber(value: value))
+    }
 
     /// Contacts with an address of this NFT's network (bitcoin for an ordinal).
     private var contacts: [Contact] {
@@ -133,6 +162,12 @@ struct CollectibleSendView: View {
         }
         .task {
             if isBitcoin, let loaded = try? await walletManager.recommendedFees() { fees = loaded }
+            // The coin's price, for the fee in money.
+            if isBitcoin {
+                if walletManager.fiatPrice == nil { await walletManager.refreshMarketData(force: false) }
+            } else if case .nft(let nft) = item, walletManager.nativeFiatPrice(nft.chain.nativeSymbol) == nil {
+                await walletManager.refreshEthereumPrice()
+            }
         }
         .sheet(isPresented: $showScanner) {
             QRScannerView { code in
@@ -185,6 +220,7 @@ struct CollectibleSendView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                nameStatusLine
                 // Contacts one tap away, like Send.
                 if !contacts.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -215,6 +251,7 @@ struct CollectibleSendView: View {
             }
             .padding(16)
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+            .task(id: trimmed) { await updateNameLookup() }
 
             if isBitcoin {
                 VStack(alignment: .leading, spacing: 10) {
@@ -243,9 +280,67 @@ struct CollectibleSendView: View {
                 .multilineTextAlignment(.center)
 
             PrimaryCapsuleButton(title: t("Review", "Revisar"), icon: "doc.text.magnifyingglass",
-                                 isLoading: isProcessing, enabled: !trimmed.isEmpty && !isProcessing, action: review)
-                .disabled(trimmed.isEmpty || isProcessing)
+                                 isLoading: isProcessing, enabled: canReview, action: review)
+                .disabled(!canReview)
         }
+    }
+
+    /// A name must point somewhere before the review.
+    private var canReview: Bool { !trimmed.isEmpty && !isProcessing && (!isNameInput || resolvedName != nil) }
+
+    /// Under the field while a name is typed: looking it up, the address it points to, or why not.
+    @ViewBuilder
+    private var nameStatusLine: some View {
+        if isNameInput {
+            switch nameLookup {
+            case .idle:
+                EmptyView()
+            case .resolving:
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.7)
+                    Text(t("Looking up the name…", "Buscando el nombre…"))
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Palette.secondary)
+                .padding(.leading, 4)
+            case .resolved(let found):
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(t("Points to", "Apunta a"), systemImage: "checkmark.seal.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.green)
+                    Text(found.address)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(Palette.secondary)
+                        .textSelection(.enabled)
+                    if case .nft(let nft) = item, found.name.hasSuffix(".base.eth"), nft.chain != .base {
+                        Text(t("This is a Base name. On \(networkName) make sure the address is the right one before sending.",
+                               "Este es un nombre de Base. En \(networkName) comprueba que la dirección sea la correcta antes de enviar."))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.orange)
+                    }
+                }
+                .padding(.leading, 4)
+            case .failed(let message):
+                Text(message)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.red)
+                    .padding(.leading, 4)
+            }
+        }
+    }
+
+    /// Looks the typed name up once typing pauses (the next keystroke cancels it).
+    private func updateNameLookup() async {
+        guard isNameInput else {
+            nameLookup = .idle
+            return
+        }
+        nameLookup = .resolving
+        try? await Task.sleep(nanoseconds: 450_000_000)
+        guard !Task.isCancelled else { return }
+        let state = await ENSResolver.lookup(trimmed)
+        guard !Task.isCancelled else { return }
+        nameLookup = state
     }
 
     private func feeButton(_ index: Int, _ label: String, _ rate: Int) -> some View {
@@ -281,8 +376,11 @@ struct CollectibleSendView: View {
                     .foregroundColor(.orange)
                     .multilineTextAlignment(.center)
             }
+            if let named = resolvedName, named.address == evmPlan?.recipient {
+                Text(named.name).font(.system(size: 16, weight: .semibold))
+            }
             VStack(spacing: 0) {
-                row(t("To", "Para"), trimmed)
+                row(t("To", "Para"), evmPlan?.recipient ?? trimmed)
                 SettingsDivider(inset: 16)
                 row(t("Network", "Red"), networkName)
                 SettingsDivider(inset: 16)
@@ -313,11 +411,12 @@ struct CollectibleSendView: View {
     }
 
     private var feeText: String {
+        let money = feeFiat.map { " (≈ \($0))" } ?? ""
         if let plan = evmPlan {
             let chain = plan.asset.chain
-            return "≤ " + plan.maxFee.formatted(decimals: chain.nativeDecimals, maxFraction: 8) + " " + chain.nativeSymbol
+            return "≤ " + plan.maxFee.formatted(decimals: chain.nativeDecimals, maxFraction: 8) + " " + chain.nativeSymbol + money
         }
-        if let plan = btcPlan { return "\(plan.fee) sats · \(plan.feeRate) sat/vB" }
+        if let plan = btcPlan { return "\(plan.fee) sats · \(plan.feeRate) sat/vB" + money }
         return "—"
     }
 
@@ -375,9 +474,11 @@ struct CollectibleSendView: View {
             do {
                 switch item {
                 case .nft(let nft):
-                    // A name (alice.eth) is turned into its address on EVM networks.
+                    // A name (alice.eth, deadboy.base.eth) is turned into its address on EVM networks.
                     var address = to
-                    if nft.chain.isEVM && ENSName.looksLikeName(to) { address = try await ENSResolver.resolve(to).address }
+                    if nft.chain.isEVM && ENSName.looksLikeName(to) {
+                        if let named = resolvedName { address = named.address } else { address = try await ENSResolver.resolve(to).address }
+                    }
                     let plan = try await walletManager.prepareNFTSend(nft, to: address)
                     withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { evmPlan = plan }
                 case .inscription(let inscription):

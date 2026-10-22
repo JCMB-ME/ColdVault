@@ -179,8 +179,8 @@ extension WalletManager {
         // toncenter (TON) and tonapi (jettons) are different services: both at once.
         async let jettonList = UncheckedBox(value: try? await api.jettons(owner))
         let wallet = try await api.wallet(owner)
-        var list = [EVMAsset(chain: .ton, contract: nil, symbol: "TON", name: "Toncoin", decimals: 9,
-                             balance: wallet.balance, usdPrice: nativeUsdPrice("TON"), iconURL: nil)]
+        var list = [EVMAsset(chain: .ton, contract: nil, symbol: "GRAM", name: "Gram", decimals: 9,
+                             balance: wallet.balance, usdPrice: nativeUsdPrice("GRAM"), iconURL: nil)]
         let jettons = (await jettonList).value ?? []
         let added = customTokens.filter { $0.chain == EVMChain.ton.rawValue && $0.testnet == testnet }
         let addedMasters = Set(added.map { $0.contract.lowercased() })
@@ -928,14 +928,17 @@ extension WalletManager {
         }
         let symbols = Set(activeCoin.networks.map { $0.nativeSymbol }).subtracting(["ETH"])
         guard !symbols.isEmpty else { return }
-        let pairs = symbols.sorted().map { "\($0)USD" }.joined(separator: ",")
+        let pairs = symbols.sorted().map { "\(WalletManager.krakenTicker($0))USD" }.joined(separator: ",")
         guard let result = await fetchKrakenTickers(pairs) else { return }
         for symbol in symbols {
-            guard let ticker = result.first(where: { $0.key.hasPrefix(symbol) })?.value as? [String: Any],
+            guard let ticker = result.first(where: { $0.key.hasPrefix(WalletManager.krakenTicker(symbol)) })?.value as? [String: Any],
                   let text = (ticker["c"] as? [Any])?.first as? String, let price = Double(text), price > 0 else { continue }
             coinUsdPrices[symbol] = price
         }
     }
+
+    /// Kraken still lists Gram under its old ticker.
+    static func krakenTicker(_ symbol: String) -> String { symbol == "GRAM" ? "TON" : symbol }
 
     /// Kraken tickers for the other native coins. Through Tor when it is on, like every other connection.
     func fetchKrakenTickers(_ pairs: String) async -> [String: Any]? {

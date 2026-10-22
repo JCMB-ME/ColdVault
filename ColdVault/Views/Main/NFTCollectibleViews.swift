@@ -288,6 +288,8 @@ struct CollectibleFolderTile: View {
     let unit: String
     let units: String
     let thumbs: [CollectibleThumb]
+    /// A collection's folder, or the star of the favourites.
+    var icon = "folder.fill"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -306,9 +308,9 @@ struct CollectibleFolderTile: View {
             .aspectRatio(1, contentMode: .fit)
             .padding(.top, 8)
             HStack(spacing: 5) {
-                Image(systemName: "folder.fill")
+                Image(systemName: icon)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(Palette.secondary)
+                    .foregroundColor(icon == "star.fill" ? .yellow : Palette.secondary)
                 Text(name)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Color(uiColor: .label))

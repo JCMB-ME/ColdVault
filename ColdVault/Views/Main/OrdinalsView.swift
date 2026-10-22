@@ -59,6 +59,17 @@ struct OrdinalsView: View {
                         // Like the NFTs: collections of two or more are folders (biggest first), the rest single.
                         let layout = split
                         LazyVGrid(columns: columns, spacing: 12) {
+                            if let favorites = favoritesFolder {
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { openFolderID = favorites.id }
+                                } label: {
+                                    CollectibleFolderTile(name: favorites.name, count: favorites.items.count,
+                                                          unit: "Ordinal", units: "Ordinals",
+                                                          thumbs: favorites.items.prefix(3).map(thumb), icon: "star.fill")
+                                }
+                                .buttonStyle(.plain)
+                            }
                             ForEach(layout.folders) { folder in
                                 Button {
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -138,7 +149,15 @@ struct OrdinalsView: View {
 
     private var openFolder: Folder? {
         guard let id = openFolderID else { return nil }
+        if id == "\u{2605}favorites" { return favoritesFolder }
         return split.folders.first { $0.id == id }
+    }
+
+    /// The favourites, as a folder of their own (its id cannot be a collection's).
+    private var favoritesFolder: Folder? {
+        let favorites = walletManager.favoriteCollectibles
+        let list = items.filter { favorites.contains($0.id) }
+        return list.isEmpty ? nil : Folder(id: "\u{2605}favorites", name: t("Favorites", "Favoritos"), items: list)
     }
 
     private func closeFolder() {
@@ -167,6 +186,7 @@ struct OrdinalsView: View {
             preview(item)
                 .aspectRatio(1, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(alignment: .topTrailing) { FavoriteBadge(isOn: walletManager.isFavoriteCollectible(item.id)) }
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.collection ?? t("Inscription", "Inscripción"))
                     .font(.system(size: 14, weight: .semibold))
@@ -268,6 +288,7 @@ struct InscriptionDetailView: View {
                 row("ID", item.id)
             }
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+            FavoriteToggle(id: item.id)
             if !walletManager.isWatchOnly && item.output != nil {
                 sendButton(t("Send", "Enviar")) { showSend = true }
             }
@@ -337,7 +358,7 @@ struct OrdinalsHomeCard: View {
 
     var body: some View {
         CollectiblesStrip(title: "Ordinals",
-                          items: (walletManager.homeInscriptions ?? []).map {
+                          items: walletManager.favoritesFirst(walletManager.homeInscriptions ?? [], id: { $0.id }).map {
                               CollectibleThumb(id: $0.id, url: $0.isImage ? $0.contentURL : nil,
                                                icon: $0.contentType.hasPrefix("text/") ? "doc.text" : "cube")
                           },

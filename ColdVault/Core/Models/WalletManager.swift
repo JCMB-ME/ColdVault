@@ -180,6 +180,8 @@ public final class WalletManager: ObservableObject {
     @Published public internal(set) var sentCollectibleCount = 0
     /// Changes each time the NFT / ordinal lists were read again after a movement (open galleries reload).
     @Published public internal(set) var collectiblesVersion = 0
+    /// Changes when an NFT or ordinal is marked or unmarked as a favourite.
+    @Published public internal(set) var favoritesVersion = 0
     @Published public internal(set) var homeInscriptions: [Inscription]?
     var homeCollectiblesKey: String?
     var lastEthHistoryFetch: Date?

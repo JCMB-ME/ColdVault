@@ -24,7 +24,8 @@ public enum CoinKind: String, Codable, CaseIterable, Identifiable {
         case .bitcoin: return "BTC"
         case .ethereum: return "ETH"
         case .dollars: return "USD"
-        case .ton: return "TON"
+        // Toncoin became Gram (GRAM) on 15 June 2026; the network is still TON.
+        case .ton: return "GRAM"
         case .tron: return "TRX"
         case .polygon: return "POL"
         case .solana: return "SOL"

@@ -344,8 +344,11 @@ struct EVMAssetsCard: View {
 
     // MARK: NFTs
 
+    /// The network's NFTs, favourites first.
     private var nfts: [EVMNFT]? {
-        walletManager.homeNFTs?.filter { $0.chain == walletManager.activeNetwork }
+        walletManager.homeNFTs.map { list in
+            walletManager.favoritesFirst(list.filter { $0.chain == walletManager.activeNetwork }, id: { $0.id })
+        }
     }
 
     private var nftBlock: some View {

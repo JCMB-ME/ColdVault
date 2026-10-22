@@ -117,7 +117,7 @@ extension WalletManager {
         let fee = UInt256(UInt64(info.active ? 6_000_000 : 12_000_000))
         let attached = UInt256(50_000_000)
         guard let needed = attached.adding(fee), !(info.balance < needed) else {
-            throw EthereumError.noGas(EVMChain.ton.name(testnet: isTestnet), "TON")
+            throw EthereumError.noGas(EVMChain.ton.name(testnet: isTestnet), "GRAM")
         }
         var body = TonBuilder()
         body.uint(0x5fcc_3d14, 32)          // transfer

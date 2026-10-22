@@ -40,7 +40,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .ethereum, .base: return "ETH"
         case .polygon: return "POL"
         case .tron: return "TRX"
-        case .ton: return "TON"
+        case .ton: return "GRAM"
         case .solana: return "SOL"
         }
     }
@@ -50,7 +50,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .ethereum, .base: return "Ether"
         case .polygon: return "Polygon"
         case .tron: return "Tron"
-        case .ton: return "Toncoin"
+        case .ton: return "Gram"
         case .solana: return "Solana"
         }
     }

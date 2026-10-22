@@ -136,7 +136,7 @@ public struct CreateWalletView: View {
                 coinCard(.ethereum, title: "Ethereum", detail: t("ETH and tokens · Ethereum and Base", "ETH y tokens · Ethereum y Base"))
                 coinCard(.dollars, title: "Stable",
                          detail: t("USDT and USDC · Ethereum, Base, Polygon, Tron, TON", "USDT y USDC · Ethereum, Base, Polygon, Tron, TON"))
-                coinCard(.ton, title: "TON", detail: t("Toncoin, jettons and NFTs", "Toncoin, jettons y NFTs"))
+                coinCard(.ton, title: "TON", detail: t("Gram, jettons and NFTs", "Gram, jettons y NFTs"))
                 coinCard(.tron, title: "Tron", detail: t("TRX and USDT (TRC-20)", "TRX y USDT (TRC-20)"))
                 coinCard(.solana, title: "Solana", detail: t("SOL on the Solana network", "SOL en la red Solana"))
                 coinCard(.polygon, title: "Polygon", detail: t("POL, tokens and NFTs", "POL, tokens y NFTs"))
