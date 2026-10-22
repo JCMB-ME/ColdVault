@@ -712,6 +712,7 @@ struct CachedInscription: Codable {
     var contentType: String
     var output: String?
     var value: UInt64?
+    var collection: String?
 
     init(_ inscription: Inscription) {
         id = inscription.id
@@ -719,10 +720,13 @@ struct CachedInscription: Codable {
         contentType = inscription.contentType
         output = inscription.output
         value = inscription.value
+        collection = inscription.collection
     }
 
     var inscription: Inscription {
-        Inscription(id: id, number: number, contentType: contentType, output: output, value: value)
+        var item = Inscription(id: id, number: number, contentType: contentType, output: output, value: value)
+        item.collection = collection
+        return item
     }
 }
 

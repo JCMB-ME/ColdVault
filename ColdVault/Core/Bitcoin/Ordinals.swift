@@ -21,6 +21,9 @@ public struct Inscription: Identifiable, Equatable, Sendable {
     public let output: String?
     public let value: UInt64?
 
+    /// The collection it belongs to (Xverse's index), when it has one.
+    public var collection: String? = nil
+
     public var contentURL: URL? { URL(string: "\(OrdinalsService.base)/content/\(id)") }
     public var pageURL: URL? { URL(string: "\(OrdinalsService.base)/inscription/\(id)") }
     /// Images, and inscriptions whose type did not load (their content is tried as a picture).
@@ -31,6 +34,76 @@ public enum OrdinalsService {
     static let base = "https://ordinals.com"
     /// Typical inscription postage. Kept for reference: every coin is checked, whatever its size.
     public static let postageLimit: UInt64 = 10_000
+
+    /// ordinals.com turned its JSON API off: the lists come from Xverse's public index, and the
+    /// "does this coin carry an inscription or a rune" check reads ordinals.com's output page.
+    static let xverse = "https://api-3.xverse.app/v1"
+
+    private static func data(_ url: URL, accept: String) async throws -> Data {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = TorProxy.isEnabled ? 45 : 20
+        TorProxy.apply(to: config)
+        let session = URLSession(configuration: config)
+        defer { session.finishTasksAndInvalidate() }
+        var request = URLRequest(url: url)
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await session.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw BlockchainError.invalidResponse }
+        return data
+    }
+
+    private static func xverseJSON(_ path: String) async throws -> [String: Any] {
+        guard let url = URL(string: xverse + path),
+              let object = try JSONSerialization.jsonObject(with: try await data(url, accept: "application/json")) as? [String: Any] else {
+            throw BlockchainError.invalidResponse
+        }
+        return object
+    }
+
+    /// Every inscription held by an address, with its number, coin and type (pages of 60).
+    public static func inscriptions(address: String) async throws -> [Inscription] {
+        guard address.allSatisfy({ $0.isLetter || $0.isNumber }) else { throw BlockchainError.invalidResponse }
+        var found = [Inscription]()
+        var offset = 0
+        for _ in 0..<20 {
+            let object = try await xverseJSON("/address/\(address)/ordinals/inscriptions?limit=60&offset=\(offset)")
+            let results = (object["results"] as? [[String: Any]]) ?? []
+            for item in results {
+                guard let id = item["id"] as? String, isInscriptionID(id) else { continue }
+                found.append(Inscription(id: id, number: (item["number"] as? NSNumber)?.intValue,
+                                         contentType: (item["content_type"] as? String) ?? (item["mime_type"] as? String) ?? "",
+                                         output: item["output"] as? String,
+                                         value: (item["value"] as? NSNumber)?.uint64Value))
+            }
+            offset += results.count
+            let total = (object["total"] as? NSNumber)?.intValue ?? 0
+            if results.isEmpty || offset >= total { break }
+        }
+        return found
+    }
+
+    /// Inscription id → collection name, for the collections an address holds.
+    public static func collections(address: String) async -> [String: String] {
+        guard address.allSatisfy({ $0.isLetter || $0.isNumber }),
+              let object = try? await xverseJSON("/address/\(address)/ordinals/collections?limit=60") else { return [:] }
+        var names = [String: String]()
+        for collection in (object["results"] as? [[String: Any]]) ?? [] {
+            guard let id = collection["collection_id"] as? String, id != "other_collectibles",
+                  let name = collection["collection_name"] as? String,
+                  id.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) else { continue }
+            let clean = KnownToken.cleanText(name, limit: 60)
+            var offset = 0
+            for _ in 0..<10 {
+                guard let page = try? await xverseJSON("/address/\(address)/ordinals/collections/\(id)?limit=60&offset=\(offset)") else { break }
+                let items = (page["data"] as? [[String: Any]]) ?? []
+                for item in items { if let inscription = item["id"] as? String { names[inscription] = clean } }
+                offset += items.count
+                if items.isEmpty || offset >= ((page["total"] as? NSNumber)?.intValue ?? 0) { break }
+            }
+        }
+        return names
+    }
 
     private static func json(_ path: String) async throws -> Any {
         guard let url = URL(string: base + path) else { throw BlockchainError.invalidResponse }
@@ -72,13 +145,17 @@ public enum OrdinalsService {
                            value: (object["value"] as? NSNumber)?.uint64Value)
     }
 
-    /// Whether an output carries an inscription or a rune.
+    /// Whether an output carries an inscription or a rune: ordinals.com's page of the output lists
+    /// them ("inscriptions", "runes"). A page that does not load is no answer (the coin stays aside).
     public static func outputHoldsAssets(_ outpoint: String) async throws -> Bool {
-        guard let object = try await json("/output/\(outpoint)") as? [String: Any] else { throw BlockchainError.invalidResponse }
-        if let inscriptions = object["inscriptions"] as? [Any], !inscriptions.isEmpty { return true }
-        if let runes = object["runes"] as? [Any], !runes.isEmpty { return true }
-        if let runes = object["runes"] as? [String: Any], !runes.isEmpty { return true }
-        return false
+        let parts = outpoint.split(separator: ":")
+        guard parts.count == 2, parts[0].count == 64, parts[0].allSatisfy({ $0.isHexDigit }), parts[1].allSatisfy({ $0.isNumber }),
+              let url = URL(string: "\(base)/output/\(outpoint)") else { throw BlockchainError.invalidResponse }
+        let page = String(decoding: try await data(url, accept: "text/html"), as: UTF8.self)
+        // The page of any output names its value: a page without it is not an answer.
+        guard page.contains("<dt>value</dt>") else { throw BlockchainError.invalidResponse }
+        return page.contains("<dt>inscriptions</dt>") || page.contains("<dt>runes</dt>")
+            || page.contains("href=/inscription/") || page.contains("href=/rune/")
     }
 }
 
@@ -120,33 +197,19 @@ extension WalletManager {
         if usesAddressRotation && fundedAddresses.isEmpty { await refreshBalance() }
         var addresses = usesAddressRotation ? fundedAddresses.map { $0.address } : staticAddresses
         addresses += [record.taprootAddress, record.primaryAddress].filter { !$0.isEmpty }
-        var ids = [String]()
+        var byID = [String: Inscription]()
         var answered = false
         for address in Set(addresses) {
-            if let found = try? await OrdinalsService.inscriptionIDs(address: address) {
-                answered = true
-                ids += found
+            guard let found = try? await OrdinalsService.inscriptions(address: address) else { continue }
+            answered = true
+            let names = found.isEmpty ? [:] : await OrdinalsService.collections(address: address)
+            for var item in found {
+                item.collection = names[item.id]
+                byID[item.id] = item
             }
         }
         guard answered else { throw BlockchainError.invalidResponse }
-        let unique = Array(Set(ids)).sorted()
-        var result = [Inscription]()
-        for start in stride(from: 0, to: unique.count, by: 6) {
-            let batch = unique[start..<min(start + 6, unique.count)]
-            await withTaskGroup(of: Inscription.self) { group in
-                for id in batch {
-                    group.addTask {
-                        for attempt in 0..<3 {
-                            if let item = try? await OrdinalsService.inscription(id: id) { return item }
-                            try? await Task.sleep(nanoseconds: UInt64(400_000_000 * (attempt + 1)))
-                        }
-                        return Inscription(id: id, number: nil, contentType: "", output: nil, value: nil)
-                    }
-                }
-                for await item in group { result.append(item) }
-            }
-        }
-        return result.sorted { ($0.number ?? Int.max) > ($1.number ?? Int.max) }
+        return byID.values.sorted { ($0.number ?? Int.max) > ($1.number ?? Int.max) }
     }
 
     /// Keeps only the coins ordinals.com confirms carry no inscription or rune. Every coin is

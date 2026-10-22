@@ -45,15 +45,31 @@ struct OrdinalsView: View {
                         message("photo.on.rectangle.angled", t("No inscriptions yet", "Aún no tienes inscripciones"),
                                 t("Receive ordinals on your Taproot (bc1p) address.", "Recibe ordinals en tu dirección Taproot (bc1p)."))
                     } else {
-                        LazyVGrid(columns: columns, spacing: 12) {
-                            ForEach(items) { item in
-                                Button {
-                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                    selected = item
-                                } label: {
-                                    tile(item)
+                        // One section per collection (biggest first); the rest at the end.
+                        ForEach(groups, id: \.name) { group in
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack {
+                                    Text(group.name)
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(Color(uiColor: .label))
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text("\(group.items.count)")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(Palette.secondary)
                                 }
-                                .buttonStyle(.plain)
+                                .padding(.horizontal, 4)
+                                LazyVGrid(columns: columns, spacing: 12) {
+                                    ForEach(group.items) { item in
+                                        Button {
+                                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                            selected = item
+                                        } label: {
+                                            tile(item)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
                             }
                         }
                     }
@@ -75,17 +91,25 @@ struct OrdinalsView: View {
         }
     }
 
+    private var groups: [(name: String, items: [Inscription])] {
+        let named = Dictionary(grouping: items.filter { $0.collection != nil }) { $0.collection ?? "" }
+            .map { (name: $0.key, items: $0.value) }
+            .sorted { $0.items.count != $1.items.count ? $0.items.count > $1.items.count : $0.name < $1.name }
+        let rest = items.filter { $0.collection == nil }
+        return named + (rest.isEmpty ? [] : [(name: named.isEmpty ? t("Inscriptions", "Inscripciones") : t("Other", "Otras"), items: rest)])
+    }
+
     private func tile(_ item: Inscription) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             preview(item)
                 .aspectRatio(1, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.number.map { "#\($0)" } ?? t("Inscription", "Inscripción"))
+                Text(item.collection ?? t("Inscription", "Inscripción"))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Color(uiColor: .label))
                     .lineLimit(1)
-                Text(item.contentType.isEmpty ? "—" : item.contentType)
+                Text(item.number.map { "#\($0)" } ?? (item.contentType.isEmpty ? "—" : item.contentType))
                     .font(.system(size: 11))
                     .foregroundColor(Palette.secondary)
                     .lineLimit(1)
@@ -154,8 +178,16 @@ struct InscriptionDetailView: View {
     var body: some View {
         CollectibleRevealCard(title: "Ordinal", imageURL: item.isImage ? item.contentURL : nil,
                               placeholderIcon: item.contentType.hasPrefix("text/") ? "doc.text" : "cube") {
-            Text(item.number.map { "Inscription #\($0)" } ?? t("Inscription", "Inscripción"))
-                .font(.system(size: 22, weight: .bold))
+            VStack(spacing: 4) {
+                Text(item.collection ?? t("Inscription", "Inscripción"))
+                    .font(.system(size: 22, weight: .bold))
+                    .multilineTextAlignment(.center)
+                if let number = item.number {
+                    Text("#\(number)")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(Palette.secondary)
+                }
+            }
             VStack(spacing: 0) {
                 row(t("Type", "Tipo"), item.contentType.isEmpty ? "—" : item.contentType)
                 if let value = item.value {
