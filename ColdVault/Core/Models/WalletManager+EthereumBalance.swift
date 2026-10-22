@@ -592,7 +592,13 @@ extension WalletManager {
                 result += await solanaNFTs(owner: owner, testnet: record.isTestnet)
                 continue
             }
+            // With an Alchemy key: its NFT list first (it follows transfers within seconds).
+            if !record.isTestnet, let found = await alchemyNFTs(chain: chain, owner: owner) {
+                result += await ownedOnChain(found, chain: chain, owner: owner, testnet: record.isTestnet)
+                continue
+            }
             guard let base = chain.blockscout(testnet: record.isTestnet) else { continue }
+            var chainList = [EVMNFT]()
             var query = "type=ERC-721,ERC-1155"
             for _ in 0..<6 {
                 guard let url = URL(string: "\(base)/api/v2/addresses/\(owner)/nft?\(query)"),
@@ -610,10 +616,10 @@ extension WalletManager {
                                                     limit: 80)
                     let image = EVMNFT.webURL(item["image_url"] as? String) ?? EVMNFT.webURL(metadata?["image"] as? String)
                     let standard = (item["token_type"] as? String) ?? (token["type"] as? String) ?? "ERC-721"
-                    result.append(EVMNFT(chain: chain, contract: contract, tokenId: tokenId, name: name,
-                                         collection: collection,
-                                         details: KnownToken.cleanText((metadata?["description"] as? String) ?? "", limit: 600),
-                                         imageURL: image, standard: standard))
+                    chainList.append(EVMNFT(chain: chain, contract: contract, tokenId: tokenId, name: name,
+                                            collection: collection,
+                                            details: KnownToken.cleanText((metadata?["description"] as? String) ?? "", limit: 600),
+                                            imageURL: image, standard: standard))
                 }
                 // Next page: Blockscout returns the parameters to ask for it.
                 guard let next = object["next_page_params"] as? [String: Any], !next.isEmpty else { break }
@@ -623,8 +629,89 @@ extension WalletManager {
                 guard let text = components.percentEncodedQuery else { break }
                 query = text
             }
+            // The explorer lags behind: an NFT just sent away still shows there. Ownership is read from the chain.
+            result += await ownedOnChain(chainList, chain: chain, owner: owner, testnet: record.isTestnet)
         }
         return result
+    }
+
+    /// Keeps the NFTs the account still owns, asked to the nodes in batches: ownerOf (ERC-721) or
+    /// balanceOf (ERC-1155). An answer that does not come keeps the NFT.
+    private func ownedOnChain(_ nfts: [EVMNFT], chain: EVMChain, owner: String, testnet: Bool) async -> [EVMNFT] {
+        guard !nfts.isEmpty, let ownerBytes = EthereumAddress.parse(owner) else { return nfts }
+        func word(_ data: Data) -> Data { Data(repeating: 0, count: max(0, 32 - data.count)) + data.suffix(32) }
+        let rpc = EthereumRPC(isTestnet: testnet, chain: chain)
+        var kept = [EVMNFT]()
+        for start in stride(from: 0, to: nfts.count, by: 100) {
+            let chunk = Array(nfts[start..<min(start + 100, nfts.count)])
+            let calls: [(method: String, params: [Any])] = chunk.map { nft in
+                let id = word(UInt256(decimal: nft.tokenId, decimals: 0)?.minimalBytes ?? Data())
+                let data = nft.standard.contains("1155") ? Data([0x00, 0xfd, 0xd5, 0x8e]) + word(ownerBytes) + id
+                                                         : Data([0x63, 0x52, 0x21, 0x1e]) + id
+                return ("eth_call", [["to": nft.contract, "data": "0x" + data.hexEncodedString], "latest"])
+            }
+            guard let answers = try? await rpc.batch(calls), answers.count == chunk.count else {
+                kept += chunk
+                continue
+            }
+            for (nft, answer) in zip(chunk, answers) {
+                guard let hex = answer as? String, hex.hasPrefix("0x"),
+                      let bytes = String(hex.dropFirst(2)).hexDecoded, bytes.count >= 32 else {
+                    kept.append(nft)
+                    continue
+                }
+                let first = Data(bytes.prefix(32))
+                if nft.standard.contains("1155") {
+                    if first.contains(where: { $0 != 0 }) { kept.append(nft) }
+                } else if Data(first.suffix(20)) == ownerBytes {
+                    kept.append(nft)
+                }
+            }
+        }
+        return kept
+    }
+
+    /// Alchemy's NFT list (only with the user's key), up to 5 pages of 100.
+    private func alchemyNFTs(chain: EVMChain, owner: String) async -> [EVMNFT]? {
+        guard let key = ServiceKeys.key(.alchemy) else { return nil }
+        let host: String
+        switch chain {
+        case .ethereum: host = "eth-mainnet"
+        case .base: host = "base-mainnet"
+        case .polygon: host = "polygon-mainnet"
+        default: return nil
+        }
+        var found = [EVMNFT]()
+        var pageKey: String?
+        for _ in 0..<5 {
+            var components = URLComponents(string: "https://\(host).g.alchemy.com/nft/v3/\(key)/getNFTsForOwner")
+            var items = [URLQueryItem(name: "owner", value: owner), URLQueryItem(name: "withMetadata", value: "true"),
+                         URLQueryItem(name: "pageSize", value: "100")]
+            if let pageKey { items.append(URLQueryItem(name: "pageKey", value: pageKey)) }
+            components?.queryItems = items
+            guard let url = components?.url, let data = await blockscoutData(url),
+                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let owned = object["ownedNfts"] as? [[String: Any]] else { return found.isEmpty ? nil : found }
+            for item in owned {
+                let contractInfo = item["contract"] as? [String: Any]
+                guard let contract = contractInfo?["address"] as? String,
+                      let tokenId = (item["tokenId"] as? String) ?? (item["tokenId"] as? NSNumber)?.stringValue else { continue }
+                if (contractInfo?["isSpam"] as? Bool) == true { continue }
+                let collection = KnownToken.cleanText(((item["collection"] as? [String: Any])?["name"] as? String)
+                                                      ?? (contractInfo?["name"] as? String) ?? "NFT", limit: 60)
+                let image = item["image"] as? [String: Any]
+                let type = ((item["tokenType"] as? String) ?? "ERC721").uppercased()
+                found.append(EVMNFT(chain: chain, contract: contract, tokenId: tokenId,
+                                    name: KnownToken.cleanText((item["name"] as? String) ?? "\(collection) #\(tokenId.prefix(12))", limit: 80),
+                                    collection: collection,
+                                    details: KnownToken.cleanText((item["description"] as? String) ?? "", limit: 600),
+                                    imageURL: EVMNFT.webURL(image?["cachedUrl"] as? String) ?? EVMNFT.webURL(image?["originalUrl"] as? String),
+                                    standard: type.contains("1155") ? "ERC-1155" : "ERC-721"))
+            }
+            guard let next = object["pageKey"] as? String, !next.isEmpty else { break }
+            pageKey = next
+        }
+        return found
     }
 
     private func tonNFTs(owner: String, testnet: Bool) async -> [EVMNFT] {
