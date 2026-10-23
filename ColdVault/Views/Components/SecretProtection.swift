@@ -69,7 +69,8 @@ final class AppLockState: ObservableObject {
 }
 
 /// Optional (Settings › Security): the app asks for Face ID / passcode when it opens
-/// and whenever it comes back from the background. Sending, signing and showing the
+/// and when it comes back after being away longer than the chosen time (`AppLock.delay`;
+/// a quick trip to another app, e.g. to approve in MetaMask, doesn't lock). Sending, signing and showing the
 /// phrase or keys ask for Face ID anyway; this also hides balances and history from
 /// someone holding the unlocked phone.
 struct AppLockModifier: ViewModifier {
@@ -80,6 +81,9 @@ struct AppLockModifier: ViewModifier {
     @Environment(\.scenePhase) private var scenePhase
     @State private var locked = UserDefaults.standard.bool(forKey: "appLockEnabled")
     @State private var authenticating = false
+    @AppStorage(AppLock.delayKey) private var lockDelay = AppLock.defaultDelay
+    /// When the app went to the background (uptime: changing the clock can't shorten the wait).
+    @State private var leftAt: TimeInterval?
 
     /// Locking: the screen sinks back, blurs and dims in one spring, and the lock settles in.
     private static let lockAnimation = Animation.spring(response: 0.55, dampingFraction: 0.8)
@@ -152,13 +156,32 @@ struct AppLockModifier: ViewModifier {
         .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in lockForShake() }
         .onChange(of: scenePhase) { phase in
             if phase == .background, enabled {
-                withAnimation(AppLockModifier.lockAnimation) { locked = true }
-                // Close any open sheet (Send, Backup…) so nothing is left behind the lock.
-                AppLock.dismissPresentedSheets()
-            } else if phase == .active, locked, !enabled {
-                locked = false
+                if lockDelay <= 0 {
+                    lockNow()
+                } else if !locked {
+                    // The App Switcher snapshot is covered by the privacy shield meanwhile.
+                    leftAt = ProcessInfo.processInfo.systemUptime
+                }
+            } else if phase != .background {
+                if locked, !enabled { locked = false }
+                // Back (inactive comes first, before the shield lifts): lock if away too long.
+                if let left = leftAt {
+                    leftAt = nil
+                    let away = ProcessInfo.processInfo.systemUptime - left
+                    if enabled, !locked, away < 0 || away >= Double(lockDelay) {
+                        var instant = SwiftUI.Transaction()
+                        instant.disablesAnimations = true
+                        withTransaction(instant) { lockNow() }
+                    }
+                }
             }
         }
+    }
+
+    private func lockNow() {
+        withAnimation(AppLockModifier.lockAnimation) { locked = true }
+        // Close any open sheet (Send, Backup…) so nothing is left behind the lock.
+        AppLock.dismissPresentedSheets()
     }
 
     /// Shaking the iPhone locks the wallet (only while the app lock is on).
@@ -267,6 +290,22 @@ enum AppLock {
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else { return true }
         let text = reason ?? (WalletManager.deviceLanguage == .english ? "Unlock ColdVault" : "Desbloquea ColdVault")
         return (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: text)) ?? false
+    }
+
+    /// Settings › Security: seconds away before the lock comes back (0: at once).
+    static let delayKey = "appLockDelay"
+    static let defaultDelay = 60
+    static let delayOptions = [0, 60, 300, 900, 3_600]
+
+    static func delayTitle(_ seconds: Int, _ lang: AppLanguage) -> String {
+        let english = lang == .english
+        switch seconds {
+        case 0: return english ? "Immediately" : "Al instante"
+        case 3_600: return english ? "After 1 hour" : "Tras 1 hora"
+        default:
+            let minutes = seconds / 60
+            return english ? "After \(minutes) min" : "Tras \(minutes) min"
+        }
     }
 
     static func dismissPresentedSheets() {

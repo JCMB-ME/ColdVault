@@ -22,9 +22,7 @@ public enum DashboardAction {
 public struct DashboardView: View {
     @EnvironmentObject var walletManager: WalletManager
     @Environment(\.colorScheme) var colorScheme
-    @Environment(\.scenePhase) private var scenePhase
     /// The app went to the background: show the balance when it comes back.
-    @State private var wasInBackground = false
     @AppStorage(FocusStyle.blurKey) private var focusBlur = FocusStyle.defaultBlur
     @AppStorage(FocusStyle.scaleKey) private var focusScale = FocusStyle.defaultScale
     @AppStorage(FocusStyle.fadeKey) private var focusFade = FocusStyle.defaultFade
@@ -138,15 +136,8 @@ public struct DashboardView: View {
         }
         // The browser sheet blurs the balance behind it, by how far it is up.
         .modifier(BrowserBackdropBlur(maxBlur: focusBlur))
+        // The balance is the first screen when the app starts; coming back from another app keeps the page.
         .onAppear { showBalancePage() }
-        .onChange(of: scenePhase) { phase in
-            if phase == .background {
-                wasInBackground = true
-            } else if phase == .active && wasInBackground {
-                wasInBackground = false
-                showBalancePage()
-            }
-        }
         // Each coin has its own Receive / Send screens (same look).
         .sheet(isPresented: $showReceiveSheet) {
             Group {

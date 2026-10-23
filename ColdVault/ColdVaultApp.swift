@@ -22,6 +22,11 @@ struct ColdVaultApp: App {
         PinLock.discardStoredConfigIfDisabled()
         // Exports left over from a share sheet that was never closed (the app was killed).
         ExportFiles.removeAll()
+        // Settings' groups open closed on a fresh start (they stay as left while the app is only in the background).
+        for key in ["settingsOpenHome", "settingsOpenWallet", "settingsOpenTools", "settingsOpenBackup",
+                    "settingsOpenAppearance", "settingsOpenAdvanced"] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
         // History cache, contacts and notes stay out of iCloud and Finder backups.
         LocalOnlyFiles.excludeExisting()
     }

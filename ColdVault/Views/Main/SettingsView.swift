@@ -55,6 +55,10 @@ public struct SettingsView: View {
     /// Bumped on every reveal so the words animate in again.
     @State var revealCount = 0
     @AppStorage("appLockEnabled") var appLockEnabled = false
+    @AppStorage(AppLock.delayKey) var lockDelay = AppLock.defaultDelay
+    /// Easter egg: Advanced opened and closed 13 times shows the Bitcoin whitepaper.
+    @State var advancedToggles = 0
+    @State var showWhitepaper = false
     @AppStorage("censorFaceDown") var censorFaceDown = false
     /// Backup lists every wallet: the one opened (expanded) and the one whose secret is shown.
     @State var backupSlot: String?
@@ -104,6 +108,19 @@ public struct SettingsView: View {
                 UINotificationFeedbackGenerator().notificationOccurred(.warning)
                 errorMessage = t("A screenshot was taken while your phrase was visible. Delete it from Photos (and from Recently Deleted), and from iCloud if it synced.",
                                  "Se tomó una captura con tu frase visible. Bórrala de Fotos (y de \"Eliminados\"), y de iCloud si se sincronizó.")
+            }
+            // Easter egg: Advanced opened and closed 13 times (26 changes) shows the whitepaper.
+            .onChange(of: openAdvanced) { _ in
+                advancedToggles += 1
+                guard advancedToggles >= 26 else { return }
+                advancedToggles = 0
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                showWhitepaper = true
+            }
+            .sheet(isPresented: $showWhitepaper) {
+                WhitepaperView()
+                    .presentationDragIndicator(.visible)
+                    .environmentObject(walletManager)
             }
             .sheet(item: $route, onDismiss: {
                 // Closing Backup always hides the phrase again.

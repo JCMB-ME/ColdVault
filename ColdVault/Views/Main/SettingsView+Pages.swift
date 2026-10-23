@@ -146,11 +146,22 @@ extension SettingsView {
         .padding(.horizontal, 4)
 
         SettingsSection(header: t("App", "App"),
-                        footer: t("Asks for Face ID or your passcode every time ColdVault opens (tap Unlock). With an access PIN you can type it instead. Your keys always need Face ID or your passcode anyway.",
-                                  "Pide Face ID o tu código cada vez que abres ColdVault (toca Desbloquear). Con un PIN de acceso puedes escribirlo en su lugar. Tus claves siempre piden Face ID o tu código de todos modos.")) {
+                        footer: t("Asks for Face ID or your passcode when ColdVault opens, and when you come back after the time chosen (a quick trip to another app, like MetaMask, doesn't lock it). With an access PIN you can type it instead. Your keys always need Face ID or your passcode anyway.",
+                                  "Pide Face ID o tu código al abrir ColdVault y al volver tras el tiempo elegido (una visita rápida a otra app, como MetaMask, no la bloquea). Con un PIN de acceso puedes escribirlo en su lugar. Tus claves siempre piden Face ID o tu código de todos modos.")) {
             SettingsRow(title: t("Lock with Face ID", "Bloquear con Face ID"), icon: "faceid") {
                 Toggle("", isOn: Binding(get: { appLockEnabled }, set: { setAppLock($0) }))
                     .labelsHidden()
+            }
+            if appLockEnabled {
+                SettingsDivider(inset: 60)
+                AppMenuButton(items: {
+                    AppLock.delayOptions.map { seconds in
+                        AppMenuItem(title: AppLock.delayTitle(seconds, lang), selected: lockDelay == seconds) { lockDelay = seconds }
+                    }
+                }) {
+                    SettingsRow(title: t("Lock when away", "Bloquear al salir"),
+                                value: AppLock.delayTitle(lockDelay, lang), chevron: true, icon: "timer")
+                }
             }
             if appLockEnabled && walletManager.decoySlot == nil {
                 SettingsDivider(inset: 60)
