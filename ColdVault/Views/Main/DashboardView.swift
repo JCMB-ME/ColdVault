@@ -165,19 +165,20 @@ public struct DashboardView: View {
                 .focusAppear()
                 .environmentObject(walletManager)
         }
-        .sheet(isPresented: Binding(get: { showBrowserSheet && !DashboardView.isPad }, set: { showBrowserSheet = $0 }), onDismiss: {
+        .sheet(isPresented: Binding(get: { showBrowserSheet && !DashboardView.browserCoversScreen }, set: { showBrowserSheet = $0 }), onDismiss: {
             withAnimation(.easeOut(duration: 0.2)) { BrowserBackdrop.shared.progress = 0 }
         }) {
             DappBrowserView(webModel: browserModel, onClose: { showBrowserSheet = false },
-                            onDragChanged: { _ in }, onDragEnded: { _, _ in }, asSheet: true)
+                            onDragChanged: { _ in }, onDragEnded: { _, _ in }, asSheet: true, showsClose: DashboardView.isPad)
                 .background(SheetPositionReader().allowsHitTesting(false))
                 .focusAppear()
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
+                .browserCardSizing()
                 .environmentObject(walletManager)
         }
-        // On iPad a sheet is a small form in the middle of the screen: the browser takes the whole screen.
-        .fullScreenCover(isPresented: Binding(get: { showBrowserSheet && DashboardView.isPad }, set: { showBrowserSheet = $0 }),
+        // iPadOS 16–17 have no large card size (a sheet is a small form there): the browser covers the screen.
+        .fullScreenCover(isPresented: Binding(get: { showBrowserSheet && DashboardView.browserCoversScreen }, set: { showBrowserSheet = $0 }),
                          onDismiss: { BrowserBackdrop.shared.progress = 0 }) {
             DappBrowserView(webModel: browserModel, onClose: { showBrowserSheet = false },
                             onDragChanged: { _ in }, onDragEnded: { _, _ in }, asSheet: true, showsClose: true)
@@ -191,6 +192,11 @@ public struct DashboardView: View {
     }
 
     static var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
+
+    static var browserCoversScreen: Bool {
+        if #available(iOS 18.0, *) { return false }
+        return isPad
+    }
 
     private var onBalancePage: Bool {
         if #available(iOS 17.0, *) { return pageID == 1 }
@@ -1326,5 +1332,26 @@ private struct BalanceScrollBottomKey: PreferenceKey {
     static var defaultValue: CGFloat = .infinity
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+private extension View {
+    /// iPad: the browser is a large card (a page-sized sheet), not the small form a sheet is by default.
+    @ViewBuilder
+    func browserCardSizing() -> some View {
+        if #available(iOS 18.0, *) {
+            presentationSizing(BrowserCardSizing())
+        } else {
+            self
+        }
+    }
+}
+
+/// Most of the window, with the screen still showing around the card (an iPhone keeps its usual sheet).
+@available(iOS 18.0, *)
+private struct BrowserCardSizing: PresentationSizing {
+    func proposedSize(for root: PresentationSizingRoot, context: PresentationSizingContext) -> ProposedViewSize {
+        let window = AppLayout.windowSize
+        return ProposedViewSize(width: window.width * 0.92, height: window.height * 0.94)
     }
 }
