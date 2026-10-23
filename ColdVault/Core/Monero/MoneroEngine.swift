@@ -239,10 +239,13 @@ final class MoneroEngine: @unchecked Sendable {
         guard isAvailable, (95...106).contains(trimmed.count), trimmed.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else {
             return false
         }
+        // monero_c hands the network type to wallet2's (bool testnet) overload, so only mainnet is checked
+        // by wallet2; a stagenet address is checked here (network byte and checksum).
+        let onStagenet = MoneroAddress.network(of: trimmed) == .stagenet
         switch stagenet {
-        case .some(true): return MONERO_Wallet_addressValid(trimmed, 2)
+        case .some(true): return onStagenet
         case .some(false): return MONERO_Wallet_addressValid(trimmed, 0)
-        case .none: return MONERO_Wallet_addressValid(trimmed, 0) || MONERO_Wallet_addressValid(trimmed, 2)
+        case .none: return onStagenet || MONERO_Wallet_addressValid(trimmed, 0)
         }
     }
 
