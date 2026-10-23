@@ -33,4 +33,10 @@ final class DiceRollCheckTests: XCTestCase {
         XCTAssertEqual(DiceRollCheck.check(rolls(String(repeating: "123456", count: 16))), .repeatingPattern)
         XCTAssertEqual(DiceRollCheck.check(rolls(String(repeating: "65432", count: 10))), .repeatingPattern)
     }
+
+    func testLoadedDieIsRefused() {
+        // Half the rolls are a six (χ² ≈ 61.6, a fair die gives over 25.74 once in 10 000).
+        let text = "6162636465" + "6162636465" + "6616626636" + "6466566162" + "6364656616"
+        XCTAssertEqual(DiceRollCheck.check(rolls(text)), .biased)
+    }
 }

@@ -613,7 +613,7 @@ struct BrowserChainSignSheet: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 18) {
                     BrowserRequestHeader(host: request.host, pageTitle: request.pageTitle)
-                    ForEach(danger, id: \.self) { text in
+                    ForEach(Array(danger.enumerated()), id: \.offset) { _, text in
                         Label(text, systemImage: "exclamationmark.octagon.fill")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(.red)

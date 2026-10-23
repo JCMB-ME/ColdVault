@@ -17,6 +17,8 @@ public enum DiceRollCheck {
         case fewFaces
         case longRun
         case repeatingPattern
+        /// Some faces come up far more than others (a loaded die, or rolls made up).
+        case biased
     }
 
     public static func check(_ rolls: [Int]) -> Quality {
@@ -40,6 +42,14 @@ public enum DiceRollCheck {
                 return .repeatingPattern
             }
         }
+        // Pearson's χ² of the six faces' counts (5 degrees of freedom): above 25.74 a fair die
+        // lands once in 10 000 sets of rolls.
+        let expected = Double(rolls.count) / 6
+        let chiSquare = (1...6).reduce(0.0) { total, face in
+            let observed = Double(rolls.filter { $0 == face }.count)
+            return total + (observed - expected) * (observed - expected) / expected
+        }
+        if chiSquare > 25.74 { return .biased }
         return .ok
     }
 }

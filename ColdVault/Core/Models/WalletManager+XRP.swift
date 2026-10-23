@@ -53,6 +53,8 @@ extension WalletManager {
     func prepareXRPSend(asset: EVMAsset, to recipient: String, amount: UInt256?, tag: UInt32?) async throws -> EthereumSendPlan {
         guard asset.isNative, let from = address(on: .xrp), let ownID = XRPAddress.decodeClassic(from) else { throw XRPError.unavailable }
         guard let target = XRPAddress.destination(recipient) else { throw XRPError.invalidAddress }
+        // An X-address names its network ("X…" mainnet, "T…" test networks): never pay across them.
+        if let x = XRPAddress.decodeX(recipient), x.testnet != isTestnet { throw XRPError.invalidAddress }
         if let embedded = target.tag, let typed = tag, embedded != typed { throw XRPError.tagMismatch }
         let destinationTag = target.tag ?? tag
         guard target.accountID != ownID else { throw XRPError.sameAccount }

@@ -12,6 +12,7 @@
 import SwiftUI
 import Security
 import CommonCrypto
+import CryptoKit
 
 enum PinLock {
     /// Switched off by decision of the user. While false, nothing reads the duress PIN (load() returns
@@ -138,7 +139,9 @@ enum PinLock {
 
     static func make(realPIN: String, duressPIN: String, decoySlot: String) -> Config {
         var salt = Data(count: 16)
-        _ = salt.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!) }
+        let status = salt.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!) }
+        // Never a predictable salt: without the system generator the PIN can't be set (see PinLock.hash).
+        if status != errSecSuccess { salt = Data() }
         return Config(salt: salt, realHash: hash(realPIN, salt: salt), duressHash: hash(duressPIN, salt: salt),
                       decoySlot: decoySlot)
     }
@@ -146,19 +149,30 @@ enum PinLock {
     static func check(_ pin: String) -> Outcome {
         guard let config = load() else { return .wrong }
         let value = hash(pin, salt: config.salt)
-        if value == config.realHash { return .real }
-        if value == config.duressHash { return .duress }
+        if PinLock.same(value, config.realHash) { return .real }
+        if PinLock.same(value, config.duressHash) { return .duress }
         return .wrong
     }
 
     /// PBKDF2-HMAC-SHA256, 200 000 rounds: slow enough to make guessing from a copied
     /// hash expensive, fast enough to unlock instantly.
+    /// PBKDF2-SHA256 of the PIN. A failure (or a missing salt) gives fresh random bytes, which no PIN
+    /// will ever match, never a fixed value (an all-zero hash would let every PIN in).
     static func hash(_ pin: String, salt: Data) -> Data {
         let saltBytes = [UInt8](salt)
         var output = [UInt8](repeating: 0, count: 32)
-        _ = CCKeyDerivationPBKDF(CCPBKDFAlgorithm(kCCPBKDF2), pin, pin.utf8.count, saltBytes, saltBytes.count,
-                                 CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256), 200_000, &output, output.count)
+        let status = saltBytes.count == 16
+            ? CCKeyDerivationPBKDF(CCPBKDFAlgorithm(kCCPBKDF2), pin, pin.utf8.count, saltBytes, saltBytes.count,
+                                   CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256), 200_000, &output, output.count)
+            : Int32(kCCParamError)
+        guard status == Int32(kCCSuccess) else { return Data(SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }) }
         return Data(output)
+    }
+
+    /// Compares two hashes in constant time.
+    static func same(_ a: Data, _ b: Data) -> Bool {
+        guard a.count == b.count else { return false }
+        return zip(a, b).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
     }
 }
 

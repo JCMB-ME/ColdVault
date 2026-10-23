@@ -642,12 +642,10 @@ public final class BlockchainService {
 
     /// The FX rates change once a day: fetched at most every 6 hours.
     private func cachedUSDExchangeRates() async throws -> [String: Double] {
-        lock.lock()
-        let cached = fxCache
-        lock.unlock()
+        let cached = lock.withLock { fxCache }
         if let cached = cached, Date().timeIntervalSince(cached.fetched) < 6 * 3_600 { return cached.rates }
         let rates = try await fetchUSDExchangeRates()
-        lock.lock(); fxCache = (rates, Date()); lock.unlock()
+        lock.withLock { fxCache = (rates, Date()) }
         return rates
     }
 

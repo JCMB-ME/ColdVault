@@ -493,7 +493,7 @@ struct DappProposalSheet: View {
                     if !permissions.isEmpty {
                         DappCard {
                             Text(t("It will be able to ask for", "Podrá pedirte")).font(.system(size: 12, weight: .medium)).foregroundColor(Palette.secondary)
-                            ForEach(permissions, id: \.self) { text in
+                            ForEach(Array(permissions.enumerated()), id: \.offset) { _, text in
                                 Label(text, systemImage: "pencil.and.list.clipboard")
                                     .font(.system(size: 14))
                             }
@@ -593,7 +593,7 @@ struct DappRequestSheet: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 18) {
                     DappHeader(metadata: peer, context: model.item.context, lang: lang)
-                    ForEach(model.warnings, id: \.self) { warning in
+                    ForEach(Array(model.warnings.enumerated()), id: \.offset) { _, warning in
                         banner(warning, color: .orange, icon: "exclamationmark.triangle.fill")
                     }
                     if blocked {

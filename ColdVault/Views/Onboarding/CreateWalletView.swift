@@ -314,6 +314,10 @@ public struct CreateWalletView: View {
         case .repeatingPattern:
             return t("The rolls repeat a short pattern. Roll again with a real die.",
                      "Las tiradas repiten un patrón corto. Vuelve a tirar con un dado real.")
+
+        case .biased:
+            return t("Some faces come up far more often than a fair die allows. Roll again, better with another die.",
+                     "Algunas caras salen mucho más de lo que permite un dado justo. Vuelve a tirar, mejor con otro dado.")
         }
     }
 

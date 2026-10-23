@@ -1997,7 +1997,7 @@ private struct BrowserSignSheet: View {
                 VStack(spacing: 18) {
                     BrowserRequestHeader(host: request.host, pageTitle: request.pageTitle)
 
-                    ForEach(warnings, id: \.self) { warning in
+                    ForEach(Array(warnings.enumerated()), id: \.offset) { _, warning in
                         banner(warning, color: .orange, icon: "exclamationmark.triangle.fill")
                     }
 

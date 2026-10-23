@@ -57,13 +57,15 @@ enum AppPin {
 
     static func make(pin: String) -> Config {
         var salt = Data(count: 16)
-        _ = salt.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!) }
+        let status = salt.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!) }
+        // Never a predictable salt: without the system generator the PIN can't be set (see PinLock.hash).
+        if status != errSecSuccess { salt = Data() }
         return Config(salt: salt, hash: PinLock.hash(pin, salt: salt))
     }
 
     static func matches(_ pin: String) -> Bool {
         guard let config = load() else { return false }
-        return PinLock.hash(pin, salt: config.salt) == config.hash
+        return PinLock.same(PinLock.hash(pin, salt: config.salt), config.hash)
     }
 
     /// Seconds left before a PIN may be tried again (0 when none). Uses the uptime, so changing

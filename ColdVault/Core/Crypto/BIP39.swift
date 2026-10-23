@@ -36,6 +36,22 @@ public enum BIP39Error: LocalizedError {
     }
 }
 
+/// Remembers (as salted hashes, in memory only) the draws of this session, so the generator handing the
+/// same bytes twice is noticed even across phrases.
+enum RNGHealth {
+    private static let lock = NSLock()
+    private static var hashes = Set<Data>()
+    private static let salt = SymmetricKey(size: .bits256)
+
+    /// Whether these bytes were drawn before in this session (and remembers them).
+    static func seen(_ bytes: Data) -> Bool {
+        let mark = Data(HMAC<SHA256>.authenticationCode(for: bytes, using: salt))
+        lock.lock()
+        defer { lock.unlock() }
+        return !hashes.insert(mark).inserted
+    }
+}
+
 public enum BIP39 {
 
     // MARK: - Generate Mnemonic
@@ -65,6 +81,17 @@ public enum BIP39 {
         // Sanity check against a catastrophically broken RNG (all bytes identical,
         // e.g. an untouched zero buffer). Probability for a healthy RNG: 2^-120 or less.
         if let first = entropy.first, entropy.allSatisfy({ $0 == first }) {
+            throw BIP39Error.entropyGenerationFailed
+        }
+        // Continuous test (as FIPS 140's): a second draw must differ from the first. A stuck or
+        // replaying generator is refused instead of giving the same phrase twice.
+        var probe = Data(count: byteCount)
+        defer { probe.resetBytes(in: 0..<probe.count) }
+        let probeStatus = probe.withUnsafeMutableBytes { ptr -> OSStatus in
+            guard let base = ptr.baseAddress else { return errSecAllocate }
+            return SecRandomCopyBytes(kSecRandomDefault, byteCount, base)
+        }
+        guard probeStatus == errSecSuccess, probe != entropy, !RNGHealth.seen(entropy), !RNGHealth.seen(probe) else {
             throw BIP39Error.entropyGenerationFailed
         }
 
