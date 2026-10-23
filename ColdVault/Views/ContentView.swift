@@ -21,6 +21,11 @@ public struct ContentView: View {
                 WelcomeView()
             }
         }
+        // iPad (and any wide window): one centered column at a reading width, the background
+        // reaching the edges, instead of phone layouts stretched across the screen.
+        .frame(maxWidth: AppLayout.maxWidth)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(GlassAmbientBackground())
         .tint(Palette.accent)
         // Web links open on a Safari sheet inside the app, not in the default browser.
         .environment(\.openURL, OpenURLAction { url in MainActor.assumeIsolated { InAppSafari.open(url) } })
@@ -38,6 +43,22 @@ public struct ContentView: View {
             ThemeApplier.apply(theme)
         }
     }
+}
+
+/// The width the app's screens use: the window's, capped at a reading width on iPad.
+enum AppLayout {
+    static let maxWidth: CGFloat = 680
+
+    /// The key window's size (an iPad window in Split View is narrower than the screen).
+    static var windowSize: CGSize {
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first { $0.isKeyWindow }
+        return window?.bounds.size ?? UIScreen.main.bounds.size
+    }
+
+    static var width: CGFloat { min(windowSize.width, maxWidth) }
 }
 
 enum ThemeApplier {

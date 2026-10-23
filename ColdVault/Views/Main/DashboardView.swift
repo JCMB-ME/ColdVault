@@ -87,7 +87,7 @@ public struct DashboardView: View {
 
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
 
-    private var screenWidth: CGFloat { UIScreen.main.bounds.width }
+    private var screenWidth: CGFloat { AppLayout.width }
 
     public var body: some View {
         ZStack {
@@ -217,7 +217,7 @@ public struct DashboardView: View {
 
     private var effectiveBrowserProgress: CGFloat {
         if showBrowser {
-            let dragBack = min(0.88, max(0, browserDragOffset / max(1, UIScreen.main.bounds.height * 0.65)))
+            let dragBack = min(0.88, max(0, browserDragOffset / max(1, AppLayout.windowSize.height * 0.65)))
             return max(0, browserProgress - dragBack)
         } else {
             let pull = browserEnabled ? min(1, max(0, bottomOverscroll / 140)) : 0
@@ -358,7 +358,7 @@ public struct DashboardView: View {
                         VStack(spacing: 0) {
                             // Puts the middle of the balance line exactly at the middle of
                             // the screen, whatever is above the scroll view.
-                            Color.clear.frame(height: max(0, UIScreen.main.bounds.height / 2
+                            Color.clear.frame(height: max(0, AppLayout.windowSize.height / 2
                                 - scrollOriginMinY
                                 - DashboardView.balanceHeight / 2))
 
@@ -1010,7 +1010,7 @@ struct HomeExtrasView: View {
                 }
             }
             .padding(.horizontal, 4)
-            .frame(minWidth: UIScreen.main.bounds.width - 40)   // centered when few contacts
+            .frame(minWidth: AppLayout.width - 40)   // centered when few contacts
         }
     }
 

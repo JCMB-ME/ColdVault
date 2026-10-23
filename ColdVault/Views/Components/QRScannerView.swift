@@ -235,6 +235,20 @@ public final class ScannerViewController: UIViewController, AVCaptureMetadataOut
     public override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         previewLayer?.frame = view.layer.bounds
+        // On iPad the app turns with the device: the camera picture turns with it.
+        guard let connection = previewLayer?.connection, let orientation = view.window?.windowScene?.interfaceOrientation else { return }
+        if #available(iOS 17.0, *) {
+            let angle: CGFloat
+            switch orientation {
+            case .landscapeRight: angle = 0
+            case .landscapeLeft: angle = 180
+            case .portraitUpsideDown: angle = 270
+            default: angle = 90
+            }
+            if connection.isVideoRotationAngleSupported(angle) { connection.videoRotationAngle = angle }
+        } else if connection.isVideoOrientationSupported, let video = AVCaptureVideoOrientation(rawValue: orientation.rawValue) {
+            connection.videoOrientation = video
+        }
     }
 
     public func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
