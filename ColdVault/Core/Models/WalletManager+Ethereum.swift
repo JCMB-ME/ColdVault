@@ -291,7 +291,8 @@ extension WalletManager {
     }
 
     /// The account's address on a network (nil: that network is not available to it).
-    /// TON addresses are shown in their testnet form on testnet.
+    /// TON addresses are shown in their testnet form on testnet; Monero and Zcash keep the mainnet address
+    /// in the record and show the same keys' stagenet / testnet address (another network byte).
     public func address(on chain: EVMChain, record given: StoredWalletRecord? = nil) -> String? {
         guard let record = given ?? activeRecord else { return nil }
         func tonForm(_ text: String?) -> String? {
@@ -305,8 +306,12 @@ extension WalletManager {
         case .solana: return chain == .solana ? record.primaryAddress : nil
         case .sui: return chain == .sui ? record.primaryAddress : nil
         case .xrp: return chain == .xrp ? record.primaryAddress : nil
-        case .monero: return chain == .monero ? record.primaryAddress : nil
-        case .zcash: return chain == .zcash ? record.primaryAddress : nil
+        case .monero:
+            guard chain == .monero else { return nil }
+            return record.isTestnet ? MoneroAddress.converted(record.primaryAddress, to: .stagenet) : record.primaryAddress
+        case .zcash:
+            guard chain == .zcash else { return nil }
+            return record.isTestnet ? ZcashAddress.transparent(record.primaryAddress, testnet: true) : record.primaryAddress
         case .ton:
             guard chain == .ton else { return nil }
             if WalletManager.tonVersion(of: record) == .w5, let hex = record.chainAddresses?["tonPublicKey"],
@@ -413,8 +418,7 @@ extension WalletManager {
     func importEthereum(input: String, passphrase: String, isTestnet requested: Bool, coin: CoinKind = .ethereum,
                         tonNative: Bool? = nil, restoreDate: Date? = nil) async throws -> StoredWalletRecord {
         try await ensureSelfTest()
-        // Monero and Zcash run on mainnet only.
-        let isTestnet = coin.hasTestnet && requested
+        var isTestnet = requested
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         var watchAddress: String?
         switch coin {
@@ -424,7 +428,11 @@ extension WalletManager {
         case .sui: watchAddress = SuiAddress.normalized(trimmed)
         case .xrp: watchAddress = XRPAddress.decodeClassic(trimmed).map(XRPAddress.encode)
         case .zcash:
-            if let target = ZcashAddress.decodeTransparent(trimmed), !target.testnet { watchAddress = trimmed }
+            // Stored in its mainnet form (t1…); a testnet address (tm…) makes a testnet wallet.
+            if let target = ZcashAddress.decodeTransparent(trimmed) {
+                watchAddress = ZcashAddress.transparent(trimmed, testnet: false)
+                if target.testnet { isTestnet = true }
+            }
         case .monero:
             // Watching a Monero account needs its view key too: not supported.
             break
@@ -539,10 +547,10 @@ extension WalletManager {
         selectWallet(slot: wallet.slot, account: library[index].bundle.accounts.count - 1)
     }
 
-    /// Mainnet ⇄ testnet: same keys and addresses, so nothing to derive.
+    /// Mainnet ⇄ testnet: same keys (Monero and Zcash addresses only change their network byte, see
+    /// `address(on:)`), so nothing to derive.
     func setEthereumNetwork(isTestnet: Bool) throws {
         guard let wallet = activeWallet else { throw WalletError.derivationFailed }
-        guard activeCoin.hasTestnet || !isTestnet else { return }          // Monero and Zcash: mainnet only
         var bundle = wallet.bundle
         for position in bundle.accounts.indices { bundle.accounts[position].record.isTestnet = isTestnet }
         evmAssets = []                    // the other network's assets are not shown as current

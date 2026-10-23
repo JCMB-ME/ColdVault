@@ -348,7 +348,9 @@ extension WalletManager {
         purgeLabels(for: transactions.map { $0.txid })
         Task { await LightningManager.shared.forget(slot: slot) }
         // A Monero wallet's scan file goes too (it holds what the account received and spent).
-        let moneroAddresses = deletedAccounts.filter { $0.coinKind == .monero }.map(\.primaryAddress)
+        let moneroAddresses = deletedAccounts.filter { $0.coinKind == .monero }.flatMap { record in
+            [record.primaryAddress, MoneroAddress.converted(record.primaryAddress, to: .stagenet)].compactMap { $0 }
+        }
         if !moneroAddresses.isEmpty {
             Task {
                 await MoneroEngine.shared.close()

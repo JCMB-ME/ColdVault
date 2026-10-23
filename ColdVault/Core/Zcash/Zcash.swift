@@ -10,6 +10,7 @@
 //  ZIP-244 digest (which commits to the amounts of all the coins spent), fee per ZIP-317.
 //  Test vectors: the official zcash-test-vectors (ZIP-244 digests, F4Jumble, unified addresses) and a
 //  transaction made with a reference built on them (ZcashTests).
+//  Testnet: the same key, with testnet's prefixes (tm… / t2…).
 //
 
 import Foundation
@@ -57,6 +58,24 @@ public enum ZcashAddress {
 
     public static func encode(_ kind: Kind, hash: Data, testnet: Bool) -> String {
         Base58Check.encodeCheck(prefix(kind, testnet: testnet) + hash)
+    }
+
+    /// The same transparent address on the other network (same key: t1 ⇄ tm, t3 ⇄ t2).
+    public static func transparent(_ text: String, testnet: Bool) -> String? {
+        guard let target = decodeTransparent(text) else { return nil }
+        return encode(target.kind, hash: target.hash, testnet: testnet)
+    }
+
+    /// The address a transparent output script pays (nil: another kind of script).
+    public static func address(script: Data, testnet: Bool) -> String? {
+        let bytes = [UInt8](script)
+        if bytes.count == 25, bytes[0] == 0x76, bytes[1] == 0xa9, bytes[2] == 0x14, bytes[23] == 0x88, bytes[24] == 0xac {
+            return encode(.p2pkh, hash: Data(bytes[3..<23]), testnet: testnet)
+        }
+        if bytes.count == 23, bytes[0] == 0xa9, bytes[1] == 0x14, bytes[22] == 0x87 {
+            return encode(.p2sh, hash: Data(bytes[2..<22]), testnet: testnet)
+        }
+        return nil
     }
 
     /// A transparent address ("t1…", "t3…", testnet "tm…", "t2…").

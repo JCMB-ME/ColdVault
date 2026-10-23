@@ -8,6 +8,7 @@
 //  the spend key, and builds, signs and sends transactions. The remote node is not trusted: it only serves
 //  blocks and relays transactions. Every call into wallet2 runs on one serial queue.
 //  MoneroC is linked weakly: if it can't be loaded the app still opens, without Monero.
+//  Stagenet (the test network wallets use) works the same, with its own nodes and network type.
 //
 
 import Foundation
@@ -52,6 +53,10 @@ final class MoneroEngine: @unchecked Sendable {
         let restoreHeight: UInt64
         /// The address the account must have (the record's): a different one is never opened.
         let address: String
+        var stagenet = false
+
+        /// wallet2's network type: 0 mainnet, 2 stagenet.
+        var networkType: Int32 { stagenet ? 2 : 0 }
     }
 
     struct State: Equatable {
@@ -90,6 +95,12 @@ final class MoneroEngine: @unchecked Sendable {
         "http://xmr-node.cakewallet.com:18081", "http://node.sethforprivacy.com:18089", "http://nodes.hashvault.pro:18081",
         "http://node.monerodevs.org:18089", "http://xmr.stormycloud.org:18089", "http://monero.stackwallet.com:18081",
         "http://node.xmr.rocks:18089", "http://nodex.monerujo.io:18081", "http://opennode.xmr-tw.org:18089"
+    ]
+
+    /// Public stagenet nodes (checked to answer, in sync and on stagenet).
+    static let stagenetNodes = [
+        "http://stagenet.xmr-tw.org:38081", "http://node.sethforprivacy.com:38089", "http://node.monerodevs.org:38089",
+        "http://node2.monerodevs.org:38089", "http://node3.monerodevs.org:38089", "http://xmr-lux.boldsuck.org:38081"
     ]
 
     private let queue = DispatchQueue(label: "com.coldvault.monero", qos: .utility)
@@ -178,10 +189,10 @@ final class MoneroEngine: @unchecked Sendable {
         return try read(wallet)
     }
 
-    /// The standard address of a spend key.
-    static func address(spendKey: Data) throws -> String {
+    /// The standard address of a spend key (on stagenet: with stagenet's network byte).
+    static func address(spendKey: Data, stagenet: Bool = false) throws -> String {
         try withTemporaryWallet({ manager, path in
-            MONERO_WalletManager_createDeterministicWalletFromSpendKey(manager, path, "", "English", 0, 0,
+            MONERO_WalletManager_createDeterministicWalletFromSpendKey(manager, path, "", "English", stagenet ? 2 : 0, 0,
                                                                       spendKey.hexEncodedString, 1)
         }) { wallet in
             guard let address = text(MONERO_Wallet_address(wallet, 0, 0)), !address.isEmpty else {
@@ -221,13 +232,18 @@ final class MoneroEngine: @unchecked Sendable {
         }
     }
 
-    /// Whether `text` is a Monero mainnet address (standard, subaddress or integrated).
-    static func isValidAddress(_ text: String) -> Bool {
+    /// Whether `text` is a Monero address (standard, subaddress or integrated) of mainnet, or of stagenet;
+    /// nil: of either.
+    static func isValidAddress(_ text: String, stagenet: Bool? = false) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isAvailable, (95...106).contains(trimmed.count), trimmed.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else {
             return false
         }
-        return MONERO_Wallet_addressValid(trimmed, 0)
+        switch stagenet {
+        case .some(true): return MONERO_Wallet_addressValid(trimmed, 2)
+        case .some(false): return MONERO_Wallet_addressValid(trimmed, 0)
+        case .none: return MONERO_Wallet_addressValid(trimmed, 0) || MONERO_Wallet_addressValid(trimmed, 2)
+        }
     }
 
     // MARK: - The open wallet
@@ -244,7 +260,7 @@ final class MoneroEngine: @unchecked Sendable {
             let password = MoneroEngine.password(account.spendKey)
             var opened: UnsafeMutableRawPointer?
             if MONERO_WalletManager_walletExists(manager, path),
-               let existing = MONERO_WalletManager_openWallet(manager, path, password, 0) {
+               let existing = MONERO_WalletManager_openWallet(manager, path, password, account.networkType) {
                 // A file that does not open, belongs to another key or starts elsewhere is rebuilt.
                 if MONERO_Wallet_status(existing) == 0,
                    MoneroEngine.text(MONERO_Wallet_address(existing, 0, 0)) == account.address,
@@ -258,7 +274,8 @@ final class MoneroEngine: @unchecked Sendable {
                 MoneroEngine.removeFiles(of: account.address)
                 guard let fresh = MoneroEngine.walletPath(account.address),
                       let made = MONERO_WalletManager_createDeterministicWalletFromSpendKey(
-                        manager, fresh, password, "English", 0, account.restoreHeight, account.spendKey.hexEncodedString, 1) else {
+                        manager, fresh, password, "English", account.networkType, account.restoreHeight,
+                        account.spendKey.hexEncodedString, 1) else {
                     throw MoneroError.library(MoneroEngine.text(MONERO_WalletManager_errorString(manager)) ?? "wallet")
                 }
                 guard MONERO_Wallet_status(made) == 0,
@@ -276,7 +293,7 @@ final class MoneroEngine: @unchecked Sendable {
             openRestoreHeight = account.restoreHeight
             // The first node that answers; the node is never trusted with anything but blocks.
             var connected = false
-            for node in MoneroEngine.nodes.shuffled() {
+            for node in (account.stagenet ? MoneroEngine.stagenetNodes : MoneroEngine.nodes).shuffled() {
                 guard MONERO_Wallet_init(wallet, node, 0, "", "", false, false, proxy) else { continue }
                 MONERO_Wallet_setTrustedDaemon(wallet, false)
                 if MONERO_Wallet_connected(wallet) == 1 {

@@ -9,6 +9,7 @@
 //  The wallet itself (scanning, balance, building and signing transactions) is Monero's own wallet2, in
 //  MoneroC (see MoneroEngine and Vendor/Monero).
 //  Test vectors: monerodocs' published keys and a reference in Python (MoneroTests).
+//  Stagenet (Settings → Testnet): the same keys, with stagenet's address byte and its own heights.
 //
 
 import Foundation
@@ -92,5 +93,126 @@ public enum MoneroHeight {
             estimate = a.height + UInt64(Double(b.height - a.height) * fraction)
         }
         return estimate > margin ? estimate - margin : 0
+    }
+}
+
+extension MoneroHeight {
+    /// Stagenet heights and their block times (read from the chain).
+    private static let stagenetAnchors: [(height: UInt64, time: TimeInterval)] = [
+        (1, 1_518_932_025), (250_000, 1_547_936_849), (500_000, 1_579_568_732), (750_000, 1_610_393_422),
+        (1_000_000, 1_641_236_677), (1_250_000, 1_671_643_361), (1_500_000, 1_702_483_578), (1_750_000, 1_733_825_378),
+        (2_000_000, 1_764_246_150), (2_235_000, 1_792_652_145)
+    ]
+
+    /// The stagenet height of the moment a mainnet restore height was reached (both a day early).
+    public static func stagenet(fromMainnet height: UInt64) -> UInt64 {
+        guard height > 0 else { return 0 }
+        return stagenetHeight(at: Date(timeIntervalSince1970: mainnetTime(of: height)))
+    }
+
+    /// When mainnet block `height` was made (about).
+    static func mainnetTime(of height: UInt64) -> TimeInterval {
+        // The inverse of `height(at:)`, from its own table: binary search over dates.
+        var low: TimeInterval = 1_397_818_193
+        var high: TimeInterval = Date().timeIntervalSince1970 + 86_400 * 3650
+        for _ in 0..<64 {
+            let middle = (low + high) / 2
+            if MoneroHeight.height(at: Date(timeIntervalSince1970: middle)) < height { low = middle } else { high = middle }
+        }
+        return high
+    }
+
+    /// The stagenet height reached at `date`, a day earlier for safety (stagenet has 2-minute blocks).
+    public static func stagenetHeight(at date: Date) -> UInt64 {
+        let time = date.timeIntervalSince1970
+        let margin: UInt64 = 720
+        guard let first = stagenetAnchors.first, let last = stagenetAnchors.last, time > first.time else { return 0 }
+        var estimate: UInt64
+        if time >= last.time {
+            estimate = last.height + UInt64((time - last.time) / 120)
+        } else {
+            let index = stagenetAnchors.firstIndex { $0.time > time } ?? stagenetAnchors.count - 1
+            let (a, b) = (stagenetAnchors[index - 1], stagenetAnchors[index])
+            estimate = a.height + UInt64(Double(b.height - a.height) * (time - a.time) / (b.time - a.time))
+        }
+        return estimate > margin ? estimate - margin : 0
+    }
+}
+
+/// Monero addresses without wallet2: its Base58 (8-byte blocks) and the network byte, to show an account's
+/// stagenet address (the same keys with stagenet's byte) and to tell the networks apart.
+public enum MoneroAddress {
+    public enum Network { case mainnet, stagenet }
+
+    private static let alphabet = Array("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+    /// How many characters a block of 0…8 bytes takes.
+    private static let encodedSizes = [0, 2, 3, 5, 6, 7, 9, 10, 11]
+    /// Standard, integrated and subaddress network bytes.
+    private static let mainnetBytes: [UInt8] = [18, 19, 42]
+    private static let stagenetBytes: [UInt8] = [24, 25, 36]
+
+    static func encode(_ data: Data) -> String {
+        let bytes = [UInt8](data)
+        var out = ""
+        var start = 0
+        while start < bytes.count {
+            let block = bytes[start..<min(start + 8, bytes.count)]
+            var value = block.reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+            var chars = [Character](repeating: "1", count: encodedSizes[block.count])
+            var position = chars.count - 1
+            while value > 0 && position >= 0 {
+                chars[position] = alphabet[Int(value % 58)]
+                value /= 58
+                position -= 1
+            }
+            out += String(chars)
+            start += 8
+        }
+        return out
+    }
+
+    static func decode(_ text: String) -> Data? {
+        let chars = Array(text)
+        var out = Data()
+        var start = 0
+        while start < chars.count {
+            let block = chars[start..<min(start + 11, chars.count)]
+            guard let size = encodedSizes.firstIndex(of: block.count), size > 0 else { return nil }
+            var value: UInt64 = 0
+            for char in block {
+                guard let digit = alphabet.firstIndex(of: char) else { return nil }
+                let (times, overflowA) = value.multipliedReportingOverflow(by: 58)
+                let (sum, overflowB) = times.addingReportingOverflow(UInt64(digit))
+                guard !overflowA, !overflowB else { return nil }
+                value = sum
+            }
+            if size < 8 && value >> UInt64(8 * size) != 0 { return nil }
+            for shift in stride(from: size - 1, through: 0, by: -1) {
+                out.append(UInt8(truncatingIfNeeded: value >> UInt64(8 * shift)))
+            }
+            start += 11
+        }
+        return out
+    }
+
+    /// The network byte and the rest of a well-formed address (checksum verified).
+    private static func parts(_ text: String) -> (network: Network, kind: Int, body: Data)? {
+        guard let raw = decode(text.trimmingCharacters(in: .whitespacesAndNewlines)), raw.count >= 69 else { return nil }
+        let payload = Data(raw.prefix(raw.count - 4))
+        guard Keccak256.hash(payload).prefix(4) == Data(raw.suffix(4)), let first = payload.first else { return nil }
+        if let kind = mainnetBytes.firstIndex(of: first) { return (.mainnet, kind, Data(payload.dropFirst())) }
+        if let kind = stagenetBytes.firstIndex(of: first) { return (.stagenet, kind, Data(payload.dropFirst())) }
+        return nil
+    }
+
+    /// The network of an address (nil: not a mainnet or stagenet address).
+    public static func network(of text: String) -> Network? { parts(text)?.network }
+
+    /// The same address (same keys) on the other network.
+    public static func converted(_ text: String, to network: Network) -> String? {
+        guard let found = parts(text) else { return nil }
+        let byte = (network == .mainnet ? mainnetBytes : stagenetBytes)[found.kind]
+        let payload = Data([byte]) + found.body
+        return encode(payload + Keccak256.hash(payload).prefix(4))
     }
 }

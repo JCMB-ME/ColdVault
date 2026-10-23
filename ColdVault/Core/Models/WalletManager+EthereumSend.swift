@@ -383,7 +383,7 @@ extension WalletManager {
                 return nil
             }
         case .zcash(let txid, let raw):
-            let api = ZcashAPI()
+            let api = ZcashAPI(isTestnet: isTestnet)
             if try await api.isKnown(txid) {
                 unconfirmedSends[sendKey] = nil
                 return txid
@@ -519,8 +519,8 @@ extension WalletManager {
             hash = signed.hash
         case .zcash(let draft):
             let key = try WalletManager.zcashKey(secret: secret, account: account)
-            guard ZcashKeys.address(privateKey: key) == address(on: .zcash) else { throw WalletError.secretMismatch }
-            let api = ZcashAPI()
+            guard ZcashKeys.address(privateKey: key, testnet: isTestnet) == address(on: .zcash) else { throw WalletError.secretMismatch }
+            let api = ZcashAPI(isTestnet: isTestnet)
             // The branch id and height of this moment: a network upgrade may have come since the review.
             let network = try await api.network()
             let transaction = ZcashTransaction(branchID: network.branchID,

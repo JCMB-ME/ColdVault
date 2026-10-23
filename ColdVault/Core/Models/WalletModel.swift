@@ -68,9 +68,6 @@ public enum CoinKind: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    /// Monero and Zcash run on mainnet only here (no test network to switch to).
-    public var hasTestnet: Bool { self != .monero && self != .zcash }
-
     public func title(_ lang: AppLanguage) -> String {
         switch self {
         case .bitcoin: return "Bitcoin"

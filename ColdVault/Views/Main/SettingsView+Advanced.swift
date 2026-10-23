@@ -142,11 +142,6 @@ extension SettingsView {
                     }
                     SettingsDivider(inset: 60)
                 }
-                if !walletManager.activeCoin.hasTestnet {
-                    // Monero and Zcash: mainnet only.
-                    SettingsNote(text: t("\(walletManager.activeCoin.title(lang)) runs on its main network only in ColdVault.",
-                                         "En ColdVault, \(walletManager.activeCoin.title(lang)) funciona solo en su red principal."))
-                } else {
                 SettingsRow(title: walletManager.isEthereum ? "Testnet" : "Testnet4", icon: "testtube.2") {
                     if isSwitchingNetwork {
                         ProgressView()
@@ -171,9 +166,11 @@ extension SettingsView {
                 SettingsNote(text: walletManager.activeCoin == .bitcoin
                              ? t("Testnet re-derives your addresses (Face ID). Server: use your own node so public servers never see your addresses.",
                                  "Testnet vuelve a derivar tus direcciones (Face ID). Servidor: usa tu propio nodo para que los servidores públicos nunca vean tus direcciones.")
+                             : walletManager.activeCoin == .monero || walletManager.activeCoin == .zcash
+                             ? t("Testnet uses \(walletManager.activeCoin == .monero ? "Monero's stagenet" : "Zcash's testnet"): the same keys, with that network's addresses.",
+                                 "Testnet usa \(walletManager.activeCoin == .monero ? "la stagenet de Monero" : "la testnet de Zcash"): las mismas claves, con las direcciones de esa red.")
                              : t("Testnet uses the test networks of this coin; the same addresses.",
                                  "Testnet usa las redes de prueba de esta moneda; las mismas direcciones."))
-                }
             }
         }
         // A sheet like Send: what the key is for, the link to get one free, the key.

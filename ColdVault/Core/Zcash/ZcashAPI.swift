@@ -6,7 +6,10 @@
 //   • Blockbook (Zelcore's): balance, coins (mempool aware), history, transactions, sending, and the
 //     consensus branch id the next block uses (what every signature commits to);
 //   • lightwalletd (zec.rocks, the servers Zashi uses), spoken as plain gRPC over HTTP/2: the branch id and
-//     height, coins, balance and sending, when Blockbook does not answer.
+//     height, coins, balance, history and sending, when Blockbook does not answer.
+//  Testnet has no Blockbook: everything goes through testnet.zec.rocks. The history is then read from
+//  lightwalletd's raw transactions of the address and the compact blocks they are in (which carry each
+//  transaction's id and its transparent inputs and outputs).
 //
 
 import Foundation
@@ -61,17 +64,21 @@ public final class ZcashAPI {
         let confirmed: Bool
     }
 
-    public init() {
+    private let isTestnet: Bool
+
+    public init(isTestnet: Bool = false) {
+        self.isTestnet = isTestnet
         session = SharedSession.get(timeout: TorProxy.isEnabled ? 45 : 20)
     }
 
     private static let blockbook = "https://blockbook.zec.zelcore.io"
     private static let lightwalletd = ["zec.rocks", "na.zec.rocks", "eu.zec.rocks"]
+    private static let testnetLightwalletd = ["testnet.zec.rocks"]
 
     // MARK: - Blockbook
 
     private func blockbook(_ path: String, body: Data? = nil) async throws -> Any {
-        guard let url = URL(string: ZcashAPI.blockbook + path) else { throw ZcashError.unavailable }
+        guard !isTestnet, let url = URL(string: ZcashAPI.blockbook + path) else { throw ZcashError.unavailable }
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let body {
@@ -103,8 +110,13 @@ public final class ZcashAPI {
 
     /// One unary gRPC call: the request message framed (no compression), the answer's first message.
     private func grpc(_ method: String, _ message: Data) async throws -> Data {
+        try await grpcStream(method, message).first ?? Data()            // none: an empty (default) message
+    }
+
+    /// A gRPC call and every message of its answer (a server stream comes whole in one HTTP/2 response).
+    private func grpcStream(_ method: String, _ message: Data) async throws -> [Data] {
         var failure: Error = ZcashError.unavailable
-        for host in ZcashAPI.lightwalletd {
+        for host in isTestnet ? ZcashAPI.testnetLightwalletd : ZcashAPI.lightwalletd {
             guard let url = URL(string: "https://\(host)/cash.z.wallet.sdk.rpc.CompactTxStreamer/\(method)") else { continue }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -121,10 +133,19 @@ public final class ZcashAPI {
                     throw ZcashError.server(KnownToken.cleanText(text, limit: 200))
                 }
                 let bytes = [UInt8](data)
-                guard bytes.count >= 5, bytes[0] == 0 else { return Data() }        // an empty (default) message
-                let size = Int(bytes[1]) << 24 | Int(bytes[2]) << 16 | Int(bytes[3]) << 8 | Int(bytes[4])
-                guard 5 + size <= bytes.count else { continue }
-                return Data(bytes[5..<(5 + size)])
+                var messages = [Data]()
+                var index = 0
+                var complete = true
+                while index + 5 <= bytes.count {
+                    guard bytes[index] == 0 else { complete = false; break }       // compressed: not asked for
+                    let size = Int(bytes[index + 1]) << 24 | Int(bytes[index + 2]) << 16 | Int(bytes[index + 3]) << 8
+                        | Int(bytes[index + 4])
+                    guard index + 5 + size <= bytes.count else { complete = false; break }
+                    messages.append(Data(bytes[(index + 5)..<(index + 5 + size)]))
+                    index += 5 + size
+                }
+                guard complete else { continue }
+                return messages
             } catch let error as ZcashError {
                 throw error
             } catch {
@@ -179,40 +200,57 @@ public final class ZcashAPI {
         return Balance(confirmed: reply[1]?.first?.varint ?? 0, pending: 0)
     }
 
-    /// The newest transactions of the address, newest first (Blockbook only).
+    /// The newest transactions of the address, newest first.
     func history(_ address: String) async throws -> [Movement] {
-        guard let object = try await blockbook("/api/v2/address/\(address)?details=txs&pageSize=25") as? [String: Any] else {
-            throw ZcashError.unavailable
+        if let object = try? await blockbook("/api/v2/address/\(address)?details=txs&pageSize=25") as? [String: Any] {
+            return ((object["transactions"] as? [[String: Any]]) ?? []).compactMap { ZcashAPI.movement($0, owner: address) }
         }
-        return ((object["transactions"] as? [[String: Any]]) ?? []).compactMap { ZcashAPI.movement($0, owner: address) }
+        return try await lightwalletdHistory(address)
     }
 
     /// What one transaction did to `owner`.
     func transaction(_ txid: String, owner: String) async throws -> Movement? {
-        guard let object = try await blockbook("/api/v2/tx/\(txid)") as? [String: Any] else { return nil }
-        return ZcashAPI.movement(object, owner: owner)
+        if let object = try? await blockbook("/api/v2/tx/\(txid)") as? [String: Any] {
+            return ZcashAPI.movement(object, owner: owner)
+        }
+        guard let own = ZcashAddress.decodeTransparent(owner)?.script, let found = try await rawTransaction(txid) else { return nil }
+        var cache = [String: RawParts]()
+        var date: Date?
+        if found.height > 0, let block = try? await compactBlock(found.height) { date = block.date }
+        return try await movement(found.parts, txid: txid, own: own, date: date, confirmed: found.height > 0, cache: &cache)
     }
 
     /// Whether the network knows the transaction (in a block or waiting in the mempool).
     func isKnown(_ txid: String) async throws -> Bool {
+        if !isTestnet {
+            do {
+                return try await blockbook("/api/v2/tx/\(txid)") is [String: Any]
+            } catch ZcashError.server(_) {
+                return false                               // "transaction not found"
+            } catch {
+                // Blockbook unreachable: ask lightwalletd.
+            }
+        }
         do {
-            return try await blockbook("/api/v2/tx/\(txid)") is [String: Any]
+            return try await rawTransaction(txid) != nil
         } catch ZcashError.server(_) {
-            return false                                   // "transaction not found"
+            return false                                   // NotFound
         }
     }
 
     /// Sends a signed transaction; returns its id.
     func broadcast(_ raw: Data) async throws -> String {
-        do {
-            if let object = try await blockbook("/api/v2/sendtx/", body: Data(raw.hexEncodedString.utf8)) as? [String: Any],
-               let txid = object["result"] as? String {
-                return txid
+        if !isTestnet {
+            do {
+                if let object = try await blockbook("/api/v2/sendtx/", body: Data(raw.hexEncodedString.utf8)) as? [String: Any],
+                   let txid = object["result"] as? String {
+                    return txid
+                }
+            } catch ZcashError.server(let message) {
+                throw ZcashError.server(message)          // refused: the answer is final
+            } catch {
+                // Blockbook unreachable: try lightwalletd.
             }
-        } catch ZcashError.server(let message) {
-            throw ZcashError.server(message)              // refused: the answer is final
-        } catch {
-            // Blockbook unreachable: try lightwalletd.
         }
         let reply = Protobuf.fields(try await grpc("SendTransaction", Protobuf.bytes(1, raw)))
         let code = reply[1]?.first?.varint ?? 0
@@ -221,6 +259,186 @@ public final class ZcashAPI {
         }
         return ""
     }
+
+    // MARK: - History from lightwalletd
+
+    /// A transparent output: its amount and the script it pays.
+    struct TxOut: Equatable {
+        let value: UInt64
+        let script: Data
+    }
+
+    /// The transparent part of a raw transaction (v4, v5 and v6 all start with it, after the header).
+    struct RawParts: Equatable {
+        struct Input: Equatable {
+            let txid: String                               // as explorers show it
+            let index: UInt32
+        }
+
+        var inputs: [Input]
+        var outputs: [TxOut]
+        /// Nothing but transparent inputs and outputs (v5): the fee is what goes in minus what comes out.
+        var transparentOnly: Bool
+    }
+
+    /// One transaction of a compact block: its id and its transparent inputs and outputs.
+    struct CompactTx {
+        let txid: String
+        let inputs: [RawParts.Input]
+        let outputs: [TxOut]
+    }
+
+    struct CompactBlock {
+        let date: Date?
+        let transactions: [CompactTx]
+    }
+
+    static func transparentParts(_ raw: Data) -> RawParts? {
+        let bytes = [UInt8](raw)
+        guard bytes.count >= 4 else { return nil }
+        let version = UInt32(bytes[0]) | UInt32(bytes[1]) << 8 | UInt32(bytes[2]) << 16 | UInt32(bytes[3] & 0x7f) << 24
+        var index: Int
+        switch version {
+        case 4: index = 8                          // header, version group id
+        case 5, 6: index = 20                      // header, version group id, branch id, lock time, expiry height
+        default: return nil
+        }
+        func compact() -> Int? {
+            guard index < bytes.count else { return nil }
+            let first = bytes[index]
+            index += 1
+            let width: Int
+            switch first {
+            case 0xfd: width = 2
+            case 0xfe: width = 4
+            case 0xff: width = 8
+            default: return Int(first)
+            }
+            guard index + width <= bytes.count else { return nil }
+            var value: UInt64 = 0
+            for shift in 0..<width { value |= UInt64(bytes[index + shift]) << UInt64(8 * shift) }
+            index += width
+            return value <= UInt64(bytes.count) ? Int(value) : nil
+        }
+        func take(_ count: Int) -> [UInt8]? {
+            guard count >= 0, index + count <= bytes.count else { return nil }
+            defer { index += count }
+            return Array(bytes[index..<(index + count)])
+        }
+        func number(_ part: [UInt8]) -> UInt64 { part.reversed().reduce(UInt64(0)) { $0 << 8 | UInt64($1) } }
+        guard let inputCount = compact() else { return nil }
+        var inputs = [RawParts.Input]()
+        for _ in 0..<inputCount {
+            guard let hash = take(32), let vout = take(4), let scriptSize = compact(), take(scriptSize) != nil, take(4) != nil else {
+                return nil
+            }
+            // The coinbase "input" spends nothing.
+            if hash.allSatisfy({ $0 == 0 }) && vout == [0xff, 0xff, 0xff, 0xff] { continue }
+            inputs.append(RawParts.Input(txid: Data(hash.reversed()).hexEncodedString, index: UInt32(truncatingIfNeeded: number(vout))))
+        }
+        guard let outputCount = compact() else { return nil }
+        var outputs = [TxOut]()
+        for _ in 0..<outputCount {
+            guard let value = take(8), let scriptSize = compact(), let script = take(scriptSize) else { return nil }
+            outputs.append(TxOut(value: number(value), script: Data(script)))
+        }
+        // v5 without Sapling spends or outputs and without Orchard actions ends with three zero counts.
+        let rest = Array(bytes[index...])
+        return RawParts(inputs: inputs, outputs: outputs, transparentOnly: version == 5 && rest == [0, 0, 0])
+    }
+
+    private static func blockID(_ height: UInt64) -> Data { Protobuf.varint(1, height) }
+
+    /// A raw transaction and the height of its block (0: in the mempool); nil when unknown.
+    func rawTransaction(_ txid: String) async throws -> (parts: RawParts, height: UInt64)? {
+        guard txid.count == 64, txid.allSatisfy({ $0.isHexDigit }) else { return nil }
+        let reply = Protobuf.fields(try await grpc("GetTransaction", Protobuf.bytes(3, Data(hexReversed: txid))))
+        guard let raw = reply[1]?.first?.data, !raw.isEmpty, let parts = ZcashAPI.transparentParts(raw) else { return nil }
+        return (parts, reply[2]?.first?.varint ?? 0)
+    }
+
+    func compactBlock(_ height: UInt64) async throws -> CompactBlock {
+        let block = Protobuf.fields(try await grpc("GetBlock", ZcashAPI.blockID(height)))
+        let time = block[5]?.first?.varint ?? 0
+        let transactions: [CompactTx] = (block[7] ?? []).compactMap { entry in
+            guard let fields = entry.data.map(Protobuf.fields), let hash = fields[2]?.first?.data, hash.count == 32 else { return nil }
+            let inputs: [RawParts.Input] = (fields[7] ?? []).compactMap { value in
+                guard let input = value.data.map(Protobuf.fields), let prevout = input[1]?.first?.data, prevout.count == 32 else {
+                    return nil
+                }
+                return RawParts.Input(txid: Data(prevout.reversed()).hexEncodedString,
+                                      index: UInt32(truncatingIfNeeded: input[2]?.first?.varint ?? 0))
+            }
+            let outputs: [TxOut] = (fields[8] ?? []).compactMap { value in
+                guard let output = value.data.map(Protobuf.fields) else { return nil }
+                return TxOut(value: output[1]?.first?.varint ?? 0, script: output[2]?.first?.data ?? Data())
+            }
+            return CompactTx(txid: Data(hash.reversed()).hexEncodedString, inputs: inputs, outputs: outputs)
+        }
+        return CompactBlock(date: time > 0 ? Date(timeIntervalSince1970: TimeInterval(time)) : nil, transactions: transactions)
+    }
+
+    /// The newest mined transactions of the address (at most 25), newest first: lightwalletd lists the raw
+    /// transactions, their compact blocks give their ids, and the coins they spend are read for what left.
+    private func lightwalletdHistory(_ address: String) async throws -> [Movement] {
+        guard let own = ZcashAddress.decodeTransparent(address)?.script else { throw ZcashError.invalidAddress }
+        let tip = UInt64(try await network().height)
+        let range = Protobuf.bytes(1, ZcashAPI.blockID(1)) + Protobuf.bytes(2, ZcashAPI.blockID(tip))
+        let replies = try await grpcStream("GetTaddressTxids", Protobuf.bytes(1, Data(address.utf8)) + Protobuf.bytes(2, range))
+        let found: [(parts: RawParts, height: UInt64)] = replies.compactMap { message in
+            let fields = Protobuf.fields(message)
+            guard let raw = fields[1]?.first?.data, let parts = ZcashAPI.transparentParts(raw),
+                  let height = fields[2]?.first?.varint, height > 0, height < UInt64(UInt32.max) else { return nil }
+            return (parts, height)
+        }
+        var blocks = [UInt64: CompactBlock]()
+        var cache = [String: RawParts]()
+        var list = [Movement]()
+        for item in found.sorted(by: { $0.height > $1.height }).prefix(25) {
+            if blocks[item.height] == nil { blocks[item.height] = try await compactBlock(item.height) }
+            guard let block = blocks[item.height],
+                  let match = block.transactions.first(where: { $0.inputs == item.parts.inputs && $0.outputs == item.parts.outputs }),
+                  let entry = try await self.movement(item.parts, txid: match.txid, own: own, date: block.date, confirmed: true,
+                                                      cache: &cache) else { continue }
+            list.append(entry)
+        }
+        return list
+    }
+
+    /// What a raw transaction did to the account paid by `own`: the coins it spends are read (and kept in
+    /// `cache`) for their amounts and addresses.
+    private func movement(_ parts: RawParts, txid: String, own: Data, date: Date?, confirmed: Bool,
+                          cache: inout [String: RawParts]) async throws -> Movement? {
+        var spent: UInt64 = 0
+        var received: UInt64 = 0
+        var inputsTotal: UInt64 = 0
+        var resolved = true
+        var from = [String]()
+        for input in parts.inputs {
+            if cache[input.txid] == nil, let funding = try await rawTransaction(input.txid) { cache[input.txid] = funding.parts }
+            guard let outputs = cache[input.txid]?.outputs, Int(input.index) < outputs.count else {
+                resolved = false
+                continue
+            }
+            let coin = outputs[Int(input.index)]
+            inputsTotal &+= coin.value
+            if coin.script == own { spent &+= coin.value }
+            if let address = ZcashAddress.address(script: coin.script, testnet: isTestnet), !from.contains(address) {
+                from.append(address)
+            }
+        }
+        var to = [(address: String, value: UInt64)]()
+        var outputsTotal: UInt64 = 0
+        for output in parts.outputs {
+            outputsTotal &+= output.value
+            if output.script == own { received &+= output.value }
+            to.append((ZcashAddress.address(script: output.script, testnet: isTestnet) ?? "—", output.value))
+        }
+        let fee = resolved && parts.transparentOnly && inputsTotal >= outputsTotal ? inputsTotal - outputsTotal : 0
+        return Movement(txid: txid, net: Int64(clamping: received) - Int64(clamping: spent), fee: fee, from: from, to: to,
+                        date: date, confirmed: confirmed)
+    }
+
 
     private static func movement(_ item: [String: Any], owner: String) -> Movement? {
         guard let txid = item["txid"] as? String else { return nil }

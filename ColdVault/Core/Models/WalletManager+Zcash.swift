@@ -16,8 +16,8 @@ extension WalletManager {
     // MARK: - Balance
 
     /// The ZEC of the address, what arrives in unmined transactions included (what leaves is taken out).
-    func zcashAssets(owner: String) async throws -> [EVMAsset] {
-        let balance = try await ZcashAPI().balance(owner)
+    func zcashAssets(owner: String, testnet: Bool) async throws -> [EVMAsset] {
+        let balance = try await ZcashAPI(isTestnet: testnet).balance(owner)
         let total = balance.pending >= 0 ? balance.confirmed &+ UInt64(balance.pending)
                                          : balance.confirmed - min(balance.confirmed, UInt64(balance.pending.magnitude))
         return [EVMAsset(chain: .zcash, contract: nil, symbol: "ZEC", name: "Zcash", decimals: 8,
@@ -27,7 +27,7 @@ extension WalletManager {
     // MARK: - History
 
     func zcashHistory(owner: String, record: StoredWalletRecord) async -> [WalletTransaction]? {
-        guard let list = try? await ZcashAPI().history(owner) else { return nil }
+        guard let list = try? await ZcashAPI(isTestnet: record.isTestnet).history(owner) else { return nil }
         return list.compactMap { movement in
             guard movement.net != 0 else { return nil }
             return WalletTransaction(txid: movement.txid, net: movement.net, date: movement.date,
@@ -38,7 +38,9 @@ extension WalletManager {
     /// Where a Zcash transaction's money came from and went, and its fee.
     func zcashTransactionInfo(id: String) async throws -> TransactionFeeInfo {
         guard let owner = address(on: .zcash) else { throw ZcashError.invalidAddress }
-        guard let movement = try await ZcashAPI().transaction(id, owner: owner) else { throw ZcashError.unavailable }
+        guard let movement = try await ZcashAPI(isTestnet: isTestnet).transaction(id, owner: owner) else {
+            throw ZcashError.unavailable
+        }
         var info = TransactionFeeInfo(fee: movement.fee, vsize: 0)
         info.inputs = movement.from.enumerated().map { TxParty(id: $0.offset, address: $0.element, value: 0, isOwn: $0.element == owner) }
         info.outputs = movement.to.enumerated().map {
@@ -60,8 +62,9 @@ extension WalletManager {
         guard let target = ZcashAddress.target(typed) else {
             throw ZcashAddress.isShieldedOnly(typed) ? ZcashError.shieldedOnly : ZcashError.invalidAddress
         }
-        guard !target.testnet else { throw ZcashError.invalidAddress }
-        let api = ZcashAPI()
+        // A testnet address from a mainnet wallet (or the other way round) can't be paid.
+        guard target.testnet == isTestnet else { throw ZcashError.invalidAddress }
+        let api = ZcashAPI(isTestnet: isTestnet)
         async let coinsCall = api.coins(from)
         async let networkCall = api.network()
         let (all, network) = try await (coinsCall, networkCall)

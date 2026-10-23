@@ -8,6 +8,7 @@
 //  the review, and sent after Face ID.
 //  wallet2 needs the spend key to see what the account spends, so the phrase is read (without Face ID,
 //  as for deriving addresses) whenever the Monero wallet goes on screen.
+//  On testnet the account is its stagenet wallet (another file, nodes and restore height).
 //
 
 import Foundation
@@ -15,20 +16,23 @@ import UIKit
 
 extension WalletManager {
 
-    /// The restore height of a Monero account (where its scan starts).
+    /// The restore height of a Monero account (where its scan starts). The record keeps mainnet's; stagenet's
+    /// is the stagenet height of that same moment.
     nonisolated static func moneroRestoreHeight(_ record: StoredWalletRecord) -> UInt64 {
-        record.chainAddresses?["moneroHeight"].flatMap { UInt64($0) } ?? 0
+        let height = record.chainAddresses?["moneroHeight"].flatMap { UInt64($0) } ?? 0
+        return record.isTestnet ? MoneroHeight.stagenet(fromMainnet: height) : height
     }
 
     /// What MoneroEngine opens for the account on screen (the phrase is read without Face ID).
     private func moneroAccount(_ record: StoredWalletRecord) async throws -> MoneroEngine.Account {
         let secret = try await loadSecret(reason: appLanguage == .english ? "Open the Monero wallet" : "Abrir la billetera de Monero")
         let account = record.accountNumber ?? 0
+        guard let moneroAddress = address(on: .monero, record: record) else { throw MoneroError.invalidAddress }
         let derived = try await Task.detached(priority: .userInitiated) {
             try WalletManager.moneroSpendKey(secret: secret, account: account)
         }.value
         return MoneroEngine.Account(spendKey: derived.key, restoreHeight: WalletManager.moneroRestoreHeight(record),
-                                    address: record.primaryAddress)
+                                    address: moneroAddress, stagenet: record.isTestnet)
     }
 
     /// Opens the account on screen in MoneroEngine (nothing happens if it is already open).
@@ -42,13 +46,13 @@ extension WalletManager {
     /// While a Monero wallet is on screen: opens it, follows the scan, refreshes the balance and the list
     /// when something changes, and pauses the scan while the app is in the background.
     func moneroWatch() -> Task<Void, Never> {
-        let watched = activeRecord?.primaryAddress
+        let watched = address(on: .monero)
         return Task { [weak self] in
             var opened = false
             var paused = false
             var last: String?
             while !Task.isCancelled {
-                guard let self, let address = watched, self.activeRecord?.primaryAddress == address else { return }
+                guard let self, let address = watched, self.address(on: .monero) == address else { return }
                 if UIApplication.shared.applicationState != .active {
                     if opened && !paused { MoneroEngine.shared.pause(); paused = true }
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -66,7 +70,7 @@ extension WalletManager {
                         continue
                     }
                 }
-                if let state = await MoneroEngine.shared.state(of: address), self.activeRecord?.primaryAddress == address {
+                if let state = await MoneroEngine.shared.state(of: address), self.address(on: .monero) == address {
                     self.moneroState = state
                     // The list and the balance follow every change the scan finds.
                     let mark = "\(state.balance)|\(state.unlocked)|\(state.synced)"
@@ -138,7 +142,7 @@ extension WalletManager {
     func prepareMoneroSend(asset: EVMAsset, to recipient: String, amount: UInt256?) async throws -> EthereumSendPlan {
         guard asset.isNative, let owner = address(on: .monero) else { throw MoneroError.unavailable }
         let target = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard MoneroEngine.isValidAddress(target) else { throw MoneroError.invalidAddress }
+        guard MoneroEngine.isValidAddress(target, stagenet: isTestnet) else { throw MoneroError.invalidAddress }
         try await openMonero()
         guard let state = await MoneroEngine.shared.state(of: owner) else { throw MoneroError.noNode }
         guard state.synced else { throw MoneroError.syncing(state.percent) }

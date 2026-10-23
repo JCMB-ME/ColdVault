@@ -46,7 +46,7 @@ public struct ImportWalletView: View {
         case .solana: return SolanaAddress.isValid(text)
         case .sui: return SuiAddress.isValid(text)
         case .xrp: return XRPAddress.decodeClassic(text) != nil
-        case .zcash: return ZcashAddress.decodeTransparent(text).map { !$0.testnet } ?? false
+        case .zcash: return ZcashAddress.decodeTransparent(text) != nil
         case .monero: return false                       // watching Monero needs the view key too
         default: return EthereumAddress.parse(text) != nil
         }
@@ -151,7 +151,7 @@ public struct ImportWalletView: View {
                 Text(ethKind ?? (detection.tonNative
                                  ? t("This is a TON wallet phrase (Tonkeeper). Choose TON above to import it.",
                                      "Es una frase de billetera TON (Tonkeeper). Elige TON arriba para importarla.")
-                                 : coin == .monero && MoneroEngine.isValidAddress(inputText)
+                                 : coin == .monero && MoneroEngine.isValidAddress(inputText, stagenet: nil)
                                  ? t("A Monero address alone can't show what it holds: import the wallet's phrase.",
                                      "Una dirección de Monero sola no puede mostrar lo que tiene: importa la frase de la billetera.")
                                  : t("Not a phrase, private key or \(coin.title(lang)) address.", "No es una frase, clave privada ni dirección de \(coin.title(lang)).")))

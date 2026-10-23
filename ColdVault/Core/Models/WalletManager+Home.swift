@@ -238,7 +238,7 @@ extension WalletManager {
             case .solana: return SolanaAddress.isValid(contact.address)
             case .sui: return SuiAddress.isValid(contact.address)
             case .xrp: return XRPAddress.isValid(contact.address)
-            case .monero: return MoneroEngine.isValidAddress(contact.address)
+            case .monero: return MoneroEngine.isValidAddress(contact.address, stagenet: nil)
             case .zcash: return ZcashAddress.isValid(contact.address)
             case .ethereum, .polygon: return EthereumAddress.parse(contact.address) != nil
             case .dollars: return activeNetwork.isValidAddress(contact.address)

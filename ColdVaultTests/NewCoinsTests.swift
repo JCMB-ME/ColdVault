@@ -231,6 +231,48 @@ final class NewCoinsTests: XCTestCase {
         XCTAssertEqual(ZcashTransaction.fee(inputs: 5, outputs: [other, own]), 25_000)
     }
 
+    // MARK: - Test networks
+
+    func testTestnetAddressForms() throws {
+        // Zcash testnet: the same key hash with testnet's prefix (and back).
+        XCTAssertEqual(ZcashAddress.transparent("t1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F", testnet: true), "tmPLGq3RDkLhRcpr4jFXaNZMAHHXiVerN4Z")
+        XCTAssertEqual(ZcashAddress.transparent("tmPLGq3RDkLhRcpr4jFXaNZMAHHXiVerN4Z", testnet: false), "t1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F")
+        let script = try XCTUnwrap(ZcashAddress.decodeTransparent("t1XVXWCvpMgBvUaed4XDqWtgQgJSu1Ghz7F")).script
+        XCTAssertEqual(ZcashAddress.address(script: script, testnet: true), "tmPLGq3RDkLhRcpr4jFXaNZMAHHXiVerN4Z")
+        // Monero stagenet: monerodocs' example keys with stagenet's network byte (Python reference).
+        let mainnet = "43tXwm6UNNvSyMdHU4Jfeg4GRgU7KEVAfHo3B5RrXYMjZMRaowr68y12HSo14wv2qcYqqpG1U5AHrJtBdFHKPDEA9UxK6Hy"
+        let stagenet = "546a2c1S1z2SyMdHU4Jfeg4GRgU7KEVAfHo3B5RrXYMjZMRaowr68y12HSo14wv2qcYqqpG1U5AHrJtBdFHKPDEA9V9mRLW"
+        XCTAssertEqual(MoneroAddress.converted(mainnet, to: .stagenet), stagenet)
+        XCTAssertEqual(MoneroAddress.converted(stagenet, to: .mainnet), mainnet)
+        XCTAssertEqual(MoneroAddress.network(of: stagenet), .stagenet)
+        XCTAssertEqual(MoneroAddress.network(of: mainnet), .mainnet)
+        XCTAssertNil(MoneroAddress.converted(String(mainnet.dropLast()) + "z", to: .stagenet))
+        // Stagenet heights follow its chain (block times read from it), a day earlier.
+        XCTAssertEqual(MoneroHeight.stagenetHeight(at: Date(timeIntervalSince1970: 1_764_246_150)), 2_000_000 - 720)
+        XCTAssertEqual(MoneroHeight.stagenetHeight(at: Date(timeIntervalSince1970: 1_500_000_000)), 0)
+        let fromMainnet = MoneroHeight.stagenet(fromMainnet: 3_500_000 - 720)
+        let expected = MoneroHeight.stagenetHeight(at: Date(timeIntervalSince1970: 1_757_868_614))
+        XCTAssertLessThan(abs(Int64(fromMainnet) - Int64(expected)), 3)
+    }
+
+    func testZcashRawTransparentParts() throws {
+        // v5, transparent only (the transaction signed above).
+        let v5 = try hex("050000800a27a7265b16a5370000000084d23500021111111111111111111111111111111111111111111111111111111111111111000000006b483045022100bb51909e872733d2fb73a678595315c19908fbfeca426e3b8000359a3f63d27602203e04abdbb1dc8e66a5d27cd1b303af668ecd77af53e2dd44d222ea96bb669ae5012103db98d8f87716269ed31879aef19bdadbc869a9ea67729e36332d023b916cbcc9ffffffff2222222222222222222222222222222222222222222222222222222222222222030000006a47304402207c457fd8471f7f1f77be7c01728af17d259736ca69d7c5ba944657a9a2997e54022038514b9ab8845842d0cc1c4aea87ac77f6958bdf9f095d7d657bea49fe95e806012103db98d8f87716269ed31879aef19bdadbc869a9ea67729e36332d023b916cbcc9ffffffff0200e1f505000000001976a9147bb83570b8fae146e03c5331a020b1e0892f631d88ac0804fb02000000001976a9149564d9fed247986b15a2f57d0b3b032eeb28476c88ac000000")
+        let parts = try XCTUnwrap(ZcashAPI.transparentParts(v5))
+        XCTAssertEqual(parts.inputs, [ZcashAPI.RawParts.Input(txid: String(repeating: "11", count: 32), index: 0),
+                                      ZcashAPI.RawParts.Input(txid: String(repeating: "22", count: 32), index: 3)])
+        XCTAssertEqual(parts.outputs.map(\.value), [100_000_000, 50_005_000])
+        XCTAssertTrue(parts.transparentOnly)
+        // v6 (NU7) coinbase, as on testnet: the coinbase input spends nothing.
+        let v6 = try hex("0600008098b684d8d90a197700000000dc5e440001" + String(repeating: "00", count: 32) + "ffffffff00ffffffff"
+                         + "010a943f000000000017a9147a86d6c7eb12ce0aa309d7391a6f338eba3c242b87" + "000000")
+        let coinbase = try XCTUnwrap(ZcashAPI.transparentParts(v6))
+        XCTAssertTrue(coinbase.inputs.isEmpty)
+        XCTAssertEqual(coinbase.outputs.first?.value, 4_166_666)
+        XCTAssertFalse(coinbase.transparentOnly)
+        XCTAssertNil(ZcashAPI.transparentParts(try hex("03000080")))
+    }
+
     // MARK: - Monero
 
     func testMoneroDerivation() throws {
@@ -267,5 +309,11 @@ final class NewCoinsTests: XCTestCase {
                        "43SMrTtLZsyZL81653f6b3BWpU5u6XZ2SRdAaM1MxLCGDcTq6mKi9D11ZgN2hbmCdS9j66xu8Wz3J9wgiwkYssLnEK44756")
         XCTAssertTrue(MoneroEngine.isValidAddress("43tXwm6UNNvSyMdHU4Jfeg4GRgU7KEVAfHo3B5RrXYMjZMRaowr68y12HSo14wv2qcYqqpG1U5AHrJtBdFHKPDEA9UxK6Hy"))
         XCTAssertFalse(MoneroEngine.isValidAddress("43tXwm6UNNvSyMdHU4Jfeg4GRgU7KEVAfHo3B5RrXYMjZMRaowr68y12HSo14wv2qcYqqpG1U5AHrJtBdFHKPDEA9UxK6Hz"))
+        // Stagenet: wallet2 makes the address MoneroAddress converts to, and tells the networks apart.
+        let stagenet = "546a2c1S1z2SyMdHU4Jfeg4GRgU7KEVAfHo3B5RrXYMjZMRaowr68y12HSo14wv2qcYqqpG1U5AHrJtBdFHKPDEA9V9mRLW"
+        XCTAssertEqual(try MoneroEngine.address(spendKey: docs, stagenet: true), stagenet)
+        XCTAssertTrue(MoneroEngine.isValidAddress(stagenet, stagenet: true))
+        XCTAssertFalse(MoneroEngine.isValidAddress(stagenet))
+        XCTAssertTrue(MoneroEngine.isValidAddress(stagenet, stagenet: nil))
     }
 }

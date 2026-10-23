@@ -77,7 +77,7 @@ extension WalletManager {
         case .sui: return try await suiAssets(owner: owner, testnet: testnet)
         case .xrp: return try await xrpAssets(owner: owner, testnet: testnet)
         case .monero: return try await moneroAssets(owner: owner)
-        case .zcash: return try await zcashAssets(owner: owner)
+        case .zcash: return try await zcashAssets(owner: owner, testnet: testnet)
         default: return try await evmAssets(chain: chain, owner: owner, testnet: testnet, kind: kind)
         }
     }
@@ -288,7 +288,7 @@ extension WalletManager {
                 return nil
             }
         case .zcash:
-            guard let balance = try? await ZcashAPI().balance(owner) else { return nil }
+            guard let balance = try? await ZcashAPI(isTestnet: testnet).balance(owner) else { return nil }
             return "\(balance.confirmed)|\(balance.pending)"
         case .monero:
             return nil                                    // its own watch follows the scan (moneroWatch)

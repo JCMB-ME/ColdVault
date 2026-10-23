@@ -15,7 +15,7 @@
 //   • Monero: XMR (wallet2 scans the chain; same phrase, or a Monero phrase / Polyseed).
 //   • Zcash: ZEC, transparent pool (t1 address, same phrase).
 //  Testnets: Sepolia, Base Sepolia, Polygon Amoy, Tron Nile, TON testnet, Solana Devnet, Sui Testnet,
-//  XRP Testnet (Monero and Zcash: mainnet only).
+//  XRP Testnet, Monero Stagenet, Zcash Testnet.
 //
 
 import Foundation
@@ -38,8 +38,8 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .solana: return testnet ? "Solana Devnet" : "Solana"
         case .sui: return testnet ? "Sui Testnet" : "Sui"
         case .xrp: return testnet ? "XRP Testnet" : "XRP Ledger"
-        case .monero: return "Monero"
-        case .zcash: return "Zcash"
+        case .monero: return testnet ? "Monero Stagenet" : "Monero"
+        case .zcash: return testnet ? "Zcash Testnet" : "Zcash"
         }
     }
 
@@ -188,8 +188,10 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case (.sui, true): return URL(string: "https://suiscan.xyz/testnet/tx/\(hash)")
         case (.xrp, false): return URL(string: "https://xrpscan.com/tx/\(hash)")
         case (.xrp, true): return URL(string: "https://testnet.xrpl.org/transactions/\(hash)")
-        case (.monero, _): return URL(string: "https://xmrchain.net/tx/\(hash)")
-        case (.zcash, _): return URL(string: "https://blockchair.com/zcash/transaction/\(hash)")
+        case (.monero, false): return URL(string: "https://xmrchain.net/tx/\(hash)")
+        case (.monero, true): return URL(string: "https://stagenet.xmrchain.net/tx/\(hash)")
+        case (.zcash, false): return URL(string: "https://blockchair.com/zcash/transaction/\(hash)")
+        case (.zcash, true): return URL(string: "https://blockexplorer.one/zcash/testnet/tx/\(hash)")
         }
     }
 
@@ -298,7 +300,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .solana: return SolanaAddress.isValid(text)
         case .sui: return SuiAddress.isValid(text)
         case .xrp: return XRPAddress.isValid(text)
-        case .monero: return MoneroEngine.isValidAddress(text)
+        case .monero: return MoneroEngine.isValidAddress(text, stagenet: nil)
         case .zcash: return ZcashAddress.isValid(text)
         default: return EthereumAddress.parse(text) != nil
         }
