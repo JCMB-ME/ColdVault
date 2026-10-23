@@ -474,6 +474,18 @@ extension WalletManager {
                 secret = WalletSecret(privateKey: trimmed.lowercased().replacingOccurrences(of: "0x", with: ""))
             }
             if let raw = secret.privateKey?.hexDecoded, WalletManager.isGuessableKey(raw) { throw guessableKeyError }
+            // Keys in other formats (WIF, suiprivkey, family seed) get the same check on the key they hold.
+            let held: Data?
+            switch coin {
+            case .zcash: held = try? WalletManager.zcashKey(secret: secret, account: 0)
+            case .sui: held = try? WalletManager.suiKey(secret: secret, account: 0)
+            default: held = nil
+            }
+            if let held, WalletManager.isGuessableKey(held) { throw guessableKeyError }
+            // The XRP Ledger's genesis seed (from the public passphrase "masterpassphrase") is known to everyone.
+            if coin == .xrp, secret.privateKey?.trimmingCharacters(in: .whitespacesAndNewlines) == "snoPBrXtMeMyMHUVTgbuqAfg1SUTb" {
+                throw guessableKeyError
+            }
             type = .privateKey
         }
         var result = try await Task.detached(priority: .userInitiated) {
