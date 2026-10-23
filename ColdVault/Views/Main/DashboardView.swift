@@ -174,7 +174,7 @@ public struct DashboardView: View {
                 .focusAppear()
                 .environmentObject(walletManager)
         }
-        .sheet(isPresented: $showBrowserSheet, onDismiss: {
+        .sheet(isPresented: Binding(get: { showBrowserSheet && !DashboardView.isPad }, set: { showBrowserSheet = $0 }), onDismiss: {
             withAnimation(.easeOut(duration: 0.2)) { BrowserBackdrop.shared.progress = 0 }
         }) {
             DappBrowserView(webModel: browserModel, onClose: { showBrowserSheet = false },
@@ -185,12 +185,21 @@ public struct DashboardView: View {
                 .presentationDragIndicator(.visible)
                 .environmentObject(walletManager)
         }
+        // On iPad a sheet is a small form in the middle of the screen: the browser takes the whole screen.
+        .fullScreenCover(isPresented: Binding(get: { showBrowserSheet && DashboardView.isPad }, set: { showBrowserSheet = $0 }),
+                         onDismiss: { BrowserBackdrop.shared.progress = 0 }) {
+            DappBrowserView(webModel: browserModel, onClose: { showBrowserSheet = false },
+                            onDragChanged: { _ in }, onDragEnded: { _, _ in }, asSheet: true, showsClose: true)
+                .environmentObject(walletManager)
+        }
         .sheet(isPresented: $showHistory) {
             TransactionHistoryView()
                 .focusAppear()
                 .environmentObject(walletManager)
         }
     }
+
+    static var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
 
     private var onBalancePage: Bool {
         if #available(iOS 17.0, *) { return pageID == 1 }
@@ -232,6 +241,8 @@ public struct DashboardView: View {
     }
 
     private func openBrowserPage() {
+        // iPad: the browser always opens over the whole screen.
+        if DashboardView.isPad { openBrowser(); return }
         guard browserEnabled, !showBrowser else { return }
         let startProgress = effectiveBrowserProgress
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()

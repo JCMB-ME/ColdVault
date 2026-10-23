@@ -1099,6 +1099,8 @@ struct DappBrowserView: View {
     let onDragEnded: (CGFloat, CGFloat) -> Void
     /// Opened as a sheet (like Send): its title on top instead of the "Balance" handle.
     var asSheet = false
+    /// A close button by the title (iPad, where the browser covers the whole screen).
+    var showsClose = false
 
     private var lang: AppLanguage { walletManager.appLanguage }
     private func t(_ en: String, _ es: String) -> String { lang == .english ? en : es }
@@ -1186,6 +1188,23 @@ struct DappBrowserView: View {
         VStack(spacing: 8) {
             if asSheet {
                 SheetHeader(title: t("Browser", "Navegador"))
+                    .overlay(alignment: .trailing) {
+                        if showsClose {
+                            Button {
+                                isUrlFocused = false
+                                onClose()
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundColor(Color(uiColor: .label))
+                                    .frame(width: 36, height: 36)
+                                    .background(Circle().fill(SettingsStyle.groupFill))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.trailing, 16)
+                            .accessibilityLabel(Text(t("Close", "Cerrar")))
+                        }
+                    }
             } else {
             // Pull handle + "Back to balance" pill: drag down or tap to return to the balance page
             Button {
