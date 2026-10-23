@@ -78,12 +78,17 @@ public struct WalletSecret: Codable, Equatable {
     /// The phrase is in the TON wallets' own format (Tonkeeper), not BIP-39: it gives one
     /// TON key and nothing else (see TonMnemonic). Absent in every other secret.
     public var tonNative: Bool?
+    /// The phrase is a Monero wallet's own ("legacy": 25 words; "polyseed": 16 words), not BIP-39: it gives
+    /// one Monero account and nothing else. Absent in every other secret.
+    public var moneroSeed: String?
 
-    public init(mnemonic: String? = nil, passphrase: String? = nil, privateKey: String? = nil, tonNative: Bool? = nil) {
+    public init(mnemonic: String? = nil, passphrase: String? = nil, privateKey: String? = nil, tonNative: Bool? = nil,
+                moneroSeed: String? = nil) {
         self.mnemonic = mnemonic
         self.passphrase = passphrase
         self.privateKey = privateKey
         self.tonNative = tonNative
+        self.moneroSeed = moneroSeed
     }
 
     public func encoded() throws -> Data {

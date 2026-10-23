@@ -51,6 +51,10 @@ extension WalletManager {
         case .tron: return await tronHistory(owner: owner, record: record)
         case .ton: return await tonHistory(owner: owner, record: record)
         case .solana: return await solanaHistory(owner: owner, record: record)
+        case .sui: return await suiHistory(owner: owner, record: record)
+        case .xrp: return await xrpHistory(owner: owner, record: record)
+        case .monero: return await moneroHistory(owner: owner)
+        case .zcash: return await zcashHistory(owner: owner, record: record)
         default: return await evmHistory(chain: chain, owner: owner, record: record)
         }
     }
@@ -253,6 +257,10 @@ extension WalletManager {
         case .tron: return try await tronTransactionInfo(id: hash)
         case .ton: return try await tonTransactionInfo(id: hash)
         case .solana: return try await solanaTransactionInfo(id: hash)
+        case .sui: return try await suiTransactionInfo(id: hash)
+        case .xrp: return try await xrpTransactionInfo(id: hash)
+        case .monero: return try await moneroTransactionInfo(id: hash)
+        case .zcash: return try await zcashTransactionInfo(id: hash)
         default: break
         }
         guard let record = activeRecord, let owner = address(on: chain), hash.hasPrefix("0x"), hash.count == 66,

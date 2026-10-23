@@ -17,7 +17,7 @@ public enum WalletSecurityType: String, Codable {
 /// The coin of a wallet. Bitcoin wallets made before Ethereum existed have none (nil).
 public enum CoinKind: String, Codable, CaseIterable, Identifiable {
     /// `dollars` ("Stable"): stablecoins (USDC / USDT…) on every network the app knows.
-    case bitcoin, ethereum, dollars, ton, tron, polygon, solana
+    case bitcoin, ethereum, dollars, ton, tron, polygon, solana, sui, xrp, monero, zcash
     public var id: String { rawValue }
     public var symbol: String {
         switch self {
@@ -29,17 +29,23 @@ public enum CoinKind: String, Codable, CaseIterable, Identifiable {
         case .tron: return "TRX"
         case .polygon: return "POL"
         case .solana: return "SOL"
+        case .sui: return "SUI"
+        case .xrp: return "XRP"
+        case .monero: return "XMR"
+        case .zcash: return "ZEC"
         }
     }
     /// Every coin but bitcoin: one account address, balances per network, tokens.
     public var isAccountBased: Bool { self != .bitcoin }
 
-    /// Smallest units the app keeps per coin (sats, gwei, sun, nanotons, millionths of a dollar).
+    /// Smallest units the app keeps per coin (sats, gwei, sun, nanotons, MIST, drops, piconero,
+    /// zatoshis, millionths of a dollar).
     public var unitsPerCoin: Double {
         switch self {
-        case .bitcoin: return 100_000_000
-        case .ethereum, .polygon, .ton, .solana: return 1_000_000_000
-        case .tron, .dollars: return 1_000_000
+        case .bitcoin, .zcash: return 100_000_000
+        case .ethereum, .polygon, .ton, .solana, .sui: return 1_000_000_000
+        case .tron, .dollars, .xrp: return 1_000_000
+        case .monero: return 1_000_000_000_000
         }
     }
 
@@ -53,10 +59,17 @@ public enum CoinKind: String, Codable, CaseIterable, Identifiable {
         case .tron: return [.tron]
         case .ton: return [.ton]
         case .solana: return [.solana]
+        case .sui: return [.sui]
+        case .xrp: return [.xrp]
+        case .monero: return [.monero]
+        case .zcash: return [.zcash]
         // Tron and TON are left out of Stable for now (their own wallets keep them).
         case .dollars: return [.ethereum, .base, .polygon]
         }
     }
+
+    /// Monero and Zcash run on mainnet only here (no test network to switch to).
+    public var hasTestnet: Bool { self != .monero && self != .zcash }
 
     public func title(_ lang: AppLanguage) -> String {
         switch self {
@@ -67,6 +80,10 @@ public enum CoinKind: String, Codable, CaseIterable, Identifiable {
         case .tron: return "Tron"
         case .polygon: return "Polygon"
         case .solana: return "Solana"
+        case .sui: return "Sui"
+        case .xrp: return "XRP"
+        case .monero: return "Monero"
+        case .zcash: return "Zcash"
         }
     }
 }

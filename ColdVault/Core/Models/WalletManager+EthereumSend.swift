@@ -17,6 +17,14 @@ public enum ChainTransaction {
     case ton(wallet: TonAddress, signing: TonCell, deploy: Bool, version: TonWalletVersion)
     /// Solana: the lamports and the recipient; the transaction is built with a fresh blockhash when sent.
     case solana(lamports: UInt64, to: Data)
+    /// Sui: the transaction data (BCS), built here and run on the network for the review.
+    case sui(transaction: Data)
+    /// XRP: what to pay; the sequence and the ledger it expires at are read when it is signed.
+    case xrp(destination: Data, drops: UInt64, fee: UInt64, tag: UInt32?)
+    /// Zcash: the transparent transaction; signed with the branch id of the moment it is sent.
+    case zcash(ZcashTransaction)
+    /// Monero: the payment wallet2 built and signed for the review, waiting in MoneroEngine.
+    case monero
 }
 
 /// A broadcast whose outcome is unknown, with what is needed to ask the chain about it.
@@ -30,6 +38,12 @@ struct UnconfirmedSend {
         case ton(hash: String, seqno: UInt32)
         /// Solana signature and the signed bytes: found with getSignatureStatuses, else sent again (same bytes, same signature).
         case solana(signature: String, signed: Data)
+        /// Sui digest and the signed transaction: known on the network, else run again (the same transaction runs once).
+        case sui(digest: String, transaction: Data, signature: Data)
+        /// XRP hash, the signed transaction and the last ledger it can be in.
+        case xrp(hash: String, blob: Data, lastLedger: UInt32)
+        /// Zcash id and the signed transaction: in the mempool or a block, else sent again (same bytes).
+        case zcash(txid: String, raw: Data)
     }
     let recipient: String
     let amount: UInt256
@@ -70,6 +84,14 @@ extension WalletManager {
             return UInt256(UInt64(asset.isNative ? 300_000 : 15_000_000))          // 0.3 TRX / ~15 TRX of energy
         case .solana:
             return UInt256(SolanaTransfer.fee)
+        case .sui:
+            return UInt256(UInt64(2_000_000))                                      // ~0.002 SUI (most comes back as a storage rebate)
+        case .xrp:
+            return UInt256(UInt64(12))                                             // 12 drops
+        case .monero:
+            return UInt256(UInt64(60_000_000))                                     // ~0.00006 XMR
+        case .zcash:
+            return UInt256(UInt64(10_000))                                         // ZIP-317: 0.0001 ZEC for a usual payment
         case .ton:
             return UInt256(UInt64(asset.isNative ? 6_000_000 : 56_000_000))        // ~0.006 TON / 0.05 TON attached
         default:
@@ -81,11 +103,17 @@ extension WalletManager {
         }
     }
 
-    public func prepareEVMSend(asset: EVMAsset, to recipient: String, amount: UInt256?, fast: Bool = false) async throws -> EthereumSendPlan {
+    /// `destinationTag`: XRP only (what an exchange uses to know whose deposit it is).
+    public func prepareEVMSend(asset: EVMAsset, to recipient: String, amount: UInt256?, fast: Bool = false,
+                               destinationTag: UInt32? = nil) async throws -> EthereumSendPlan {
         switch asset.chain {
         case .tron: return try await prepareTronSend(asset: asset, to: recipient, amount: amount)
         case .ton: return try await prepareTonSend(asset: asset, to: recipient, amount: amount)
         case .solana: return try await prepareSolanaSend(asset: asset, to: recipient, amount: amount)
+        case .sui: return try await prepareSuiSend(asset: asset, to: recipient, amount: amount)
+        case .xrp: return try await prepareXRPSend(asset: asset, to: recipient, amount: amount, tag: destinationTag)
+        case .monero: return try await prepareMoneroSend(asset: asset, to: recipient, amount: amount)
+        case .zcash: return try await prepareZcashSend(asset: asset, to: recipient, amount: amount)
         default: return try await prepareEVMChainSend(asset: asset, to: recipient, amount: amount, fast: fast)
         }
     }
@@ -317,6 +345,58 @@ extension WalletManager {
             let current = try await TonAPI(isTestnet: isTestnet).wallet(owner).seqno
             unconfirmedSends[sendKey] = nil
             return current > seqno ? hash : nil          // the wallet moved past that seqno: the earlier message ran
+        case .sui(let digest, let transaction, let signature):
+            let api = SuiAPI(isTestnet: isTestnet)
+            if try await api.isKnown(digest) {
+                unconfirmedSends[sendKey] = nil
+                return digest
+            }
+            // Not seen yet: the same signed transaction runs at most once, so it is sent again.
+            do {
+                let sent = try await api.execute(transaction, signature: signature)
+                unconfirmedSends[sendKey] = nil
+                return sent
+            } catch SuiError.server(_) {
+                unconfirmedSends[sendKey] = nil          // refused or expired: it can no longer go out
+                return nil
+            } catch SuiError.failed(_) {
+                unconfirmedSends[sendKey] = nil          // it ran and failed: nothing was paid but the gas
+                return nil
+            }
+        case .xrp(let hash, let blob, let lastLedger):
+            let api = XRPAPI(isTestnet: isTestnet)
+            if try await api.status(hash) != nil {
+                unconfirmedSends[sendKey] = nil
+                return hash
+            }
+            // Unknown: past its last ledger it can never be in one; until then the same bytes are sent again.
+            guard try await api.fee().ledger <= lastLedger else {
+                unconfirmedSends[sendKey] = nil
+                return nil
+            }
+            do {
+                try await api.submit(blob)
+                unconfirmedSends[sendKey] = nil
+                return hash
+            } catch XRPError.refused(_) {
+                unconfirmedSends[sendKey] = nil
+                return nil
+            }
+        case .zcash(let txid, let raw):
+            let api = ZcashAPI()
+            if try await api.isKnown(txid) {
+                unconfirmedSends[sendKey] = nil
+                return txid
+            }
+            // Not in the mempool nor a block: the same signed bytes can't pay twice.
+            do {
+                _ = try await api.broadcast(raw)
+                unconfirmedSends[sendKey] = nil
+                return txid
+            } catch ZcashError.server(_) {
+                unconfirmedSends[sendKey] = nil          // refused (coins spent, expired): it can no longer go out
+                return nil
+            }
         }
     }
 
@@ -388,6 +468,81 @@ extension WalletManager {
                 throw SolanaError.server(text)
             }
             unconfirmedSends[sendKey] = nil
+        case .sui(let transaction):
+            let key = try WalletManager.suiKey(secret: secret, account: account)
+            guard let publicKey = SuiKeys.publicKey(privateKey: key),
+                  SuiKeys.address(publicKey: publicKey) == address(on: .sui)?.lowercased(),
+                  let signature = SuiKeys.sign(transaction: transaction, privateKey: key) else { throw WalletError.secretMismatch }
+            let api = SuiAPI(isTestnet: isTestnet)
+            // Recorded before the send: if the outcome is unknown, the next attempt looks the digest up.
+            unconfirmedSends[sendKey] = UnconfirmedSend(recipient: plan.recipient, amount: plan.amount,
+                                                        proof: .sui(digest: SuiTransfer.digest(transaction),
+                                                                    transaction: transaction, signature: signature))
+            do {
+                hash = try await api.execute(transaction, signature: signature)
+            } catch SuiError.server(let text) {
+                unconfirmedSends[sendKey] = nil          // refused: nothing ran
+                throw SuiError.server(text)
+            } catch SuiError.failed(let text) {
+                unconfirmedSends[sendKey] = nil          // it ran and failed: only the gas was paid
+                Task { await refreshAll() }
+                throw SuiError.failed(text)
+            }
+            unconfirmedSends[sendKey] = nil
+        case .xrp(let destination, let drops, let fee, let tag):
+            let key = try WalletManager.xrpKey(secret: secret, account: account)
+            guard let publicKey = key.publicKey, let from = address(on: .xrp), key.address == from,
+                  let accountID = XRPAddress.decodeClassic(from) else { throw WalletError.secretMismatch }
+            let api = XRPAPI(isTestnet: isTestnet)
+            // The account's sequence and the ledger now: the payment expires 20 ledgers (about 80 s) later.
+            async let stateCall = api.account(from)
+            async let feeCall = api.fee()
+            let (state, current) = try await (stateCall, feeCall)
+            guard let state else { throw XRPError.notActivated }
+            let lastLedger = current.ledger &+ 20
+            let transaction = XRPTransaction(account: accountID, destination: destination, amount: drops, fee: fee,
+                                             sequence: state.sequence, lastLedgerSequence: lastLedger, destinationTag: tag,
+                                             signingPublicKey: publicKey)
+            guard let signed = transaction.signed(with: key) else { throw WalletError.secretMismatch }
+            unconfirmedSends[sendKey] = UnconfirmedSend(recipient: plan.recipient, amount: plan.amount,
+                                                        proof: .xrp(hash: signed.hash, blob: signed.blob, lastLedger: lastLedger))
+            do {
+                try await api.submit(signed.blob)
+            } catch XRPError.refused(let code) {
+                unconfirmedSends[sendKey] = nil          // not applied (or failed claiming only the fee)
+                throw XRPError.refused(code)
+            } catch XRPError.server(let text) {
+                unconfirmedSends[sendKey] = nil
+                throw XRPError.server(text)
+            }
+            unconfirmedSends[sendKey] = nil
+            hash = signed.hash
+        case .zcash(let draft):
+            let key = try WalletManager.zcashKey(secret: secret, account: account)
+            guard ZcashKeys.address(privateKey: key) == address(on: .zcash) else { throw WalletError.secretMismatch }
+            let api = ZcashAPI()
+            // The branch id and height of this moment: a network upgrade may have come since the review.
+            let network = try await api.network()
+            let transaction = ZcashTransaction(branchID: network.branchID,
+                                               expiryHeight: network.height &+ WalletManager.zcashExpiryDelta,
+                                               inputs: draft.inputs, outputs: draft.outputs)
+            guard let raw = transaction.signed(privateKey: key) else { throw WalletError.secretMismatch }
+            let txid = transaction.txid
+            unconfirmedSends[sendKey] = UnconfirmedSend(recipient: plan.recipient, amount: plan.amount,
+                                                        proof: .zcash(txid: txid, raw: raw))
+            do {
+                _ = try await api.broadcast(raw)
+            } catch ZcashError.server(let text) {
+                unconfirmedSends[sendKey] = nil          // refused: nothing went out
+                throw ZcashError.server(text)
+            }
+            unconfirmedSends[sendKey] = nil
+            hash = txid
+        case .monero:
+            // wallet2 built and signed it for the review; Face ID above allows it to go out.
+            guard let from = address(on: .monero) else { throw WalletError.secretMismatch }
+            let ids = try await MoneroEngine.shared.commit(from: from)
+            hash = ids.components(separatedBy: ",").first ?? ids
         case .ton(let wallet, let signing, let deploy, let version):
             let key = try WalletManager.tonKey(secret: secret, account: account)
             guard let publicKey = TonKeys.publicKey(privateKey: key),

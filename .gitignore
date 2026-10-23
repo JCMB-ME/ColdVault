@@ -22,6 +22,7 @@ fastlane/screenshots
 fastlane/test_output
 
 Vendor/TorLocal/tor.xcframework/
+Vendor/Monero/MoneroC.xcframework/
 
 # Local-only folders: research notes and coin logo sources (never committed)
 research/

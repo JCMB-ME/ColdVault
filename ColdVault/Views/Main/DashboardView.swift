@@ -858,8 +858,36 @@ public struct DashboardView: View {
                       systemImage: "exclamationmark.triangle.fill")
                     .foregroundColor(.orange)
             }
+            if walletManager.activeCoin == .monero {
+                moneroStatus
+            }
         }
         .font(.system(size: 12, weight: .medium))
+    }
+
+    /// Monero scans the chain on the iPhone: how far it is (the balance is complete once it finishes).
+    @ViewBuilder
+    private var moneroStatus: some View {
+        if let state = walletManager.moneroState {
+            if !state.synced {
+                let left = WalletManager.groupingFormatter.string(from: NSNumber(value: state.blocksLeft)) ?? "\(state.blocksLeft)"
+                Label(state.connected
+                      ? t("Scanning Monero · \(state.percent) % · \(left) blocks left",
+                          "Escaneando Monero · \(state.percent) % · faltan \(left) bloques")
+                      : t("Connecting to a Monero node…", "Conectando con un nodo de Monero…"),
+                      systemImage: "arrow.triangle.2.circlepath")
+                    .foregroundColor(Palette.secondary)
+                    .transition(.opacity)
+            }
+        } else if let error = walletManager.moneroError {
+            Label(error, systemImage: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+        } else {
+            Label(t("Opening the Monero wallet…", "Abriendo la billetera de Monero…"), systemImage: "arrow.triangle.2.circlepath")
+                .foregroundColor(Palette.secondary)
+        }
     }
 
     private func toggleDisplayUnit() {

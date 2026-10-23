@@ -63,8 +63,8 @@ struct ElectrumServerView: View {
     }
 
     private var torFooter: String {
-        t("Bitcoin, balances, prices, Ethereum, Tron, TON, Solana and NFT images go through the Tor network: servers don't see your IP. Lightning does not: Breez and LDK connect directly. Your own node on your home network or Tailscale also connects directly. Slower; the first connection can take a minute.",
-          "Bitcoin, saldos, precios, Ethereum, Tron, TON, Solana e imágenes NFT pasan por la red Tor: los servidores no ven tu IP. Lightning no: Breez y LDK se conectan directo. Tu nodo en tu red de casa o por Tailscale también se conecta directo. Es más lento; la primera conexión puede tardar un minuto.")
+        t("Bitcoin, balances, prices, Ethereum, Tron, TON, Solana, Sui, XRP, Monero, Zcash and NFT images go through the Tor network: servers don't see your IP. Lightning does not: Breez and LDK connect directly. Your own node on your home network or Tailscale also connects directly. Slower; the first connection can take a minute.",
+          "Bitcoin, saldos, precios, Ethereum, Tron, TON, Solana, Sui, XRP, Monero, Zcash e imágenes NFT pasan por la red Tor: los servidores no ven tu IP. Lightning no: Breez y LDK se conectan directo. Tu nodo en tu red de casa o por Tailscale también se conecta directo. Es más lento; la primera conexión puede tardar un minuto.")
     }
 
     private var torStatusText: String {

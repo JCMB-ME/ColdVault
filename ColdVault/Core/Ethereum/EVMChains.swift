@@ -10,13 +10,18 @@
 //   • Tron: TRX; the biggest USDT network (T… address, same phrase).
 //   • TON: Telegram's network, USDT and TON (UQ… address, same phrase).
 //   • Solana: SOL (base58 address, same phrase).
-//  Testnets: Sepolia, Base Sepolia, Polygon Amoy, Tron Nile, TON testnet, Solana Devnet.
+//   • Sui: SUI (0x + 64 hex address, same phrase).
+//   • XRP Ledger: XRP ("r…" address, same phrase or a family seed).
+//   • Monero: XMR (wallet2 scans the chain; same phrase, or a Monero phrase / Polyseed).
+//   • Zcash: ZEC, transparent pool (t1 address, same phrase).
+//  Testnets: Sepolia, Base Sepolia, Polygon Amoy, Tron Nile, TON testnet, Solana Devnet, Sui Testnet,
+//  XRP Testnet (Monero and Zcash: mainnet only).
 //
 
 import Foundation
 
 public enum EVMChain: String, CaseIterable, Identifiable, Codable {
-    case ethereum, base, polygon, tron, ton, solana
+    case ethereum, base, polygon, tron, ton, solana, sui, xrp, monero, zcash
 
     public var id: String { rawValue }
 
@@ -31,6 +36,10 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .tron: return testnet ? "Tron Nile" : "Tron"
         case .ton: return testnet ? "TON Testnet" : "TON"
         case .solana: return testnet ? "Solana Devnet" : "Solana"
+        case .sui: return testnet ? "Sui Testnet" : "Sui"
+        case .xrp: return testnet ? "XRP Testnet" : "XRP Ledger"
+        case .monero: return "Monero"
+        case .zcash: return "Zcash"
         }
     }
 
@@ -42,6 +51,10 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .tron: return "TRX"
         case .ton: return "GRAM"
         case .solana: return "SOL"
+        case .sui: return "SUI"
+        case .xrp: return "XRP"
+        case .monero: return "XMR"
+        case .zcash: return "ZEC"
         }
     }
 
@@ -52,6 +65,10 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .tron: return "Tron"
         case .ton: return "Gram"
         case .solana: return "Solana"
+        case .sui: return "Sui"
+        case .xrp: return "XRP"
+        case .monero: return "Monero"
+        case .zcash: return "Zcash"
         }
     }
 
@@ -61,6 +78,10 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .tron: return 6
         case .ton: return 9
         case .solana: return 9
+        case .sui: return 9
+        case .xrp: return 6
+        case .monero: return 12
+        case .zcash: return 8
         }
     }
 
@@ -72,7 +93,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .ethereum: return testnet ? 11_155_111 : 1
         case .base: return testnet ? 84_532 : 8_453
         case .polygon: return testnet ? 80_002 : 137
-        case .tron, .ton, .solana: return 0
+        case .tron, .ton, .solana, .sui, .xrp, .monero, .zcash: return 0
         }
     }
 
@@ -142,6 +163,10 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .tron: return "Tronscan"
         case .ton: return "Tonviewer"
         case .solana: return "Solscan"
+        case .sui: return "Suiscan"
+        case .xrp: return "XRPSCAN"
+        case .monero: return "xmrchain"
+        case .zcash: return "Blockchair"
         }
     }
 
@@ -159,6 +184,12 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case (.ton, true): return URL(string: "https://testnet.tonviewer.com/transaction/\(hash)")
         case (.solana, false): return URL(string: "https://solscan.io/tx/\(hash)")
         case (.solana, true): return URL(string: "https://solscan.io/tx/\(hash)?cluster=devnet")
+        case (.sui, false): return URL(string: "https://suiscan.xyz/mainnet/tx/\(hash)")
+        case (.sui, true): return URL(string: "https://suiscan.xyz/testnet/tx/\(hash)")
+        case (.xrp, false): return URL(string: "https://xrpscan.com/tx/\(hash)")
+        case (.xrp, true): return URL(string: "https://testnet.xrpl.org/transactions/\(hash)")
+        case (.monero, _): return URL(string: "https://xmrchain.net/tx/\(hash)")
+        case (.zcash, _): return URL(string: "https://blockchair.com/zcash/transaction/\(hash)")
         }
     }
 
@@ -176,6 +207,7 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case (.tron, _): return nil
         case (.solana, false): return URL(string: "https://solscan.io/token/\(contract)")
         case (.solana, true): return URL(string: "https://solscan.io/token/\(contract)?cluster=devnet")
+        case (.sui, _), (.xrp, _), (.monero, _), (.zcash, _): return nil
         }
     }
 
@@ -188,6 +220,10 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .tron: return "TronLogo"
         case .ton: return "TonLogo"
         case .solana: return "SolanaLogo"
+        case .sui: return "SuiLogo"
+        case .xrp: return "XrpLogo"
+        case .monero: return "MoneroLogo"
+        case .zcash: return "ZcashLogo"
         }
     }
 
@@ -199,6 +235,10 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .tron: return "TronLogo"
         case .ton: return "TonLogo"
         case .solana: return "SolanaLogo"
+        case .sui: return "SuiLogo"
+        case .xrp: return "XrpLogo"
+        case .monero: return "MoneroLogo"
+        case .zcash: return "ZcashLogo"
         }
     }
 
@@ -211,6 +251,10 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .tron: return "tron"
         case .ton: return "ton"
         case .solana: return "solana"
+        case .sui: return "sui"
+        case .xrp: return "xrp"
+        case .monero: return "monero"
+        case .zcash: return "zcash"
         }
     }
 
@@ -225,6 +269,10 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .tron: return .tron
         case .ton: return .ton
         case .solana: return .solana
+        case .sui: return .sui
+        case .xrp: return .xrp
+        case .monero: return .monero
+        case .zcash: return .zcash
         }
     }
 
@@ -234,6 +282,10 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .tron: return TronKeys.path(index: index)
         case .ton: return TonKeys.path(index: index)
         case .solana: return SolanaKeys.path(index: index)
+        case .sui: return SuiKeys.path(index: index)
+        case .xrp: return XRPKeys.path(index: index)
+        case .monero: return MoneroKeys.path(index: index)
+        case .zcash: return ZcashKeys.path(index: index)
         default: return EthereumKeys.path(index: index)
         }
     }
@@ -244,6 +296,10 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .tron: return TronAddress.isValid(text)
         case .ton: return TonAddress.parse(text) != nil
         case .solana: return SolanaAddress.isValid(text)
+        case .sui: return SuiAddress.isValid(text)
+        case .xrp: return XRPAddress.isValid(text)
+        case .monero: return MoneroEngine.isValidAddress(text)
+        case .zcash: return ZcashAddress.isValid(text)
         default: return EthereumAddress.parse(text) != nil
         }
     }
@@ -254,6 +310,10 @@ public enum EVMChain: String, CaseIterable, Identifiable, Codable {
         case .tron: return "T…"
         case .ton: return "UQ…"
         case .solana: return "…"
+        case .sui: return "0x…"
+        case .xrp: return "r…"
+        case .monero: return "4… / 8…"
+        case .zcash: return "t1… · u1…"
         default: return "0x… · name.eth"
         }
     }

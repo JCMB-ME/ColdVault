@@ -29,6 +29,23 @@ struct EthReceiveView: View {
     private var network: EVMChain { walletManager.activeNetwork }
     private var networkName: String { network.name(testnet: walletManager.isTestnet) }
 
+    /// What is particular to receiving on this network.
+    private var networkNote: String? {
+        switch network {
+        case .xrp:
+            return t("A new XRP account is activated by a first deposit of at least 1 XRP (the ledger's reserve, which stays in it). No destination tag is needed to pay this wallet.",
+                     "Una cuenta nueva de XRP se activa con un primer depósito de al menos 1 XRP (la reserva del ledger, que se queda en ella). Para pagar a esta billetera no hace falta destination tag.")
+        case .monero:
+            return t("Received XMR can be spent after 10 blocks (about 20 minutes). The wallet sees it once its scan reaches that block.",
+                     "El XMR recibido se puede gastar tras 10 bloques (unos 20 minutos). La billetera lo ve cuando su escaneo llega a ese bloque.")
+        case .zcash:
+            return t("A transparent (t1) address: what it receives and holds is public on the chain, like bitcoin.",
+                     "Una dirección transparente (t1): lo que recibe y guarda es público en la cadena, como en bitcoin.")
+        default:
+            return nil
+        }
+    }
+
     /// EIP-681 payment request when an amount is asked (EVM networks), otherwise the address.
     private var qrText: String {
         guard network.isEVM, let wei = UInt256(decimal: requestText, decimals: 18), !wei.isZero else { return address }
@@ -127,6 +144,12 @@ struct EthReceiveView: View {
                                 .font(.system(size: 12))
                                 .foregroundColor(Palette.secondary)
                                 .multilineTextAlignment(.center)
+                            if let note = networkNote {
+                                Text(note)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Palette.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
                             if let record = walletManager.activeRecord, record.type == .mnemonic12 || record.type == .mnemonic24 {
                                 Text(WalletManager.isTonNative(record) ? t("TON phrase (Tonkeeper format)", "Frase TON (formato Tonkeeper)")
                                                                        : network.path(index: record.accountNumber ?? 0))

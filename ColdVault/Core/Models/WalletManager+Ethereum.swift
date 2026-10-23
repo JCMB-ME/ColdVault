@@ -51,8 +51,10 @@ extension WalletManager {
     /// An amount of a coin in its own units (sats, gwei, sun, nanotons, micro-dollars).
     public func format(units: UInt64, coin: CoinKind) -> String {
         switch coin {
-        case .ethereum, .polygon, .ton, .solana: return formatUnits(units, decimals: 9)
-        case .tron: return formatUnits(units, decimals: 6)
+        case .ethereum, .polygon, .ton, .solana, .sui: return formatUnits(units, decimals: 9)
+        case .tron, .xrp: return formatUnits(units, decimals: 6)
+        case .monero: return formatUnits(units, decimals: 12)
+        case .zcash: return formatUnits(units, decimals: 8)
         case .dollars: return formatDollars(micro: units)
         case .bitcoin: return format(sats: units)
         }
@@ -92,8 +94,9 @@ extension WalletManager {
 
     nonisolated private static func seed(_ secret: WalletSecret) throws -> Data? {
         guard let mnemonic = secret.mnemonic else { return nil }
-        // A TON-format phrase has no BIP-39 seed: only its one TON key (tonKey).
-        guard secret.tonNative != true else { throw WalletError.derivationFailed }
+        // A TON-format phrase has no BIP-39 seed: only its one TON key (tonKey); a Monero phrase, only its
+        // one Monero account.
+        guard secret.tonNative != true, secret.moneroSeed == nil else { throw WalletError.derivationFailed }
         return try BIP39.mnemonicToSeed(mnemonic: mnemonic, passphrase: secret.passphrase ?? "")
     }
 
@@ -146,6 +149,60 @@ extension WalletManager {
         return SolanaKeys.privateKey(seed: seed, index: account)
     }
 
+    /// Sui key: m/44'/784'/n'/0'/0' of the phrase, or an imported Ed25519 key ("suiprivkey1…" or hex).
+    nonisolated static func suiKey(secret: WalletSecret, account: UInt32) throws -> Data {
+        if let seed = try seed(secret) { return SuiKeys.privateKey(seed: seed, index: account) }
+        if let text = secret.privateKey {
+            if let key = SuiKeys.importedKey(text) { return key }
+            if let key = text.lowercased().replacingOccurrences(of: "0x", with: "").hexDecoded, key.count == 32 { return key }
+        }
+        throw WalletError.derivationFailed
+    }
+
+    /// XRP key: m/44'/144'/n'/0/0 of the phrase (secp256k1), or an imported family seed ("s…") or hex key.
+    nonisolated static func xrpKey(secret: WalletSecret, account: UInt32) throws -> XRPKey {
+        if let seed = try seed(secret) {
+            guard let key = XRPKeys.privateKey(seed: seed, index: account) else { throw WalletError.derivationFailed }
+            return XRPKey(scheme: .secp256k1, privateKey: key)
+        }
+        if let text = secret.privateKey {
+            if let key = XRPKeys.familySeed(text) { return key }
+            if let key = hexKey(secret) { return XRPKey(scheme: .secp256k1, privateKey: key) }
+        }
+        throw WalletError.derivationFailed
+    }
+
+    /// Zcash transparent key: m/44'/133'/n'/0/0 of the phrase, or an imported WIF or hex key.
+    nonisolated static func zcashKey(secret: WalletSecret, account: UInt32) throws -> Data {
+        if let seed = try seed(secret) {
+            guard let key = ZcashKeys.privateKey(seed: seed, index: account) else { throw WalletError.derivationFailed }
+            return key
+        }
+        if let text = secret.privateKey {
+            if case .privateKey(let key, true, _) = BitcoinAddress.parseImportString(text) { return key }
+            if let key = hexKey(secret) { return key }
+        }
+        throw WalletError.derivationFailed
+    }
+
+    /// Monero spend key: from the BIP-39 phrase (MoneroKit's derivation, account n), from a Monero phrase or
+    /// Polyseed (one account; a Polyseed also gives the height its wallet was made at), or an imported hex key.
+    nonisolated static func moneroSpendKey(secret: WalletSecret, account: UInt32) throws -> (key: Data, height: UInt64?) {
+        if let kind = secret.moneroSeed, let mnemonic = secret.mnemonic {
+            guard account == 0 else { throw WalletError.derivationFailed }
+            return try MoneroEngine.spendKey(mnemonic: mnemonic, kind: kind == "polyseed" ? .polyseed : .legacy)
+        }
+        if let seed = try seed(secret) {
+            guard let key = MoneroKeys.spendKey(seed: seed, index: account) else { throw WalletError.derivationFailed }
+            return (key, nil)
+        }
+        if let hex = secret.privateKey?.lowercased().replacingOccurrences(of: "0x", with: ""),
+           let raw = hex.hexDecoded, raw.count == 32, let key = MoneroKeys.reduce(raw) {
+            return (key, nil)
+        }
+        throw WalletError.derivationFailed
+    }
+
     /// The account comes from a TON-format phrase (Tonkeeper): a single account, no path.
     nonisolated static func isTonNative(_ record: StoredWalletRecord?) -> Bool {
         record?.chainAddresses?["tonScheme"] == "native"
@@ -161,6 +218,15 @@ extension WalletManager {
                   let address = TonWallet.displayAddress(publicKey: publicKey, testnet: false) else { throw WalletError.derivationFailed }
             return (address, ["tonPublicKey": publicKey.hexEncodedString, "tonScheme": "native"])
         }
+        if coin == .monero {
+            let derived = try moneroSpendKey(secret: secret, account: account)
+            var extra = [String: String]()
+            // A Monero phrase is one account (kept in the record, which is public, to offer no "new account").
+            if let kind = secret.moneroSeed { extra["moneroSeed"] = kind }
+            if let height = derived.height { extra["moneroHeight"] = String(height) }
+            return (try MoneroEngine.address(spendKey: derived.key), extra)
+        }
+        guard secret.moneroSeed == nil else { throw WalletError.derivationFailed }
         let seed = try seed(secret)
         let hex = hexKey(secret)
         func evm() throws -> String {
@@ -187,6 +253,20 @@ extension WalletManager {
             let key = try solanaKey(secret: secret, account: account)
             guard let publicKey = SolanaKeys.publicKey(privateKey: key) else { throw WalletError.derivationFailed }
             return (SolanaKeys.address(publicKey: publicKey), nil)
+        case .sui:
+            let key = try suiKey(secret: secret, account: account)
+            guard let publicKey = SuiKeys.publicKey(privateKey: key) else { throw WalletError.derivationFailed }
+            return (SuiKeys.address(publicKey: publicKey), nil)
+        case .xrp:
+            guard let address = try xrpKey(secret: secret, account: account).address else { throw WalletError.derivationFailed }
+            return (address, nil)
+        case .zcash:
+            guard let address = ZcashKeys.address(privateKey: try zcashKey(secret: secret, account: account)) else {
+                throw WalletError.derivationFailed
+            }
+            return (address, nil)
+        case .monero:
+            throw WalletError.derivationFailed                 // handled above
         case .ton:
             // The public key is kept (not secret) so the W5 address can be shown without Face ID.
             guard let publicKey = tonPublicKey(),
@@ -223,6 +303,10 @@ extension WalletManager {
         case .ethereum, .polygon: return chain.isEVM ? record.primaryAddress : nil
         case .tron: return chain == .tron ? record.primaryAddress : nil
         case .solana: return chain == .solana ? record.primaryAddress : nil
+        case .sui: return chain == .sui ? record.primaryAddress : nil
+        case .xrp: return chain == .xrp ? record.primaryAddress : nil
+        case .monero: return chain == .monero ? record.primaryAddress : nil
+        case .zcash: return chain == .zcash ? record.primaryAddress : nil
         case .ton:
             guard chain == .ton else { return nil }
             if WalletManager.tonVersion(of: record) == .w5, let hex = record.chainAddresses?["tonPublicKey"],
@@ -326,15 +410,24 @@ extension WalletManager {
     /// Stores an account-based wallet from a phrase, a 64-hex private key or an address
     /// (watch-only) and selects it.
     @discardableResult
-    func importEthereum(input: String, passphrase: String, isTestnet: Bool, coin: CoinKind = .ethereum,
-                        tonNative: Bool? = nil) async throws -> StoredWalletRecord {
+    func importEthereum(input: String, passphrase: String, isTestnet requested: Bool, coin: CoinKind = .ethereum,
+                        tonNative: Bool? = nil, restoreDate: Date? = nil) async throws -> StoredWalletRecord {
         try await ensureSelfTest()
+        // Monero and Zcash run on mainnet only.
+        let isTestnet = coin.hasTestnet && requested
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         var watchAddress: String?
         switch coin {
         case .tron: if TronAddress.isValid(trimmed) { watchAddress = trimmed }
         case .solana: if SolanaAddress.isValid(trimmed) { watchAddress = trimmed }
         case .ton: watchAddress = TonAddress.parse(trimmed)?.friendly(bounceable: false, testnet: false)
+        case .sui: watchAddress = SuiAddress.normalized(trimmed)
+        case .xrp: watchAddress = XRPAddress.decodeClassic(trimmed).map(XRPAddress.encode)
+        case .zcash:
+            if let target = ZcashAddress.decodeTransparent(trimmed), !target.testnet { watchAddress = trimmed }
+        case .monero:
+            // Watching a Monero account needs its view key too: not supported.
+            break
         default: watchAddress = EthereumAddress.parse(trimmed).map { EthereumAddress.checksummed($0) }
         }
         if let watched = watchAddress {
@@ -347,6 +440,7 @@ extension WalletManager {
         let secret: WalletSecret
         let type: WalletSecurityType
         let bip39 = BIP39.validateMnemonic(trimmed)
+        let moneroKind = coin == .monero ? MoneroSeed.kind(of: trimmed) : nil
         // A phrase valid in both formats (1 in 256) takes the format the user chose.
         if coin == .ton, TonMnemonic.isValid(trimmed), !bip39 || tonNative == true {
             secret = WalletSecret(mnemonic: BIP39.normalizedWords(trimmed).joined(separator: " "), tonNative: true)
@@ -355,9 +449,22 @@ extension WalletManager {
             let words = BIP39.normalizedWords(trimmed)
             secret = WalletSecret(mnemonic: words.joined(separator: " "), passphrase: passphrase.isEmpty ? nil : passphrase)
             type = words.count == 24 ? .mnemonic24 : .mnemonic12
+        } else if let kind = moneroKind, kind != .bip39 {
+            secret = WalletSecret(mnemonic: MoneroSeed.normalized(trimmed), moneroSeed: kind == .polyseed ? "polyseed" : "legacy")
+            type = .mnemonic24
         } else {
-            guard coin != .ton, coin != .solana else { throw WalletError.derivationFailed }   // TON and Solana keys come from a phrase
-            secret = WalletSecret(privateKey: trimmed.lowercased().replacingOccurrences(of: "0x", with: ""))
+            // TON and Solana keys come from a phrase.
+            guard coin != .ton, coin != .solana else { throw WalletError.derivationFailed }
+            switch coin {
+            case .sui where trimmed.lowercased().hasPrefix("suiprivkey1"):
+                secret = WalletSecret(privateKey: trimmed.lowercased())
+            case .xrp where XRPKeys.familySeed(trimmed) != nil:
+                secret = WalletSecret(privateKey: trimmed)
+            case .zcash where !trimmed.allSatisfy({ $0.isHexDigit }):
+                secret = WalletSecret(privateKey: trimmed)                      // WIF
+            default:
+                secret = WalletSecret(privateKey: trimmed.lowercased().replacingOccurrences(of: "0x", with: ""))
+            }
             if let raw = secret.privateKey?.hexDecoded, WalletManager.isGuessableKey(raw) { throw guessableKeyError }
             type = .privateKey
         }
@@ -367,6 +474,12 @@ extension WalletManager {
         if secret.tonNative == true, let hex = result.extra?["tonPublicKey"], let publicKey = hex.hexDecoded {
             let version = await nativeTonVersion(publicKey: publicKey, isTestnet: isTestnet)
             result.extra?["tonVersion"] = version.rawValue
+        }
+        if coin == .monero && result.extra?["moneroHeight"] == nil {
+            // Where its scan starts: when it was made (a Polyseed carries that date itself).
+            var extra = result.extra ?? [:]
+            extra["moneroHeight"] = String(MoneroHeight.height(at: restoreDate ?? Date()))
+            result.extra = extra
         }
         let stored = try persist(ethereumRecord(type: type, address: result.primary, isTestnet: isTestnet, account: 0,
                                                 coin: coin, extra: result.extra),
@@ -407,9 +520,15 @@ extension WalletManager {
         while used.contains(number) { number += 1 }
         let account = number
         let coin = record.coinKind
-        let result = try await Task.detached(priority: .userInitiated) {
+        var result = try await Task.detached(priority: .userInitiated) {
             try WalletManager.accountAddresses(secret: secret, account: account, coin: coin)
         }.value
+        if coin == .monero && result.extra?["moneroHeight"] == nil {
+            // A new Monero account starts its scan now.
+            var extra = result.extra ?? [:]
+            extra["moneroHeight"] = String(MoneroHeight.height(at: Date()))
+            result.extra = extra
+        }
         let newRecord = ethereumRecord(type: record.type, address: result.primary, isTestnet: record.isTestnet, account: number,
                                        coin: coin, extra: result.extra)
         guard let index = library.firstIndex(where: { $0.slot == wallet.slot }) else { return }
@@ -423,6 +542,7 @@ extension WalletManager {
     /// Mainnet ⇄ testnet: same keys and addresses, so nothing to derive.
     func setEthereumNetwork(isTestnet: Bool) throws {
         guard let wallet = activeWallet else { throw WalletError.derivationFailed }
+        guard activeCoin.hasTestnet || !isTestnet else { return }          // Monero and Zcash: mainnet only
         var bundle = wallet.bundle
         for position in bundle.accounts.indices { bundle.accounts[position].record.isTestnet = isTestnet }
         evmAssets = []                    // the other network's assets are not shown as current

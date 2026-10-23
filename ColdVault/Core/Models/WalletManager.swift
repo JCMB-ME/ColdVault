@@ -199,6 +199,9 @@ public final class WalletManager: ObservableObject {
     var accountWatch: Task<Void, Never>?
     /// Coins from the last spendableCoins() that ordinals.com could not confirm (no answer).
     var unverifiedOrdinalCount = 0
+    /// Monero: where the scan of the wallet on screen is (nil until it is open), and why it could not open.
+    @Published var moneroState: MoneroEngine.State?
+    @Published public internal(set) var moneroError: String?
     @Published public internal(set) var transactions: [WalletTransaction] = []
     @Published public internal(set) var isLoadingTransactions: Bool = false
     @Published public internal(set) var contacts: [Contact] = []
@@ -407,6 +410,8 @@ public final class WalletManager: ObservableObject {
         self.homeNFTs = nil
         self.homeInscriptions = nil
         self.homeCollectiblesKey = nil
+        self.moneroState = nil
+        self.moneroError = nil
         loadCache()
         startAccountWatch()
         Task {
@@ -460,12 +465,13 @@ public final class WalletManager: ObservableObject {
     /// otherwise `isTestnet` (default mainnet) is used.
     @discardableResult
     /// `tonNative`: for a TON phrase valid both as BIP-39 and in the TON wallets' format,
-    /// which one it is (the user says; nil keeps BIP-39).
+    /// which one it is (the user says; nil keeps BIP-39). `restoreDate`: Monero, about when the wallet was
+    /// made (its scan starts there); nil is now (a new wallet).
     public func importWallet(input: String, passphrase: String = "", isTestnet requested: Bool? = nil,
-                             coin: CoinKind = .bitcoin, tonNative: Bool? = nil) async throws -> StoredWalletRecord {
+                             coin: CoinKind = .bitcoin, tonNative: Bool? = nil, restoreDate: Date? = nil) async throws -> StoredWalletRecord {
         if coin.isAccountBased {
             return try await importEthereum(input: input, passphrase: passphrase, isTestnet: requested ?? false, coin: coin,
-                                            tonNative: tonNative)
+                                            tonNative: tonNative, restoreDate: restoreDate)
         }
         // Watch-only HD wallet from output descriptors / zpub (public keys only).
         if let watch = try WatchOnlyDescriptorParser.parse(input) {

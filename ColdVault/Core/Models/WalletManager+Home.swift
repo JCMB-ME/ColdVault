@@ -213,6 +213,8 @@ extension WalletManager {
     /// Bitcoin received by this wallet but not confirmed yet (your own change is not
     /// counted: it is part of a transaction you sent).
     public var pendingIncomingSats: UInt64 {
+        // Monero: what is still locked (received or change in the last 10 blocks).
+        if activeCoin == .monero { return moneroLocked }
         if isEthereum {
             // Received on the network on screen and not confirmed yet (not in the balance).
             return visibleTransactions.reduce(UInt64(0)) { total, tx in
@@ -234,6 +236,10 @@ extension WalletManager {
             case .tron: return TronAddress.isValid(contact.address)
             case .ton: return TonAddress.parse(contact.address) != nil
             case .solana: return SolanaAddress.isValid(contact.address)
+            case .sui: return SuiAddress.isValid(contact.address)
+            case .xrp: return XRPAddress.isValid(contact.address)
+            case .monero: return MoneroEngine.isValidAddress(contact.address)
+            case .zcash: return ZcashAddress.isValid(contact.address)
             case .ethereum, .polygon: return EthereumAddress.parse(contact.address) != nil
             case .dollars: return activeNetwork.isValidAddress(contact.address)
             }
@@ -248,7 +254,7 @@ extension WalletManager {
         case .dollars:
             guard let factor = usdToFiat else { return nil }
             value = Double(units) / 1_000_000 * factor
-        case .ethereum, .polygon, .ton, .tron, .solana:
+        case .ethereum, .polygon, .ton, .tron, .solana, .sui, .xrp, .monero, .zcash:
             guard let price = nativeFiatPrice(kind.symbol), price > 0 else { return nil }
             value = Double(units) / kind.unitsPerCoin * price
         case .bitcoin:
@@ -599,11 +605,15 @@ extension WalletManager {
         cleaned.name = name
         if let ether = EthereumAddress.parse(address) {
             cleaned.address = EthereumAddress.checksummed(ether)
-        } else {
-            guard let decoded = BitcoinAddress.decode(address), decoded.type != .unknown else {
-                throw WalletError.invalidRecipient
-            }
+        } else if let decoded = BitcoinAddress.decode(address), decoded.type != .unknown {
             cleaned.address = decoded.type == .p2pkh || decoded.type == .p2sh ? address : address.lowercased()
+        } else if let sui = SuiAddress.normalized(address) {
+            cleaned.address = sui
+        } else if EVMChain.allCases.contains(where: { !$0.isEVM && $0.isValidAddress(address) }) {
+            // Tron, TON, Solana, XRP, Monero, Zcash: kept as written (their checksums are case-sensitive).
+            cleaned.address = address
+        } else {
+            throw WalletError.invalidRecipient
         }
         cleaned.note = contact.note.trimmingCharacters(in: .whitespacesAndNewlines)
         cleaned.ensName = contact.ensName.flatMap { ENSName.normalized($0) }

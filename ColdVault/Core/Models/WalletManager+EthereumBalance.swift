@@ -18,6 +18,8 @@ extension WalletManager {
     /// A network that does not answer contributes nothing: its old assets are not shown as current.
     func refreshEthereumBalance() async {
         guard let record = activeRecord else { return }
+        // Monero: until its wallet is open the last known balance stays (no error while it connects).
+        if record.coinKind == .monero && moneroState == nil { return }
         isLoadingBalance = true
         defer { isLoadingBalance = false }
         let testnet = record.isTestnet
@@ -72,6 +74,10 @@ extension WalletManager {
         case .tron: return try await tronAssets(owner: owner, testnet: testnet, kind: kind)
         case .ton: return try await tonAssets(owner: owner, testnet: testnet, kind: kind)
         case .solana: return try await solanaAssets(owner: owner, testnet: testnet)
+        case .sui: return try await suiAssets(owner: owner, testnet: testnet)
+        case .xrp: return try await xrpAssets(owner: owner, testnet: testnet)
+        case .monero: return try await moneroAssets(owner: owner)
+        case .zcash: return try await zcashAssets(owner: owner)
         default: return try await evmAssets(chain: chain, owner: owner, testnet: testnet, kind: kind)
         }
     }
@@ -223,7 +229,16 @@ extension WalletManager {
     func startAccountWatch() {
         accountWatch?.cancel()
         accountWatch = nil
-        guard let record = activeRecord, record.coinKind.isAccountBased else { return }
+        guard let record = activeRecord, record.coinKind.isAccountBased else {
+            Task { await MoneroEngine.shared.close() }
+            return
+        }
+        // Monero scans the chain itself: its own watch follows the scan (another wallet closes it).
+        if record.coinKind == .monero {
+            accountWatch = moneroWatch()
+            return
+        }
+        Task { await MoneroEngine.shared.close() }
         let watched = record.primaryAddress
         accountWatch = Task { [weak self] in
             var last: String?
@@ -262,6 +277,21 @@ extension WalletManager {
             guard let balance = try? await api.balance(owner),
                   let newest = try? await api.signatures(owner, limit: 1) else { return nil }
             return "\(balance)|\(newest.first?.signature ?? "")"
+        case .sui:
+            return try? await SuiAPI(isTestnet: testnet).fingerprint(owner)
+        case .xrp:
+            // The account's last transaction changes with any payment in or out.
+            do {
+                let account = try await XRPAPI(isTestnet: testnet).account(owner)
+                return account.map { "\($0.balance)|\($0.previousTransaction)" } ?? "unfunded"
+            } catch {
+                return nil
+            }
+        case .zcash:
+            guard let balance = try? await ZcashAPI().balance(owner) else { return nil }
+            return "\(balance.confirmed)|\(balance.pending)"
+        case .monero:
+            return nil                                    // its own watch follows the scan (moneroWatch)
         default:
             let contracts = KnownToken.stablecoins(testnet: testnet).filter { $0.chain == chain }.map { $0.contract }
             async let received = receivedMark(chain, owner: owner, testnet: testnet)
@@ -408,7 +438,7 @@ extension WalletManager {
             }
             let name = await read("name()").flatMap { CustomToken.text($0, limit: 40) } ?? symbol
             token = CustomToken(chain: chain.rawValue, testnet: testnet, contract: input, symbol: symbol, name: name, decimals: decimals)
-        case .solana:
+        case .solana, .sui, .xrp, .monero, .zcash:
             throw CustomTokenError.invalidContract
         case .ton:
             guard TonAddress.parse(input) != nil else { throw CustomTokenError.invalidContract }
@@ -931,7 +961,7 @@ extension WalletManager {
         let pairs = symbols.sorted().map { "\(WalletManager.krakenTicker($0))USD" }.joined(separator: ",")
         guard let result = await fetchKrakenTickers(pairs) else { return }
         for symbol in symbols {
-            guard let ticker = result.first(where: { $0.key.hasPrefix(WalletManager.krakenTicker(symbol)) })?.value as? [String: Any],
+            guard let ticker = result.first(where: { WalletManager.krakenKey($0.key, matches: symbol) })?.value as? [String: Any],
                   let text = (ticker["c"] as? [Any])?.first as? String, let price = Double(text), price > 0 else { continue }
             coinUsdPrices[symbol] = price
         }
@@ -939,6 +969,13 @@ extension WalletManager {
 
     /// Kraken still lists Gram under its old ticker.
     static func krakenTicker(_ symbol: String) -> String { symbol == "GRAM" ? "TON" : symbol }
+
+    /// Whether a key of Kraken's answer is the dollar pair of `symbol`: "SOLUSD", or the older form some
+    /// coins keep ("XXRPZUSD", "XXMRZUSD", "XZECZUSD").
+    static func krakenKey(_ key: String, matches symbol: String) -> Bool {
+        let ticker = krakenTicker(symbol)
+        return key == "\(ticker)USD" || key == "X\(ticker)ZUSD" || key.hasPrefix(ticker)
+    }
 
     /// Kraken tickers for the other native coins. Through Tor when it is on, like every other connection.
     func fetchKrakenTickers(_ pairs: String) async -> [String: Any]? {

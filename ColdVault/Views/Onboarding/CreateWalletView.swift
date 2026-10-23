@@ -131,35 +131,29 @@ public struct CreateWalletView: View {
                     .multilineTextAlignment(.center)
             }
             .padding(.horizontal, 28)
+            // Only the network's name on each card.
             VStack(spacing: 12) {
-                coinCard(.bitcoin, title: "Bitcoin", detail: t("BTC · SegWit, Taproot, Lightning", "BTC · SegWit, Taproot, Lightning"))
-                coinCard(.ethereum, title: "Ethereum", detail: t("ETH and tokens · Ethereum and Base", "ETH y tokens · Ethereum y Base"))
-                coinCard(.dollars, title: "Stable",
-                         detail: t("USDT and USDC · Ethereum, Base, Polygon, Tron, TON", "USDT y USDC · Ethereum, Base, Polygon, Tron, TON"))
-                coinCard(.ton, title: "TON", detail: t("Gram, jettons and NFTs", "Gram, jettons y NFTs"))
-                coinCard(.tron, title: "Tron", detail: t("TRX and USDT (TRC-20)", "TRX y USDT (TRC-20)"))
-                coinCard(.solana, title: "Solana", detail: t("SOL on the Solana network", "SOL en la red Solana"))
-                coinCard(.polygon, title: "Polygon", detail: t("POL, tokens and NFTs", "POL, tokens y NFTs"))
+                ForEach(CreateWalletView.coinOrder) { item in
+                    coinCard(item)
+                }
             }
             .padding(.horizontal, 20)
         }
     }
 
-    private func coinCard(_ item: CoinKind, title: String, detail: String) -> some View {
+    private static let coinOrder: [CoinKind] = [.bitcoin, .ethereum, .dollars, .ton, .tron, .solana, .polygon,
+                                                .sui, .xrp, .monero, .zcash]
+
+    private func coinCard(_ item: CoinKind) -> some View {
         Button {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             withAnimation(CreateWalletView.stepAnimation) { coin = item }
         } label: {
             HStack(spacing: 16) {
                 CoinLogo(coin: item, size: 48)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.system(size: 19, weight: .bold))
-                        .foregroundColor(Color(uiColor: .label))
-                    Text(detail)
-                        .font(.system(size: 13))
-                        .foregroundColor(Palette.secondary)
-                }
+                Text(item.title(lang))
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundColor(Color(uiColor: .label))
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.system(size: 14, weight: .semibold))

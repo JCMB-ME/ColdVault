@@ -35,6 +35,8 @@ struct EthSendView: View {
     @State private var nameLookup: NameLookupState = .idle
     /// The saved contact's name now points to an address other than the saved one.
     @State private var nameDrift: String?
+    /// XRP: the destination tag an exchange gave (optional).
+    @State private var tagText = ""
 
     /// `asset` preselects what to send (tapped on the home screen's list).
     init(recipient: String? = nil, asset: EVMAsset? = nil) {
@@ -151,6 +153,61 @@ struct EthSendView: View {
     }
     private var canReview: Bool {
         asset.chain.isValidAddress(effectiveRecipient) && (sendAll || amountUnits != nil) && !tooMuch && !feeTooMuch && !isProcessing
+            && tagIsValid
+    }
+
+    // MARK: XRP destination tag
+
+    /// The tag typed (nil: none).
+    private var typedTag: UInt32? {
+        let text = tagText.trimmingCharacters(in: .whitespaces)
+        return text.isEmpty ? nil : UInt32(text)
+    }
+
+    /// The tag an X-address carries.
+    private var embeddedTag: UInt32? {
+        guard asset.chain == .xrp else { return nil }
+        return XRPAddress.decodeX(trimmedRecipient)?.tag
+    }
+
+    private var tagIsValid: Bool {
+        guard asset.chain == .xrp else { return true }
+        let text = tagText.trimmingCharacters(in: .whitespaces)
+        guard text.isEmpty || UInt32(text) != nil else { return false }
+        if let embeddedTag, let typedTag, embeddedTag != typedTag { return false }
+        return true
+    }
+
+    private var tagCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(t("Destination tag", "Destination tag"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Palette.secondary)
+                .padding(.leading, 4)
+            if let embeddedTag {
+                Label(t("\(embeddedTag) (in the X-address)", "\(embeddedTag) (incluido en la X-address)"), systemImage: "number")
+                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
+            } else {
+                TextField(t("Optional · e.g. 104857", "Opcional · ej. 104857"), text: $tagText)
+                    .font(.system(size: 15, design: .monospaced))
+                    .keyboardType(.numberPad)
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 48)
+                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(uiColor: .systemBackground).opacity(0.55)))
+            }
+            Text(tagIsValid
+                 ? t("Exchanges give a tag with their XRP address: without it the deposit can't be credited to you.",
+                     "Los exchanges dan un tag junto a su dirección de XRP: sin él no pueden abonarte el depósito.")
+                 : t("The tag is a whole number up to 4294967295.", "El tag es un número entero de hasta 4294967295."))
+                .font(.system(size: 12))
+                .foregroundColor(tagIsValid ? Palette.secondary : .red)
+                .padding(.leading, 4)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
     }
 
     private func nativeText(_ value: UInt256) -> String {
@@ -350,6 +407,7 @@ struct EthSendView: View {
         VStack(spacing: 16) {
             amountCard
             recipientCard
+            if asset.chain == .xrp { tagCard }
             feeCard
             PrimaryCapsuleButton(title: t("Review", "Revisar"), icon: "doc.text.magnifyingglass",
                                  isLoading: isProcessing, enabled: canReview, action: review)
@@ -501,7 +559,9 @@ struct EthSendView: View {
             if isNameInput {
                 nameStatusLine
             } else if !recipient.isEmpty && !asset.chain.isValidAddress(trimmedRecipient) {
-                Text(t("Not a \(networkName) address (check it).", "No es una dirección de \(networkName) (revísala)."))
+                Text(asset.chain == .zcash && ZcashAddress.isShieldedOnly(trimmedRecipient)
+                     ? (ZcashError.shieldedOnly.errorDescription ?? "")
+                     : t("Not a \(networkName) address (check it).", "No es una dirección de \(networkName) (revísala)."))
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.red)
                     .padding(.leading, 4)
@@ -565,14 +625,7 @@ struct EthSendView: View {
                 .padding(4)
                 .background(Capsule().fill(Color(uiColor: .systemBackground).opacity(0.55)))
             } else {
-                Text(asset.chain == .tron
-                     ? t("Tron charges bandwidth and, for tokens, energy; without staked TRX it is paid in TRX.",
-                         "Tron cobra ancho de banda y, en tokens, energía; si no tienes TRX congelado se paga en TRX.")
-                     : asset.chain == .solana
-                     ? t("A Solana transfer costs a fixed 0.000005 SOL.",
-                         "Un envío en Solana cuesta 0.000005 SOL, una cantidad fija.")
-                     : t("TON fees are a fraction of a cent; a token transfer carries 0.05 GRAM and the unused part comes back.",
-                         "Las comisiones de TON son centavos; un envío de token lleva 0.05 GRAM y lo que no se usa regresa."))
+                Text(feeExplanation)
                     .font(.system(size: 12))
                     .foregroundColor(Palette.secondary)
                     .multilineTextAlignment(.center)
@@ -587,6 +640,33 @@ struct EthSendView: View {
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(SettingsStyle.groupFill))
+    }
+
+    /// How the network on screen charges (non-EVM networks).
+    private var feeExplanation: String {
+        switch asset.chain {
+        case .tron:
+            return t("Tron charges bandwidth and, for tokens, energy; without staked TRX it is paid in TRX.",
+                     "Tron cobra ancho de banda y, en tokens, energía; si no tienes TRX congelado se paga en TRX.")
+        case .solana:
+            return t("A Solana transfer costs a fixed 0.000005 SOL.",
+                     "Un envío en Solana cuesta 0.000005 SOL, una cantidad fija.")
+        case .sui:
+            return t("Sui charges a little gas; most of what it reserves for storage comes back. The review runs the payment on the network first.",
+                     "Sui cobra un poco de gas; casi todo lo que reserva para almacenamiento regresa. La revisión ejecuta el pago en la red antes.")
+        case .xrp:
+            return t("An XRP payment costs about 0.00001 XRP. Every account keeps a 1 XRP reserve that can't be sent.",
+                     "Un pago de XRP cuesta unos 0.00001 XRP. Toda cuenta guarda una reserva de 1 XRP que no se puede enviar.")
+        case .monero:
+            return t("Monero's fee depends on the size of the payment; the review shows the exact one. Received XMR can be spent after 10 blocks (about 20 minutes).",
+                     "La comisión de Monero depende del tamaño del pago; la revisión muestra la exacta. El XMR recibido se puede gastar tras 10 bloques (unos 20 minutos).")
+        case .zcash:
+            return t("Zcash charges 0.00005 ZEC per input or output (at least two). Payments go from the transparent pool.",
+                     "Zcash cobra 0.00005 ZEC por entrada o salida (mínimo dos). Los pagos salen del fondo transparente.")
+        default:
+            return t("TON fees are a fraction of a cent; a token transfer carries 0.05 GRAM and the unused part comes back.",
+                     "Las comisiones de TON son centavos; un envío de token lleva 0.05 GRAM y lo que no se usa regresa.")
+        }
     }
 
     private func feeButton(_ value: Bool, _ title: String) -> some View {
@@ -625,12 +705,22 @@ struct EthSendView: View {
             readPaymentRequest(code)
             return
         }
-        var text = code
-        for prefix in ["tron:", "ton://transfer/", "ton:", "solana:"] where text.lowercased().hasPrefix(prefix) {
+        var text = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["tron:", "ton://transfer/", "ton:", "solana:", "sui:", "xrpl:", "ripple:", "monero:", "zcash:"]
+            where text.lowercased().hasPrefix(prefix) {
             text = String(text.dropFirst(prefix.count))
             break
         }
         recipient = String(text.prefix { $0 != "@" && $0 != "?" && $0 != "/" })
+        // XRP requests carry the destination tag as "dt" (or "tag").
+        if asset.chain == .xrp, let query = text.split(separator: "?", maxSplits: 1).dropFirst().first {
+            for pair in query.split(separator: "&") {
+                let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+                if parts.count == 2, ["dt", "tag"].contains(parts[0].lowercased()), UInt32(parts[1]) != nil {
+                    tagText = parts[1]
+                }
+            }
+        }
     }
 
     private func readPaymentRequest(_ code: String) {
@@ -935,9 +1025,11 @@ struct EthSendView: View {
         let amount = sendAll ? nil : amountUnits
         let isFast = fast
         let chosen = asset
+        let tag = chosen.chain == .xrp ? typedTag : nil
         Task {
             do {
-                let prepared = try await walletManager.prepareEVMSend(asset: chosen, to: to, amount: amount, fast: isFast)
+                let prepared = try await walletManager.prepareEVMSend(asset: chosen, to: to, amount: amount, fast: isFast,
+                                                                      destinationTag: tag)
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { plan = prepared }
             } catch {
                 errorMessage = error.localizedDescription

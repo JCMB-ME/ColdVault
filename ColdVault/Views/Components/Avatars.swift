@@ -382,6 +382,10 @@ struct CoinLogo: View {
         case .tron: return "TronLogo"
         case .ton: return "TonLogo"
         case .solana: return "SolanaLogo"
+        case .sui: return "SuiLogo"
+        case .xrp: return "XrpLogo"
+        case .monero: return "MoneroLogo"
+        case .zcash: return "ZcashLogo"
         }
     }
 }

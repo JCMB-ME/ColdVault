@@ -118,7 +118,15 @@ struct CuratedDapp: Identifiable {
         CuratedDapp(name: "Polygonscan", subtitleEn: "Polygon network explorer", subtitleEs: "Explorador de la red Polygon", url: "https://polygonscan.com", icon: "hexagon", category: .explorers, chains: ["polygon"]),
         CuratedDapp(name: "Solscan", subtitleEn: "Solana blockchain explorer", subtitleEs: "Explorador de bloques de Solana", url: "https://solscan.io", icon: "sun.max", category: .explorers, chains: ["solana"]),
         CuratedDapp(name: "Tonviewer", subtitleEn: "TON blockchain explorer", subtitleEs: "Explorador de bloques de TON", url: "https://tonviewer.com", icon: "magnifyingglass.circle", category: .explorers, chains: ["ton"]),
-        CuratedDapp(name: "Tronscan", subtitleEn: "Tron blockchain explorer", subtitleEs: "Explorador de bloques de Tron", url: "https://tronscan.org", icon: "magnifyingglass.circle", category: .explorers, chains: ["tron"])
+        CuratedDapp(name: "Tronscan", subtitleEn: "Tron blockchain explorer", subtitleEs: "Explorador de bloques de Tron", url: "https://tronscan.org", icon: "magnifyingglass.circle", category: .explorers, chains: ["tron"]),
+        // Sui, XRP Ledger, Monero, Zcash (links only: no wallet connection to these sites)
+        CuratedDapp(name: "SuiNS", subtitleEn: "Your .sui name", subtitleEs: "Tu nombre .sui", url: "https://suins.io", icon: "at", category: .names, chains: ["sui"]),
+        CuratedDapp(name: "Suiscan", subtitleEn: "Sui blockchain explorer", subtitleEs: "Explorador de bloques de Sui", url: "https://suiscan.xyz", icon: "magnifyingglass.circle", category: .explorers, chains: ["sui"]),
+        CuratedDapp(name: "XPMarket", subtitleEn: "XRP Ledger exchange & tokens", subtitleEs: "Exchange y tokens del XRP Ledger", url: "https://xpmarket.com", icon: "arrow.left.arrow.right", category: .defi, chains: ["xrp"]),
+        CuratedDapp(name: "xrp.cafe", subtitleEn: "XRP Ledger NFT marketplace", subtitleEs: "Mercado de NFTs del XRP Ledger", url: "https://xrp.cafe", icon: "square.grid.2x2.fill", category: .nfts, chains: ["xrp"]),
+        CuratedDapp(name: "XRPSCAN", subtitleEn: "XRP Ledger explorer", subtitleEs: "Explorador del XRP Ledger", url: "https://xrpscan.com", icon: "magnifyingglass.circle", category: .explorers, chains: ["xrp"]),
+        CuratedDapp(name: "xmrchain", subtitleEn: "Monero blockchain explorer", subtitleEs: "Explorador de bloques de Monero", url: "https://xmrchain.net", icon: "magnifyingglass.circle", category: .explorers, chains: ["monero"]),
+        CuratedDapp(name: "Blockchair", subtitleEn: "Zcash blockchain explorer", subtitleEs: "Explorador de bloques de Zcash", url: "https://blockchair.com/zcash", icon: "magnifyingglass.circle", category: .explorers, chains: ["zcash"])
     ]
 }
 
@@ -1464,8 +1472,9 @@ struct DappBrowserView: View {
 
     /// A site's logo: the bundled one for the sites of the directory, a globe otherwise.
     @ViewBuilder
-    private func siteIcon(logo: String?, size: CGFloat) -> some View {
-        if let logo {
+    private func siteIcon(logo: String?, size: CGFloat, symbol: String = "globe") -> some View {
+        // A site without its logo in the app shows its symbol.
+        if let logo, UIImage(named: logo) != nil {
             Image(logo)
                 .resizable()
                 .scaledToFit()
@@ -1474,7 +1483,7 @@ struct DappBrowserView: View {
                 .frame(width: size, height: size)
                 .background(Circle().fill(Color.white))
         } else {
-            Image(systemName: "globe")
+            Image(systemName: symbol)
                 .font(.system(size: size * 0.42, weight: .semibold))
                 .foregroundColor(Color(uiColor: .label))
                 .frame(width: size, height: size)
@@ -1582,7 +1591,7 @@ struct DappBrowserView: View {
                         webModel.open(input: dapp.url)
                     } label: {
                         HStack(spacing: 14) {
-                            siteIcon(logo: dapp.logo, size: 42)
+                            siteIcon(logo: dapp.logo, size: 42, symbol: dapp.icon)
 
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(dapp.name)

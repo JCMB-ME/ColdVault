@@ -9,6 +9,8 @@ settings:
   SWIFT_VERSION: "5.9"
   IPHONEOS_DEPLOYMENT_TARGET: "16.0"
   ENABLE_BITCODE: NO
+  # MoneroC has arm64 simulator slices only (the CI and every recent Mac are arm64).
+  EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
   CODE_SIGNING_REQUIRED: NO
   CODE_SIGN_IDENTITY: ""
   CODE_SIGNING_ALLOWED: NO
@@ -52,6 +54,11 @@ targets:
         product: LDKNode
       - package: ReownSwift
         product: WalletConnect
+      # Monero's wallet2 (monero_c), fetched by Vendor/Monero/fetch-monero.sh. Weak: without it the app
+      # still opens, with no Monero.
+      - framework: Vendor/Monero/MoneroC.xcframework
+        embed: true
+        weak: true
       - target: ColdVaultWidget
     entitlements:
       path: ColdVault/ColdVault.entitlements

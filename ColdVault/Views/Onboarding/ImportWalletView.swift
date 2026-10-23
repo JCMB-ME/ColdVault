@@ -37,30 +37,79 @@ public struct ImportWalletView: View {
         _coin = State(initialValue: coin)
     }
 
-    /// Account-based input: phrase, 64-hex private key (not TON) or an address of the
-    /// coin (watch-only).
+    /// The input is an address of the account-based coin chosen (watch-only).
+    private var isAccountAddress: Bool {
+        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch coin {
+        case .tron: return TronAddress.isValid(text)
+        case .ton: return TonAddress.parse(text) != nil
+        case .solana: return SolanaAddress.isValid(text)
+        case .sui: return SuiAddress.isValid(text)
+        case .xrp: return XRPAddress.decodeClassic(text) != nil
+        case .zcash: return ZcashAddress.decodeTransparent(text).map { !$0.testnet } ?? false
+        case .monero: return false                       // watching Monero needs the view key too
+        default: return EthereumAddress.parse(text) != nil
+        }
+    }
+
+    /// Account-based input: phrase, private key in the coin's usual form (none for TON and Solana) or an
+    /// address of the coin (watch-only).
     private var ethKind: String? {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
-        let isAddress: Bool
-        switch coin {
-        case .tron: isAddress = TronAddress.isValid(text)
-        case .ton: isAddress = TonAddress.parse(text) != nil
-        case .solana: isAddress = SolanaAddress.isValid(text)
-        default: isAddress = EthereumAddress.parse(text) != nil
-        }
-        if isAddress { return t("\(coin.title(lang)) address (watch-only)", "Dirección de \(coin.title(lang)) (solo observación)") }
+        if isAccountAddress { return t("\(coin.title(lang)) address (watch-only)", "Dirección de \(coin.title(lang)) (solo observación)") }
         if coin == .ton && detection.tonNative {
             return tonPhraseAmbiguous
                 ? t("Recovery phrase (TON or BIP-39 format)", "Frase de recuperación (formato TON o BIP-39)")
                 : t("TON recovery phrase (Tonkeeper, Tonhub, MyTonWallet)", "Frase de TON (Tonkeeper, Tonhub, MyTonWallet)")
         }
         if BIP39.validateMnemonic(text) { return t("Recovery phrase", "Frase de recuperación") }
+        switch coin {
+        case .monero:
+            switch MoneroSeed.kind(of: text) {
+            case .legacy: return t("Monero recovery phrase (25 words)", "Frase de recuperación de Monero (25 palabras)")
+            case .polyseed: return t("Polyseed (16 words: Feather, Cake)", "Polyseed (16 palabras: Feather, Cake)")
+            default: break
+            }
+        case .sui:
+            if SuiKeys.importedKey(text) != nil { return t("Private key (suiprivkey)", "Clave privada (suiprivkey)") }
+        case .xrp:
+            if let key = XRPKeys.familySeed(text) {
+                return key.scheme == .ed25519 ? t("Family seed (Ed25519)", "Family seed (Ed25519)")
+                                              : t("Family seed (Xaman, rippled)", "Family seed (Xaman, rippled)")
+            }
+        case .zcash:
+            if case .privateKey(_, true, _) = BitcoinAddress.parseImportString(text) { return t("Private key (WIF)", "Clave privada (WIF)") }
+        default:
+            break
+        }
         let hex = text.lowercased().replacingOccurrences(of: "0x", with: "")
-        if coin != .ton, coin != .solana, hex.count == 64, let key = hex.hexDecoded, Secp256k1.isValidPrivateKey(key) {
-            return t("Private key", "Clave privada")
+        if coin != .ton, coin != .solana, hex.count == 64, let key = hex.hexDecoded {
+            // Ed25519 (Sui) and Monero spend keys take any 32 bytes; the others are secp256k1.
+            if coin == .monero { return t("Private spend key", "Clave privada de gasto") }
+            if coin == .sui || Secp256k1.isValidPrivateKey(key) { return t("Private key", "Clave privada") }
         }
         return nil
+    }
+
+    /// Monero: about when the wallet was made (its scan starts there). A Polyseed carries it already.
+    @State private var moneroRestoreDate: Date = DateComponents(calendar: Calendar(identifier: .gregorian),
+                                                                year: 2024, month: 1, day: 1).date ?? Date()
+
+    private var asksMoneroDate: Bool {
+        coin == .monero && isSecretInput && MoneroSeed.kind(of: inputText) != .polyseed
+    }
+
+    private var moneroDateSection: some View {
+        SettingsSection(header: t("Wallet created", "Billetera creada"),
+                        footer: t("About when this wallet was made: Monero's scan starts there. An earlier date finds older payments but takes longer.",
+                                  "Más o menos cuándo se creó esta billetera: el escaneo de Monero empieza ahí. Una fecha anterior encuentra pagos más antiguos pero tarda más.")) {
+            DatePicker(t("Around", "Alrededor de"), selection: $moneroRestoreDate,
+                       in: Date(timeIntervalSince1970: 1_397_818_193)...Date(), displayedComponents: .date)
+                .font(.system(size: 16))
+                .padding(.horizontal, 16)
+                .frame(minHeight: 52)
+        }
     }
 
     private var coinPicker: some View {
@@ -102,6 +151,9 @@ public struct ImportWalletView: View {
                 Text(ethKind ?? (detection.tonNative
                                  ? t("This is a TON wallet phrase (Tonkeeper). Choose TON above to import it.",
                                      "Es una frase de billetera TON (Tonkeeper). Elige TON arriba para importarla.")
+                                 : coin == .monero && MoneroEngine.isValidAddress(inputText)
+                                 ? t("A Monero address alone can't show what it holds: import the wallet's phrase.",
+                                     "Una dirección de Monero sola no puede mostrar lo que tiene: importa la frase de la billetera.")
                                  : t("Not a phrase, private key or \(coin.title(lang)) address.", "No es una frase, clave privada ni dirección de \(coin.title(lang)).")))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Color(uiColor: .label))
@@ -226,6 +278,12 @@ public struct ImportWalletView: View {
 
                     if tonPhraseAmbiguous {
                         tonFormatChoice
+                            .padding(.horizontal, 20)
+                            .transition(.opacity)
+                    }
+
+                    if asksMoneroDate {
+                        moneroDateSection
                             .padding(.horizontal, 20)
                             .transition(.opacity)
                     }
@@ -437,6 +495,8 @@ public struct ImportWalletView: View {
     private var isSecretInput: Bool {
         guard detection.descriptors == nil else { return false }
         if coin == .ton && detection.tonNative { return true }
+        // A coin's own key forms (suiprivkey, family seed, WIF, a Monero phrase) are secrets too.
+        if coin.isAccountBased && ethKind != nil && !isAccountAddress { return true }
         switch detection.payload {
         case .mnemonic, .privateKey: return true
         default: return false
@@ -549,8 +609,9 @@ public struct ImportWalletView: View {
         let input = inputText
         let chosenCoin = coin
         let isSecret: Bool
+        let restoreDate = chosenCoin == .monero ? moneroRestoreDate : nil
         if chosenCoin.isAccountBased {
-            isSecret = EthereumAddress.parse(input.trimmingCharacters(in: .whitespacesAndNewlines)) == nil
+            isSecret = !isAccountAddress
         } else {
             switch detection.payload {
             case .mnemonic, .privateKey: isSecret = true
@@ -563,7 +624,8 @@ public struct ImportWalletView: View {
 
         Task {
             do {
-                try await walletManager.importWallet(input: input, passphrase: phrase, coin: chosenCoin, tonNative: tonNative)
+                try await walletManager.importWallet(input: input, passphrase: phrase, coin: chosenCoin, tonNative: tonNative,
+                                                     restoreDate: restoreDate)
                 if !name.isEmpty {
                     walletManager.renameWallet(slot: walletManager.activeSlot, to: name)
                 }

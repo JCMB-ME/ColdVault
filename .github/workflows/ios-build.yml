@@ -47,6 +47,10 @@ jobs:
         run: |
           bash Vendor/TorLocal/fetch-tor.sh
 
+      - name: Fetch Monero library (checksum-verified)
+        run: |
+          bash Vendor/Monero/fetch-monero.sh
+
       - name: Generate Xcode Project
         run: |
           xcodegen --version
@@ -94,6 +98,9 @@ jobs:
           # Ad-hoc signature carrying the App Group entitlement, so re-signing tools
           # (Sideloadly, AltStore) keep the group the widget uses to read the balance.
           APP=build_device/Build/Products/Release-iphoneos/ColdVault.app
+          if [ -d "$APP/Frameworks/MoneroC.framework" ]; then
+            codesign -f -s - "$APP/Frameworks/MoneroC.framework"
+          fi
           if [ -d "$APP/PlugIns/ColdVaultWidget.appex" ]; then
             codesign -f -s - --entitlements ColdVaultWidget/ColdVaultWidget.entitlements "$APP/PlugIns/ColdVaultWidget.appex"
           fi

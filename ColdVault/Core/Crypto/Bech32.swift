@@ -77,8 +77,9 @@ public enum Bech32 {
         return result
     }
     
-    public static func decode(_ str: String) -> (hrp: String, data: [UInt8], type: EncodingType)? {
-        guard str.count >= 8 && str.count <= 90 else { return nil }
+    /// `maxLength`: 90 for addresses (BIP-173); Zcash's unified addresses are longer (ZIP-316).
+    public static func decode(_ str: String, maxLength: Int = 90) -> (hrp: String, data: [UInt8], type: EncodingType)? {
+        guard str.count >= 8 && str.count <= maxLength else { return nil }
         
         let lower = str.lowercased()
         let upper = str.uppercased()

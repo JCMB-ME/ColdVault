@@ -34,9 +34,11 @@ extension WalletManager {
 
     public var activeWallet: LibraryWallet? { library.first { $0.slot == activeSlot } }
 
-    /// Accounts can be added to seed-phrase wallets only (not to a TON-format phrase: it has one key).
+    /// Accounts can be added to seed-phrase wallets only (not to a TON-format phrase or a Monero phrase: each
+    /// has one key).
     public var canAddAccounts: Bool {
         (activeRecord?.type == .mnemonic12 || activeRecord?.type == .mnemonic24) && !WalletManager.isTonNative(activeRecord)
+            && activeRecord?.chainAddresses?["moneroSeed"] == nil
     }
 
     // MARK: - Keychain I/O
@@ -345,6 +347,14 @@ extension WalletManager {
         forgetContacts(matching: ownAddresses)
         purgeLabels(for: transactions.map { $0.txid })
         Task { await LightningManager.shared.forget(slot: slot) }
+        // A Monero wallet's scan file goes too (it holds what the account received and spent).
+        let moneroAddresses = deletedAccounts.filter { $0.coinKind == .monero }.map(\.primaryAddress)
+        if !moneroAddresses.isEmpty {
+            Task {
+                await MoneroEngine.shared.close()
+                for address in moneroAddresses { MoneroEngine.removeFiles(of: address) }
+            }
+        }
         // dApps connected with it are disconnected (they would keep asking a wallet that is gone).
         WalletConnectService.shared.disconnectSessions(boundTo: slot)
         library.removeAll { $0.slot == slot }
@@ -520,6 +530,31 @@ extension WalletManager {
                 let key = try solanaKey(secret: secret, account: account.number)
                 result.append(ExportedKey(title: "\(account.name) · Solana", detail: SolanaKeys.path(index: account.number) + " · Ed25519",
                                           key: key.hexEncodedString))
+            case .sui:
+                let key = try suiKey(secret: secret, account: account.number)
+                let origin = secret.mnemonic == nil ? "Ed25519" : SuiKeys.path(index: account.number) + " · Ed25519"
+                result.append(ExportedKey(title: "\(account.name) · Sui", detail: origin, key: SuiKeys.exportedKey(privateKey: key)))
+            case .xrp:
+                let key = try xrpKey(secret: secret, account: account.number)
+                if secret.mnemonic == nil, let seed = secret.privateKey, XRPKeys.familySeed(seed) != nil {
+                    result.append(ExportedKey(title: "\(account.name) · XRP", detail: "Family seed", key: seed))
+                } else {
+                    result.append(ExportedKey(title: "\(account.name) · XRP", detail: XRPKeys.path(index: account.number) + " · secp256k1",
+                                              key: key.privateKey.hexEncodedString))
+                }
+            case .zcash:
+                let key = try zcashKey(secret: secret, account: account.number)
+                let origin = secret.mnemonic == nil ? "WIF" : ZcashKeys.path(index: account.number) + " · WIF"
+                result.append(ExportedKey(title: "\(account.name) · Zcash", detail: origin,
+                                          key: WalletDerivation.wif(privateKey: key, isCompressed: true, isTestnet: false)))
+            case .monero:
+                // The 25-word Monero phrase restores the account in any Monero wallet (Cake, Feather, Monerujo…).
+                let spend = try moneroSpendKey(secret: secret, account: account.number).key
+                let keys = try MoneroEngine.exportKeys(spendKey: spend)
+                let origin = secret.mnemonic != nil && secret.moneroSeed == nil ? MoneroKeys.path(index: account.number) + " · " : ""
+                result.append(ExportedKey(title: "\(account.name) · Monero", detail: origin + "Monero phrase (25 words)", key: keys.seed))
+                result.append(ExportedKey(title: "\(account.name) · Monero", detail: "Private spend key", key: keys.spend))
+                result.append(ExportedKey(title: "\(account.name) · Monero", detail: "Private view key", key: keys.view))
             case .dollars:
                 let evm = try ethereumKey(secret: secret, account: account.number)
                 result.append(ExportedKey(title: "\(account.name) · Ethereum / Base / Polygon",
