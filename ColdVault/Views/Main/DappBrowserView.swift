@@ -72,6 +72,16 @@ struct CuratedDapp: Identifiable {
             case .explorers: return lang == .english ? "Explorers" : "Exploradores"
             }
         }
+
+        /// Its icon (Assets, SVG drawn as a template): swap, picture, @ name tag, magnifier over a block.
+        var iconName: String {
+            switch self {
+            case .defi: return "CategoryDefi"
+            case .nfts: return "CategoryNFTs"
+            case .names: return "CategoryNames"
+            case .explorers: return "CategoryExplorers"
+            }
+        }
     }
 
     private static let evm: Set<String> = ["ethereum", "base", "polygon"]
@@ -1078,6 +1088,7 @@ struct DappBrowserView: View {
     @ObservedObject var webModel: BrowserWebModel
     @FocusState private var isUrlFocused: Bool
     @State private var selectedCategory: CuratedDapp.Category = .defi
+    @Namespace private var categoryDock
     @State private var showQRScanner = false
     @State private var showWalletConnectSheet = false
     @State private var pullCloseFired = false
@@ -1559,28 +1570,54 @@ struct DappBrowserView: View {
 
     private var curatedDappsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // Like the coin dock of the wallets: icons only, the chosen tab grows into a capsule with its name.
             HStack(spacing: 4) {
                 ForEach(dappCategories, id: \.rawValue) { category in
                     let active = shownCategory == category
                     Button {
+                        guard !active else { return }
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        withAnimation(.spring(response: 0.42, dampingFraction: 0.8)) {
                             selectedCategory = category
                         }
                     } label: {
-                        Text(category.title(lang))
-                            .font(.system(size: 14, weight: active ? .semibold : .regular))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                            .foregroundColor(active ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
-                            .frame(maxWidth: .infinity, minHeight: 38)
-                            .background(Capsule().fill(active ? Color(uiColor: .label) : Color.clear))
+                        HStack(spacing: 7) {
+                            Image(category.iconName)
+                                .renderingMode(.template)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 21, height: 21)
+                            if active {
+                                Text(category.title(lang))
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .lineLimit(1)
+                                    .fixedSize()
+                                    .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .leading)))
+                            }
+                        }
+                        .foregroundColor(active ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                        .padding(.leading, active ? 12 : 11)
+                        .padding(.trailing, active ? 15 : 11)
+                        .frame(height: 40)
+                        .background {
+                            if active {
+                                Capsule()
+                                    .fill(Color(uiColor: .label))
+                                    .matchedGeometryEffect(id: "categoryDockSelection", in: categoryDock)
+                                    .shadow(color: Color.black.opacity(0.18), radius: 8, x: 0, y: 3)
+                            }
+                        }
+                        .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(Text(category.title(lang)))
+                    .accessibilityAddTraits(active ? .isSelected : [])
                 }
             }
             .padding(4)
             .background(Capsule().fill(SettingsStyle.groupFill))
+            .fixedSize()
+            .frame(maxWidth: .infinity)
 
             VStack(spacing: 0) {
                 let items = walletDapps.filter { $0.category == shownCategory }
